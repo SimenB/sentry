@@ -7,10 +7,16 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
   cancel-in-progress: true
 
+defaults:
+  run:
+    # the default default is:
+    #      bash --noprofile --norc -eo pipefail {0}
+    shell: bash --noprofile --norc -eo pipefail -ux {0}
+
 jobs:
   did-migration-change:
     name: check if any migration changes
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 3
     # Map a step output to a job output
     outputs:
@@ -18,49 +24,34 @@ jobs:
       modified: ${{ steps.changes.outputs.migrations_modified }}
     steps:
       - name: Checkout sentry
-        uses: actions/checkout@7884fcad6b5d53d10323aee724dc68d8b9096a2e  # v2
+        uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4.1.7
 
       - name: Match migration files
-        uses: getsentry/paths-filter@66f7f1844185eb7fb6738ea4ea59d74bb99199e5  # v2
+        uses: dorny/paths-filter@0bc4621a3135347011ad047f9ecf449bf72ce2bd # v3.0.0
         id: changes
         with:
           token: ${{ github.token }}
           filters: .github/file-filters.yml
 
-  modified-migration:
-    name: check if modified migration
-    runs-on: ubuntu-20.04
-    timeout-minutes: 4
-    needs: did-migration-change
-    if: needs.did-migration-change.outputs.modified == 'true'
-
-    steps:
-      - name: Failure because of modified migration
-        shell: bash
-        run: |
-          echo "If you have a valid reason to modify a migration please get approval"
-          echo "from @getsentry/owners-migrations, then ask a Github admin to merge." && exit 1
-
   sql:
     name: Generate SQL
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 8
     strategy:
       matrix:
-        pg-version: ['9.6']
+        pg-version: ['14']
 
     needs: did-migration-change
     if: needs.did-migration-change.outputs.added == 'true'
 
     steps:
       # Checkout master to run all merged migrations.
-      - uses: actions/checkout@50fbc622fc4ef5163becd7fab6573eac35f8462e  # v1
+      - uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4.1.7
         with:
           ref: master
 
       - name: Setup sentry env
         uses: ./.github/actions/setup-sentry
-        id: setup
         with:
           pg-version: ${{ matrix.pg-version }}
 
@@ -69,18 +60,19 @@ jobs:
           sentry upgrade --noinput
 
       # Checkout the current ref
-      - uses: actions/checkout@50fbc622fc4ef5163becd7fab6573eac35f8462e  # v1
+      - uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4.1.7
         with:
           clean: false
 
       - name: Get changed migration files
         id: file
         run: |
-          echo $(git diff --diff-filter=A --name-only origin/master HEAD)
-          echo "added=$(git diff --diff-filter=A --name-only origin/master HEAD | grep 'src/sentry/migrations/')" >> "$GITHUB_OUTPUT"
+          echo 'added<<EOF' >> "$GITHUB_OUTPUT"
+          git diff --diff-filter=A --name-only origin/master HEAD -- 'src/sentry/*/migrations/*' 'src/sentry/migrations/*' ':!*/__init__.py' >> "$GITHUB_OUTPUT"
+          echo 'EOF' >> "$GITHUB_OUTPUT"
 
       - name: Generate SQL for migration
-        uses: getsentry/action-migrations@f1dc34590460c0fe06ec11c00fec6c16a2159977  # main
+        uses: getsentry/action-migrations@4d8ed0388dfc0774302bbfd5204e518f9ac4f066 # main
         env:
           SENTRY_LOG_LEVEL: ERROR
         with:

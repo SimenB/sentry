@@ -1,7 +1,5 @@
 import {Fragment} from 'react';
-// eslint-disable-next-line no-restricted-imports
-import {withRouter, WithRouterProps} from 'react-router';
-import {Location, Query} from 'history';
+import type {Query} from 'history';
 
 import EventsRequest from 'sentry/components/charts/eventsRequest';
 import {HeaderTitleLegend} from 'sentry/components/charts/styles';
@@ -9,23 +7,22 @@ import {getInterval} from 'sentry/components/charts/utils';
 import {normalizeDateTimeParams} from 'sentry/components/organizations/pageFilters/parse';
 import QuestionTooltip from 'sentry/components/questionTooltip';
 import {t} from 'sentry/locale';
-import {Organization, OrganizationSummary} from 'sentry/types';
-import {Series} from 'sentry/types/echarts';
+import type {Series} from 'sentry/types/echarts';
+import type {Organization, OrganizationSummary} from 'sentry/types/organization';
 import {getUtcToLocalDateObject} from 'sentry/utils/dates';
 import {useMEPSettingContext} from 'sentry/utils/performance/contexts/metricsEnhancedSetting';
 import useApi from 'sentry/utils/useApi';
-import {getTermHelp, PERFORMANCE_TERM} from 'sentry/views/performance/data';
+import {useLocation} from 'sentry/utils/useLocation';
+import DurationChart from 'sentry/views/performance/charts/chart';
+import {getTermHelp, PerformanceTerm} from 'sentry/views/performance/data';
 import {getMEPQueryParams} from 'sentry/views/performance/landing/widgets/utils';
-import {DurationChart} from 'sentry/views/performance/landing/widgets/widgets/singleFieldAreaWidget';
-import {ViewProps} from 'sentry/views/performance/types';
+import type {ViewProps} from 'sentry/views/performance/types';
 
-type Props = WithRouterProps &
-  ViewProps & {
-    location: Location;
-    organization: OrganizationSummary;
-    queryExtra: Query;
-    withoutZerofill: boolean;
-  };
+type Props = ViewProps & {
+  organization: OrganizationSummary;
+  queryExtra: Query;
+  withoutZerofill: boolean;
+};
 
 /**
  * Fetch and render an area chart that shows user misery over a period
@@ -33,7 +30,6 @@ type Props = WithRouterProps &
 function UserMiseryChart({
   project,
   environment,
-  location,
   organization,
   query,
   statsPeriod,
@@ -41,6 +37,7 @@ function UserMiseryChart({
   start: propsStart,
   end: propsEnd,
 }: Props) {
+  const location = useLocation();
   const api = useApi();
   const mepContext = useMEPSettingContext();
 
@@ -68,7 +65,7 @@ function UserMiseryChart({
       <QuestionTooltip
         size="sm"
         position="top"
-        title={t(getTermHelp(organization as Organization, PERFORMANCE_TERM.USER_MISERY))}
+        title={getTermHelp(organization as Organization, PerformanceTerm.USER_MISERY)}
       />
     </HeaderTitleLegend>
   );
@@ -112,4 +109,4 @@ function UserMiseryChart({
   );
 }
 
-export default withRouter(UserMiseryChart);
+export default UserMiseryChart;

@@ -1,7 +1,9 @@
 import {EventedProfile} from 'sentry/utils/profiling/profile/eventedProfile';
 import {createFrameIndex} from 'sentry/utils/profiling/profile/utils';
 
-import {firstCallee, makeTestingBoilerplate} from './profile.spec';
+import {Frame} from '../frame';
+
+import {firstCallee, makeTestingBoilerplate} from './testUtils';
 
 describe('EventedProfile', () => {
   it('imports the base properties', () => {
@@ -15,7 +17,9 @@ describe('EventedProfile', () => {
       events: [],
     };
 
-    const profile = EventedProfile.FromProfile(trace, createFrameIndex('mobile', []));
+    const profile = EventedProfile.FromProfile(trace, createFrameIndex('mobile', []), {
+      type: 'flamechart',
+    });
 
     expect(profile.duration).toBe(1000);
     expect(profile.name).toBe(trace.name);
@@ -40,7 +44,8 @@ describe('EventedProfile', () => {
 
     const profile = EventedProfile.FromProfile(
       trace,
-      createFrameIndex('mobile', [{name: 'f0'}])
+      createFrameIndex('mobile', [{name: 'f0'}]),
+      {type: 'flamechart'}
     );
 
     expect(profile.stats.discardedSamplesCount).toBe(1);
@@ -62,9 +67,35 @@ describe('EventedProfile', () => {
 
     const profile = EventedProfile.FromProfile(
       trace,
-      createFrameIndex('mobile', [{name: 'f0'}])
+      createFrameIndex('mobile', [{name: 'f0'}]),
+      {type: 'flamechart'}
     );
     expect(profile.stats.negativeSamplesCount).toBe(1);
+  });
+
+  it('tracks raw weights', () => {
+    const trace: Profiling.EventedProfile = {
+      name: 'profile',
+      startValue: 0,
+      endValue: 1000,
+      unit: 'milliseconds',
+      threadID: 0,
+      type: 'evented',
+      events: [
+        {type: 'O', at: 0, frame: 0},
+        {type: 'C', at: 10, frame: 0},
+        {type: 'O', at: 15, frame: 0},
+        {type: 'C', at: 20, frame: 0},
+      ],
+    };
+
+    const profile = EventedProfile.FromProfile(
+      trace,
+      createFrameIndex('mobile', [{name: 'f0'}]),
+      {type: 'flamechart'}
+    );
+
+    expect(profile.rawWeights).toHaveLength(2);
   });
 
   it('rebuilds the stack', () => {
@@ -87,7 +118,8 @@ describe('EventedProfile', () => {
 
     const profile = EventedProfile.FromProfile(
       trace,
-      createFrameIndex('mobile', [{name: 'f0'}, {name: 'f1'}])
+      createFrameIndex('mobile', [{name: 'f0'}, {name: 'f1'}]),
+      {type: 'flamechart'}
     );
 
     profile.forEach(open, close);
@@ -101,13 +133,13 @@ describe('EventedProfile', () => {
     expect(openSpy).toHaveBeenCalledTimes(2);
     expect(closeSpy).toHaveBeenCalledTimes(2);
 
-    const root = firstCallee(profile.appendOrderStack[0]);
+    const root = firstCallee(profile.callTree);
 
-    expect(root.totalWeight).toEqual(4);
-    expect(firstCallee(root).totalWeight).toEqual(1);
+    expect(root!.totalWeight).toBe(4);
+    expect(firstCallee(root!)!.totalWeight).toBe(1);
 
-    expect(root.selfWeight).toEqual(3);
-    expect(firstCallee(root).selfWeight).toEqual(1);
+    expect(root!.selfWeight).toBe(3);
+    expect(firstCallee(root!)!.selfWeight).toBe(1);
   });
 
   it('marks direct recursion', () => {
@@ -128,10 +160,11 @@ describe('EventedProfile', () => {
 
     const profile = EventedProfile.FromProfile(
       trace,
-      createFrameIndex('mobile', [{name: 'f0'}])
+      createFrameIndex('mobile', [{name: 'f0'}]),
+      {type: 'flamechart'}
     );
 
-    expect(firstCallee(firstCallee(profile.appendOrderTree)).isRecursive()).toBe(true);
+    expect(!!firstCallee(firstCallee(profile.callTree)!)!.recursive).toBe(true);
   });
 
   it('marks indirect recursion', () => {
@@ -154,12 +187,13 @@ describe('EventedProfile', () => {
 
     const profile = EventedProfile.FromProfile(
       trace,
-      createFrameIndex('mobile', [{name: 'f0'}, {name: 'f1'}])
+      createFrameIndex('mobile', [{name: 'f0'}, {name: 'f1'}]),
+      {type: 'flamechart'}
     );
 
-    expect(
-      firstCallee(firstCallee(firstCallee(profile.appendOrderTree))).isRecursive()
-    ).toBe(true);
+    expect(!!firstCallee(firstCallee(firstCallee(profile.callTree)!)!)!.recursive).toBe(
+      true
+    );
   });
 
   it('tracks minFrameDuration', () => {
@@ -180,7 +214,8 @@ describe('EventedProfile', () => {
 
     const profile = EventedProfile.FromProfile(
       trace,
-      createFrameIndex('mobile', [{name: 'f0'}, {name: 'f1'}, {name: 'f2'}])
+      createFrameIndex('mobile', [{name: 'f0'}, {name: 'f1'}, {name: 'f2'}]),
+      {type: 'flamechart'}
     );
 
     expect(profile.minFrameDuration).toBe(0.5);
@@ -206,7 +241,8 @@ describe('EventedProfile', () => {
     expect(() =>
       EventedProfile.FromProfile(
         trace,
-        createFrameIndex('mobile', [{name: 'f0'}, {name: 'f1'}, {name: 'f2'}])
+        createFrameIndex('mobile', [{name: 'f0'}, {name: 'f1'}, {name: 'f2'}]),
+        {type: 'flamechart'}
       )
     ).toThrow('Sample delta cannot be negative, samples may be corrupt or out of order');
   });
@@ -230,8 +266,136 @@ describe('EventedProfile', () => {
     expect(() =>
       EventedProfile.FromProfile(
         trace,
-        createFrameIndex('mobile', [{name: 'f0'}, {name: 'f1'}, {name: 'f2'}])
+        createFrameIndex('mobile', [{name: 'f0'}, {name: 'f1'}, {name: 'f2'}]),
+        {type: 'flamechart'}
       )
     ).toThrow('Unbalanced append order stack');
+  });
+});
+
+describe('EventedProfile - flamegraph', () => {
+  it('merges consecutive stacks', () => {
+    const trace: Profiling.EventedProfile = {
+      name: 'profile',
+      startValue: 0,
+      endValue: 1000,
+      unit: 'milliseconds',
+      threadID: 0,
+      type: 'evented',
+      events: [
+        {type: 'O', at: 0, frame: 0},
+        {type: 'C', at: 1, frame: 0},
+        {type: 'O', at: 1, frame: 0},
+        {type: 'C', at: 2, frame: 0},
+      ],
+    };
+
+    const profile = EventedProfile.FromProfile(
+      trace,
+      createFrameIndex('mobile', [{name: 'f0'}, {name: 'f1'}, {name: 'f2'}]),
+      {type: 'flamegraph'}
+    );
+
+    expect(profile.callTree.children).toHaveLength(1);
+    expect(profile.callTree.children[0]!.selfWeight).toBe(2);
+    expect(profile.callTree.totalWeight).toBe(2);
+  });
+
+  it('creates a graph', () => {
+    const trace: Profiling.EventedProfile = {
+      name: 'profile',
+      startValue: 0,
+      endValue: 1000,
+      unit: 'milliseconds',
+      threadID: 0,
+      type: 'evented',
+      events: [
+        {type: 'O', at: 0, frame: 0},
+        {type: 'C', at: 1, frame: 0},
+        {type: 'O', at: 1, frame: 1},
+        {type: 'C', at: 2, frame: 1},
+        {type: 'O', at: 2, frame: 0},
+        {type: 'C', at: 3, frame: 0},
+      ],
+    };
+
+    const profile = EventedProfile.FromProfile(
+      trace,
+      createFrameIndex('mobile', [
+        {name: 'f0'},
+        {name: 'f1'},
+        {name: 'f2'},
+        {name: 'f3'},
+      ]),
+      {type: 'flamegraph'}
+    );
+
+    expect(profile.callTree.children[0]!.frame.name).toBe('f0');
+    expect(profile.callTree.children[1]!.frame.name).toBe('f1');
+
+    // frame 0 is opened twice, so the weight gets merged
+    expect(profile.samples).toHaveLength(2);
+    expect(profile.weights[0]).toBe(2);
+    expect(profile.weights[1]).toBe(1);
+    expect(profile.weights).toHaveLength(2);
+  });
+
+  it('flamegraph tracks node count', () => {
+    const trace: Profiling.EventedProfile = {
+      name: 'profile',
+      startValue: 0,
+      endValue: 1000,
+      unit: 'milliseconds',
+      threadID: 0,
+      type: 'evented',
+      events: [
+        {type: 'O', at: 0, frame: 0},
+        {type: 'O', at: 10, frame: 1},
+        {type: 'C', at: 20, frame: 1},
+        {type: 'C', at: 30, frame: 0},
+      ],
+    };
+
+    const profile = EventedProfile.FromProfile(
+      trace,
+      createFrameIndex('mobile', [{name: 'f0'}, {name: 'f1'}]),
+      {type: 'flamegraph'}
+    );
+
+    // frame 0 is opened twice, so the weight gets merged
+    expect(profile.callTree.children[0]!.count).toBe(3);
+    expect(profile.callTree.children[0]!.children[0]!.count).toBe(1);
+  });
+
+  it('filters frames', () => {
+    const trace: Profiling.EventedProfile = {
+      name: 'profile',
+      startValue: 0,
+      endValue: 1000,
+      unit: 'milliseconds',
+      threadID: 0,
+      type: 'evented',
+      events: [
+        {type: 'O', at: 0, frame: 0},
+        {type: 'O', at: 10, frame: 1},
+        {type: 'C', at: 20, frame: 1},
+        {type: 'C', at: 30, frame: 0},
+      ],
+    };
+
+    const profile = EventedProfile.FromProfile(
+      trace,
+      createFrameIndex('mobile', [{name: 'f0'}, {name: 'f1'}]),
+      {
+        type: 'flamegraph',
+        frameFilter: frame => frame.name === 'f0',
+      }
+    );
+
+    expect(profile.callTree.frame).toBe(Frame.Root);
+    expect(profile.callTree.children).toHaveLength(1);
+    expect(profile.callTree.children[0]!.frame.name).toBe('f0');
+    // the f1 frame is filtered out, so the f0 frame has no children
+    expect(profile.callTree.children[0]!.children).toHaveLength(0);
   });
 });

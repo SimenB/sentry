@@ -4,10 +4,12 @@ import {css} from '@emotion/react';
 import styled from '@emotion/styled';
 
 import {IconClose} from 'sentry/icons';
+import {t} from 'sentry/locale';
+import HookStore from 'sentry/stores/hookStore';
 import {slideInLeft} from 'sentry/styles/animations';
-import space from 'sentry/styles/space';
+import {space} from 'sentry/styles/space';
 
-import {CommonSidebarProps} from './types';
+import type {CommonSidebarProps} from './types';
 
 type PositionProps = Pick<CommonSidebarProps, 'orientation' | 'collapsed'>;
 
@@ -79,6 +81,11 @@ function SidebarPanel({
         return;
       }
 
+      // If we are in Sandbox, don't hide panel when the modal is clicked (before the email is added)
+      const blockHideSidebar = HookStore.get('onboarding:block-hide-sidebar')[0]?.();
+      if (blockHideSidebar) {
+        return;
+      }
       hidePanel();
     },
     [hidePanel]
@@ -104,7 +111,7 @@ function SidebarPanel({
       {title ? (
         <SidebarPanelHeader>
           <Title>{title}</Title>
-          <PanelClose onClick={hidePanel} />
+          <PanelClose size="lg" onClick={hidePanel} aria-label={t('Close Panel')} />
         </SidebarPanelHeader>
       ) : null}
       <SidebarPanelBody hasHeader={!!title}>{children}</SidebarPanelBody>
@@ -145,10 +152,6 @@ const PanelClose = styled(IconClose)`
     color: ${p => p.theme.textColor};
   }
 `;
-
-PanelClose.defaultProps = {
-  size: 'lg',
-};
 
 const Title = styled('div')`
   font-size: ${p => p.theme.fontSizeExtraLarge};

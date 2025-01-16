@@ -48,9 +48,10 @@ export type SuspectFunction = {
   fingerprint: number;
   name: string;
   p75: number;
+  p95: number;
   p99: number;
   package: string;
-  path: string;
+  sum: number;
   worst: string;
 };
 

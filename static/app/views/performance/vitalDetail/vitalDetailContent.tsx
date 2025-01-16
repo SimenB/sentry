@@ -1,33 +1,35 @@
 import {Fragment, useState} from 'react';
-import {browserHistory, InjectedRouter} from 'react-router';
 import styled from '@emotion/styled';
-import {Location} from 'history';
+import type {Location} from 'history';
 import omit from 'lodash/omit';
 
-import {Client} from 'sentry/api';
+import type {Client} from 'sentry/api';
 import Feature from 'sentry/components/acl/feature';
-import Alert from 'sentry/components/alert';
+import {Alert} from 'sentry/components/alert';
 import ButtonBar from 'sentry/components/buttonBar';
 import {getInterval} from 'sentry/components/charts/utils';
 import {CreateAlertFromViewButton} from 'sentry/components/createAlertButton';
-import DatePageFilter from 'sentry/components/datePageFilter';
-import DropdownMenuControl from 'sentry/components/dropdownMenuControl';
-import {MenuItemProps} from 'sentry/components/dropdownMenuItem';
-import EnvironmentPageFilter from 'sentry/components/environmentPageFilter';
-import SearchBar from 'sentry/components/events/searchBar';
+import type {MenuItemProps} from 'sentry/components/dropdownMenu';
+import {DropdownMenu} from 'sentry/components/dropdownMenu';
 import * as Layout from 'sentry/components/layouts/thirds';
 import LoadingIndicator from 'sentry/components/loadingIndicator';
+import {DatePageFilter} from 'sentry/components/organizations/datePageFilter';
+import {EnvironmentPageFilter} from 'sentry/components/organizations/environmentPageFilter';
 import PageFilterBar from 'sentry/components/organizations/pageFilterBar';
 import {normalizeDateTimeParams} from 'sentry/components/organizations/pageFilters/parse';
+import {ProjectPageFilter} from 'sentry/components/organizations/projectPageFilter';
 import * as TeamKeyTransactionManager from 'sentry/components/performance/teamKeyTransactionsManager';
-import ProjectPageFilter from 'sentry/components/projectPageFilter';
+import {TransactionSearchQueryBuilder} from 'sentry/components/performance/transactionSearchQueryBuilder';
 import {IconCheckmark, IconClose} from 'sentry/icons';
 import {t} from 'sentry/locale';
-import space from 'sentry/styles/space';
-import {Organization, Project} from 'sentry/types';
-import trackAdvancedAnalyticsEvent from 'sentry/utils/analytics/trackAdvancedAnalyticsEvent';
+import {space} from 'sentry/styles/space';
+import type {InjectedRouter} from 'sentry/types/legacyReactRouter';
+import type {Organization} from 'sentry/types/organization';
+import type {Project} from 'sentry/types/project';
+import {trackAnalytics} from 'sentry/utils/analytics';
+import {browserHistory} from 'sentry/utils/browserHistory';
 import {getUtcToLocalDateObject} from 'sentry/utils/dates';
-import EventView from 'sentry/utils/discover/eventView';
+import type EventView from 'sentry/utils/discover/eventView';
 import {WebVital} from 'sentry/utils/fields';
 import {Browser} from 'sentry/utils/performance/vitals/constants';
 import {decodeScalar} from 'sentry/utils/queryString';
@@ -48,7 +50,6 @@ import {
 } from './utils';
 import VitalChart from './vitalChart';
 import VitalInfo from './vitalInfo';
-import VitalsComparison from './vitalsComparison';
 
 const FRONTEND_VITALS = [WebVital.FCP, WebVital.LCP, WebVital.FID, WebVital.CLS];
 
@@ -128,7 +129,7 @@ function VitalDetailContent(props: Props) {
               },
             });
 
-            trackAdvancedAnalyticsEvent('performance_views.vital_detail.switch_vital', {
+            trackAnalytics('performance_views.vital_detail.switch_vital', {
               organization,
               from_vital: vitalAbbreviations[vitalName] ?? 'undefined',
               to_vital: vitalAbbreviations[newVitalName] ?? 'undefined',
@@ -148,7 +149,7 @@ function VitalDetailContent(props: Props) {
     );
 
     return (
-      <DropdownMenuControl
+      <DropdownMenu
         items={items}
         triggerLabel={vitalAbbreviations[vitalName]}
         triggerProps={{
@@ -175,7 +176,7 @@ function VitalDetailContent(props: Props) {
   function renderContent(vital: WebVital) {
     const {location, organization, eventView, projects} = props;
 
-    const {fields, start, end, statsPeriod, environment, project} = eventView;
+    const {start, end, statsPeriod, environment, project} = eventView;
 
     const query = decodeScalar(location.query.query, '');
     const orgSlug = organization.slug;
@@ -194,31 +195,17 @@ function VitalDetailContent(props: Props) {
           <PageFilterBar condensed>
             <ProjectPageFilter />
             <EnvironmentPageFilter />
-            <DatePageFilter alignDropdown="left" />
+            <DatePageFilter />
           </PageFilterBar>
-          <SearchBar
-            searchSource="performance_vitals"
-            organization={organization}
-            projectIds={project}
-            query={query}
-            fields={fields}
-            onSearch={handleSearch}
-          />
+          <StyledSearchBarWrapper>
+            <TransactionSearchQueryBuilder
+              projects={project}
+              initialQuery={query}
+              onSearch={handleSearch}
+              searchSource="performance_vitals"
+            />
+          </StyledSearchBarWrapper>
         </FilterActions>
-        {organization.experiments.VitalsAlertExperiment ? (
-          <VitalsComparison
-            {...{
-              organization,
-              location,
-              vital,
-              project,
-              end,
-              environment,
-              statsPeriod,
-              start,
-            }}
-          />
-        ) : null}
         <VitalChart
           organization={organization}
           query={query}
@@ -283,7 +270,7 @@ function VitalDetailContent(props: Props) {
         <Layout.HeaderActions>
           <ButtonBar gap={1}>
             {renderVitalSwitcher()}
-            <Feature organization={organization} features={['incidents']}>
+            <Feature organization={organization} features="incidents">
               {({hasFeature}) => hasFeature && renderCreateAlertButton()}
             </Feature>
           </ButtonBar>
@@ -297,9 +284,9 @@ function VitalDetailContent(props: Props) {
             {Object.values(Browser).map(browser => (
               <BrowserItem key={browser}>
                 {vitalSupportedBrowsers[vitalName]?.includes(browser) ? (
-                  <IconCheckmark color="green300" size="sm" />
+                  <IconCheckmark color="successText" size="sm" />
                 ) : (
-                  <IconClose color="red300" size="sm" />
+                  <IconClose color="dangerText" size="sm" />
                 )}
                 {browser}
               </BrowserItem>
@@ -342,5 +329,17 @@ const FilterActions = styled('div')`
 
   @media (min-width: ${p => p.theme.breakpoints.small}) {
     grid-template-columns: auto 1fr;
+  }
+`;
+
+const StyledSearchBarWrapper = styled('div')`
+  @media (min-width: ${p => p.theme.breakpoints.small}) {
+    order: 1;
+    grid-column: 1/6;
+  }
+
+  @media (min-width: ${p => p.theme.breakpoints.xlarge}) {
+    order: initial;
+    grid-column: auto;
   }
 `;

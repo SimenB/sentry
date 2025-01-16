@@ -9,18 +9,24 @@ on:
     branches:
       - master
 
+defaults:
+  run:
+    # the default default is:
+    #      bash --noprofile --norc -eo pipefail {0}
+    shell: bash --noprofile --norc -eo pipefail -ux {0}
+
 jobs:
   bump-sentry:
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-24.04
     steps:
       - name: checkout
-        uses: actions/checkout@d0651293c4a5a52e711f25b41b05b2212f385d28  # v3
+        uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4.1.7
         with:
           # For getsentry/bin/bump-sentry, sentry needs to be at ../sentry relative to getsentry.
           path: sentry
 
       - name: checkout getsentry
-        uses: actions/checkout@d0651293c4a5a52e711f25b41b05b2212f385d28  # v3
+        uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4.1.7
         with:
           repository: 'getsentry/getsentry'
           path: getsentry
@@ -28,14 +34,7 @@ jobs:
           # who can write to getsentry and is SAML+SSO ready.
           token: ${{ secrets.BUMP_SENTRY_TOKEN }}
 
-      - name: install dependencies
-        shell: bash
-        run: |
-          cd getsentry
-          python -m pip install -q "$(grep '^pip-tools==' requirements-dev-frozen.txt)"
-
       - name: bump-sentry ${{ github.sha }}
-        shell: bash
         run: |
           cd getsentry
 
@@ -47,7 +46,10 @@ jobs:
               git push origin master && exit 0
               # There's a little bit of network delay here that suffices
               # as a small sleep.
-              git pull --rebase origin master
+              git \
+                -c user.name=getsentry-bot \
+                -c user.email=bot@sentry.io \
+                pull --rebase origin master
           done
 
           # 5th and final attempt.

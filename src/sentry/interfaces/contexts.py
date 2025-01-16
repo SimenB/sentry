@@ -1,6 +1,10 @@
-import string
+from __future__ import annotations
 
-from django.utils.encoding import force_text
+import string
+from typing import Any, ClassVar, TypeVar
+
+import sentry_sdk
+from django.utils.encoding import force_str
 
 from sentry.interfaces.base import Interface
 from sentry.utils.json import prune_empty_keys
@@ -8,7 +12,9 @@ from sentry.utils.safe import get_path
 
 __all__ = ("Contexts",)
 
-context_types = {}
+ContextTypeT = TypeVar("ContextTypeT", bound="ContextType")
+
+context_types: dict[str, type[ContextType]] = {}
 
 
 class _IndexFormatter(string.Formatter):
@@ -22,14 +28,60 @@ def format_index_expr(format_string, data):
     return str(_IndexFormatter().vformat(str(format_string), (), data).strip())
 
 
-def contexttype(cls):
+def contexttype(cls: type[ContextTypeT]) -> type[ContextTypeT]:
     context_types[cls.type] = cls
     return cls
 
 
+# NOTE: Are you adding a new context? Make sure to also update the
+# documentation in the sentry develop docs [0]!
+#
+# [0]: https://develop.sentry.dev/sdk/event-payloads/contexts
+
+
 class ContextType:
-    indexed_fields = None
-    type = None
+    context_to_tag_mapping: ClassVar[dict[str, str]] = {}
+    """
+    This indicates which fields should be promoted into tags during event
+    normalization. (See EventManager)
+
+    The key for each entry is used as the name of the tag suffixed by the
+    "alias" of the context (this is the key of the context in the contexts
+    object, it is NOT the `type` of the context, though they are often the
+    same).
+
+    The value is a format string spec that uses python string.Formatter to
+    interpolate any value from the context object.
+
+    There is one special case:
+
+     - When the key of the mapping is an empty string the tag name will simply be
+       the alias.
+
+    For example if you have a context named "myContext" with the data:
+
+    ```json
+    "myContext": {
+        "some_value": "hello world",
+        "subkey": "whatever",
+        "type": "myContext"
+    }
+    ```
+
+    and you have a context_to_tag_mapping that looks like
+
+    ```python
+    context_to_tag_mapping = {"": "{some_value}", "subkey": "{subkey}"}
+    ```
+
+    Then normalization will result in two tags being promoted:
+
+     - myContext: "hello world"
+     - myContext.subkey: "whatever"
+    """
+
+    type: str
+    """This should match the `type` key in context object"""
 
     def __init__(self, alias, data):
         self.alias = alias
@@ -41,7 +93,10 @@ class ContextType:
             # Even if the value is an empty string,
             # we still want to display the info the UI
             if value is not None:
-                ctx_data[force_text(key)] = value
+                ctx_data[force_str(key)] = value
+            # Numbers exceeding 15 place values will be converted to strings to avoid rendering issues
+            if isinstance(value, (int, float, list, dict)):
+                ctx_data[force_str(key)] = self.change_type(value)
         self.data = ctx_data
 
     def to_json(self):
@@ -68,8 +123,8 @@ class ContextType:
             return rv[0]
 
     def iter_tags(self):
-        if self.indexed_fields:
-            for field, f_string in self.indexed_fields.items():
+        if self.context_to_tag_mapping:
+            for field, f_string in self.context_to_tag_mapping.items():
                 try:
                     value = format_index_expr(f_string, self.data)
                 except KeyError:
@@ -79,6 +134,38 @@ class ContextType:
                         yield (self.alias, value)
                     else:
                         yield (f"{self.alias}.{field}", value)
+
+    def change_type(self, value: int | float | list | dict) -> Any:
+        if isinstance(value, (float, int)) and len(str_value := force_str(value)) > 15:
+            return str_value
+        if isinstance(value, list):
+            return [self.change_type(el) for el in value]
+        elif isinstance(value, dict):
+            return {key: self.change_type(el) for key, el in value.items()}
+        else:
+            return value
+
+
+# NOTE:
+# If you are adding a new context to tag mapping which creates a tag out of an interpolation
+# of multiple context fields, you will most likely have to add the same mapping creation in Relay,
+# which should be added directly to the context payload itself, and you should reflect this here.
+#
+# Current examples of this include the `os`, `runtime` and `browser` fields of their respective context.
+#
+# Example:
+# Suppose you have a new context named "my_context" which has fields:
+# - "field_1"
+# - "field_2"
+#
+# And you want to create a tag named "field_3" which is equal to "{field_1}-{field_2}".
+#
+# If you do this here, on demand metrics will stop working because if a user filters by "field_3" and
+# we generate a metrics extraction specification for it, Relay won't know what "field_3" means, it will
+# only know "field_1" and "field_2" from the context.
+#
+# To solve this, you should materialize "field_3" during event normalization in Relay and directly express
+# the mapping in Sentry as "field_3" is equal to "field_3" (which was added by Relay during normalization).
 
 
 # TODO(dcramer): contexts need to document/describe expected (optional) fields
@@ -90,52 +177,58 @@ class DefaultContextType(ContextType):
 @contexttype
 class AppContextType(ContextType):
     type = "app"
-    indexed_fields = {"device": "{device_app_hash}"}
+    context_to_tag_mapping = {"device": "{device_app_hash}"}
 
 
 @contexttype
 class DeviceContextType(ContextType):
     type = "device"
-    indexed_fields = {"": "{model}", "family": "{family}"}
+    context_to_tag_mapping = {"": "{model}", "family": "{family}"}
     # model_id, arch
 
 
 @contexttype
 class RuntimeContextType(ContextType):
     type = "runtime"
-    indexed_fields = {"": "{name} {version}", "name": "{name}"}
+    context_to_tag_mapping = {"": "{runtime}", "name": "{name}"}
 
 
 @contexttype
 class BrowserContextType(ContextType):
     type = "browser"
-    indexed_fields = {"": "{name} {version}", "name": "{name}"}
+    context_to_tag_mapping = {"": "{browser}", "name": "{name}"}
     # viewport
 
 
 @contexttype
 class OsContextType(ContextType):
     type = "os"
-    indexed_fields = {"": "{name} {version}", "name": "{name}", "rooted": "{rooted}"}
+    context_to_tag_mapping = {"": "{os}", "name": "{name}", "rooted": "{rooted}"}
     # build, rooted
 
 
 @contexttype
 class GpuContextType(ContextType):
     type = "gpu"
-    indexed_fields = {"name": "{name}", "vendor": "{vendor_name}"}
+    context_to_tag_mapping = {"name": "{name}", "vendor": "{vendor_name}"}
 
 
 @contexttype
 class MonitorContextType(ContextType):
     type = "monitor"
-    indexed_fields = {"id": "{id}"}
+    context_to_tag_mapping = {"id": "{id}", "slug": "{slug}"}
 
 
 @contexttype
 class TraceContextType(ContextType):
     type = "trace"
-    indexed_fields = {}
+    context_to_tag_mapping = {}
+
+
+@contexttype
+class OtelContextType(ContextType):
+    type = "otel"
+    context_to_tag_mapping = {}
 
 
 class Contexts(Interface):
@@ -149,6 +242,8 @@ class Contexts(Interface):
     @classmethod
     def to_python(cls, data, **kwargs):
         rv = {}
+
+        # Note the alias is the key of the context entry
         for alias, value in data.items():
             # XXX(markus): The `None`-case should be handled in the UI and
             # other consumers of this interface
@@ -160,7 +255,12 @@ class Contexts(Interface):
     @classmethod
     def normalize_context(cls, alias, data):
         ctx_type = data.get("type", alias)
-        ctx_cls = context_types.get(ctx_type, DefaultContextType)
+        try:
+            ctx_cls = context_types.get(ctx_type, DefaultContextType)
+        except TypeError:
+            # Debugging information for SENTRY-FOR-SENTRY-2NH2.
+            sentry_sdk.set_context("ctx_type", ctx_type)
+            raise
         return ctx_cls(alias, data)
 
     def iter_contexts(self):

@@ -1,23 +1,24 @@
-import random
-
 from django.conf import settings
 from django.db import connections, transaction
 from django.db.models.signals import post_migrate
 
-from sentry import options
+from sentry.backup.scopes import RelocationScope
 from sentry.db.models import (
     BoundedBigIntegerField,
     FlexibleForeignKey,
     Model,
     get_model_if_available,
-    region_silo_only_model,
+    region_silo_model,
     sane_repr,
 )
+from sentry.features.rollout import in_random_rollout
+from sentry.silo.base import SiloMode
+from sentry.silo.safety import unguarded_write
 
 
-@region_silo_only_model
+@region_silo_model
 class Counter(Model):
-    __include_in_export__ = True
+    __relocation_scope__ = RelocationScope.Organization
 
     project = FlexibleForeignKey("sentry.Project", unique=True)
     value = BoundedBigIntegerField()
@@ -39,15 +40,12 @@ def increment_project_counter(project, delta=1, using="default"):
     if delta <= 0:
         raise ValueError("There is only one way, and that's up.")
 
-    sample_rate = options.get("store.projectcounter-modern-upsert-sample-rate")
-
-    modern_upsert = sample_rate and random.random() <= sample_rate
+    modern_upsert = in_random_rollout("store.projectcounter-modern-upsert-sample-rate")
 
     # To prevent the statement_timeout leaking into the session we need to use
     # set local which can be used only within a transaction
     with transaction.atomic(using=using):
-        cur = connections[using].cursor()
-        try:
+        with connections[using].cursor() as cur:
             statement_timeout = None
             if settings.SENTRY_PROJECT_COUNTER_STATEMENT_TIMEOUT:
                 # WARNING: This is not a proper fix and should be removed once
@@ -85,9 +83,6 @@ def increment_project_counter(project, delta=1, using="default"):
 
             return project_counter
 
-        finally:
-            cur.close()
-
 
 # this must be idempotent because it seems to execute twice
 # (at least during test runs)
@@ -98,8 +93,10 @@ def create_counter_function(app_config, using, **kwargs):
     if not get_model_if_available(app_config, "Counter"):
         return
 
-    cursor = connections[using].cursor()
-    try:
+    if SiloMode.get_current_mode() == SiloMode.CONTROL:
+        return
+
+    with unguarded_write(using), connections[using].cursor() as cursor:
         cursor.execute(
             """
             create or replace function sentry_increment_project_counter(
@@ -126,8 +123,6 @@ def create_counter_function(app_config, using, **kwargs):
             $$ language plpgsql;
         """
         )
-    finally:
-        cursor.close()
 
 
 post_migrate.connect(create_counter_function, dispatch_uid="create_counter_function", weak=False)

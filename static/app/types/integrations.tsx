@@ -1,15 +1,17 @@
-import type Alert from 'sentry/components/alert';
+import type {AlertProps} from 'sentry/components/alert';
 import type {Field} from 'sentry/components/forms/types';
-import type {PlatformKey} from 'sentry/data/platformCategories';
 import type {
   DISABLED as DISABLED_STATUS,
   INSTALLED,
   NOT_INSTALLED,
   PENDING,
-} from 'sentry/views/organizationIntegrations/constants';
+  PENDING_DELETION,
+} from 'sentry/views/settings/organizationIntegrations/constants';
 
 import type {Avatar, Choice, Choices, ObjectStatus, Scope} from './core';
-import type {BaseRelease, Release} from './release';
+import type {ParsedOwnershipRule} from './group';
+import type {PlatformKey} from './project';
+import type {BaseRelease} from './release';
 import type {User} from './user';
 
 export type PermissionValue = 'no-access' | 'read' | 'write' | 'admin';
@@ -21,6 +23,7 @@ export type Permissions = {
   Project: PermissionValue;
   Release: PermissionValue;
   Team: PermissionValue;
+  Alerts?: PermissionValue;
 };
 
 export type PermissionResource = keyof Permissions;
@@ -72,6 +75,7 @@ export enum RepositoryStatus {
 
 export type Repository = {
   dateCreated: string;
+  externalId: string;
   externalSlug: string;
   id: string;
   integrationId: string;
@@ -79,6 +83,18 @@ export type Repository = {
   provider: {id: string; name: string};
   status: RepositoryStatus;
   url: string;
+};
+
+/**
+ * Integration Repositories from OrganizationIntegrationReposEndpoint
+ */
+export type IntegrationRepository = {
+  /**
+   * ex - getsentry/sentry
+   */
+  identifier: string;
+  name: string;
+  defaultBranch?: string | null;
 };
 
 export type Commit = {
@@ -89,16 +105,13 @@ export type Commit = {
   author?: User;
   pullRequest?: PullRequest | null;
   repository?: Repository;
+  suspectCommitType?: string;
 };
 
 export type Committer = {
   author: User;
   commits: Commit[];
 };
-
-export interface ReleaseCommitter extends Committer {
-  release: Release;
-}
 
 export type CommitAuthor = {
   email?: string;
@@ -147,6 +160,40 @@ export type SentryAppSchemaStacktraceLink = {
   url: string;
   params?: Array<string>;
 };
+
+export enum Coverage {
+  NOT_APPLICABLE = -1,
+  COVERED = 0,
+  NOT_COVERED = 1,
+  PARTIAL = 2,
+}
+export type LineCoverage = [lineNo: number, coverage: Coverage];
+
+export enum CodecovStatusCode {
+  COVERAGE_EXISTS = 200,
+  NO_INTEGRATION = 404,
+  NO_COVERAGE_DATA = 400,
+}
+
+export interface CodecovResponse {
+  status: CodecovStatusCode;
+  attemptedUrl?: string;
+  coverageUrl?: string;
+  lineCoverage?: LineCoverage[];
+}
+
+export interface StacktraceLinkResult {
+  integrations: Integration[];
+  attemptedUrl?: string;
+  config?: RepositoryProjectPathConfigWithIntegration;
+  error?: StacktraceErrorMessage;
+  sourceUrl?: string;
+}
+
+export type StacktraceErrorMessage =
+  | 'file_not_found'
+  | 'stack_root_mismatch'
+  | 'integration_link_forbidden';
 
 export type SentryAppSchemaElement =
   | SentryAppSchemaIssueLink
@@ -203,8 +250,12 @@ export type SentryAppInstallation = {
   code?: string;
 };
 
-export type SentryAppComponent = {
-  schema: SentryAppSchemaStacktraceLink;
+export type SentryAppComponent<
+  Schema extends SentryAppSchemaStacktraceLink | SentryAppSchemaElement =
+    | SentryAppSchemaStacktraceLink
+    | SentryAppSchemaElement,
+> = {
+  schema: Schema;
   sentryApp: {
     avatars: Avatar[];
     name: string;
@@ -213,7 +264,7 @@ export type SentryAppComponent = {
   };
   type: 'issue-link' | 'alert-rule-action' | 'issue-media' | 'stacktrace-link';
   uuid: string;
-  error?: boolean;
+  error?: string | boolean;
 };
 
 export type SentryAppWebhookRequest = {
@@ -244,7 +295,8 @@ export type IntegrationInstallationStatus =
   | typeof INSTALLED
   | typeof NOT_INSTALLED
   | typeof PENDING
-  | typeof DISABLED_STATUS;
+  | typeof DISABLED_STATUS
+  | typeof PENDING_DELETION;
 
 type IntegrationDialog = {
   actionText: string;
@@ -265,9 +317,7 @@ export type DocIntegration = {
 };
 
 type IntegrationAspects = {
-  alerts?: Array<
-    React.ComponentProps<typeof Alert> & {text: string; icon?: string | React.ReactNode}
-  >;
+  alerts?: Array<AlertProps & {text: string; icon?: string | React.ReactNode}>;
   configure_integration?: {
     title: string;
   };
@@ -306,16 +356,19 @@ export interface OrganizationIntegrationProvider extends BaseIntegrationProvider
   aspects: IntegrationAspects;
 }
 
-export interface Integration {
-  accountType: string;
-  domainName: string;
-  gracePeriodEnd: string;
-  icon: string;
+interface CommonIntegration {
+  accountType: string | null;
+  domainName: string | null;
+  gracePeriodEnd: string | null;
+  icon: string | null;
   id: string;
   name: string;
   organizationIntegrationStatus: ObjectStatus;
   provider: OrganizationIntegrationProvider;
   status: ObjectStatus;
+}
+
+export interface Integration extends CommonIntegration {
   dynamicDisplayInformation?: {
     configure_integration?: {
       instructions: string[];
@@ -331,21 +384,12 @@ type ConfigData = {
   installationType?: string;
 };
 
-export type OrganizationIntegration = {
-  accountType: string | null;
+export interface OrganizationIntegration extends Integration {
   configData: ConfigData | null;
   configOrganization: Field[];
-  domainName: string | null;
   externalId: string;
-  gracePeriodEnd: string;
-  icon: string | null;
-  id: string;
-  name: string;
   organizationId: string;
-  organizationIntegrationStatus: ObjectStatus;
-  provider: OrganizationIntegrationProvider;
-  status: ObjectStatus;
-};
+}
 
 // we include the configOrganization when we need it
 export interface IntegrationWithConfig extends Integration {
@@ -377,6 +421,16 @@ export type PlatformExternalIssue = {
   webUrl: string;
 };
 
+export type ExternalIssue = {
+  description: string;
+  displayName: string;
+  id: string;
+  integrationKey: string;
+  integrationName: string;
+  key: string;
+  title: string;
+};
+
 /**
  * The issue config form fields we get are basically the form fields we use in
  * the UI but with some extra information. Some fields marked optional in the
@@ -404,7 +458,6 @@ export type IntegrationIssueConfig = {
  * Project Plugins
  */
 export type PluginNoProject = {
-  assets: Array<{url: string}>;
   canDisable: boolean;
   // TODO(ts)
   contexts: any[];
@@ -420,7 +473,6 @@ export type PluginNoProject = {
   name: string;
   shortName: string;
   slug: string;
-  // TODO(ts)
   status: string;
   type: string;
   altIsSentryApp?: boolean;
@@ -428,6 +480,12 @@ export type PluginNoProject = {
   deprecationDate?: string;
   description?: string;
   firstPartyAlternative?: string;
+  issue?: {
+    issue_id: string;
+    // TODO(TS): Label can be an object, unknown shape
+    label: string | any;
+    url: string;
+  };
   resourceLinks?: Array<{title: string; url: string}>;
   version?: string;
 };
@@ -474,6 +532,11 @@ export type ServiceHook = {
  */
 export type CodeOwner = {
   codeMappingId: string;
+  /**
+   * Link to the CODEOWNERS file in source control
+   * 'unknown' if the api fails to fetch the file
+   */
+  codeOwnersUrl: string | 'unknown';
   dateCreated: string;
   dateUpdated: string;
   errors: {
@@ -488,6 +551,7 @@ export type CodeOwner = {
   raw: string;
   codeMapping?: RepositoryProjectPathConfig;
   ownershipSyntax?: string;
+  schema?: {rules: ParsedOwnershipRule[]; version: number};
 };
 
 export type CodeownersFile = {
@@ -531,17 +595,4 @@ export type ServerlessFunction = {
   outOfDate: boolean;
   runtime: string;
   version: number;
-};
-
-export type SentryFunction = {
-  author: string;
-  code: string;
-  name: string;
-  slug: string;
-  env_variables?: Array<{
-    name: string;
-    value: string;
-  }>;
-  events?: string[];
-  overview?: string;
 };

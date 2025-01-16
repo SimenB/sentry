@@ -1,9 +1,12 @@
 export type MonitorsEventParameters = {
-  'monitors.page_viewed': {};
+  'landing_page.platform_guide.viewed': {
+    guide: string;
+    platform: string;
+  };
 };
 
 type MonitorsAnalyticsKey = keyof MonitorsEventParameters;
 
 export const monitorsEventMap: Record<MonitorsAnalyticsKey, string> = {
-  'monitors.page_viewed': 'Monitors: Page Viewed',
+  'landing_page.platform_guide.viewed': 'Crons Landing Page: Viewed Platform Guide',
 };

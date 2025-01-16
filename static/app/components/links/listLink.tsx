@@ -1,62 +1,57 @@
-// eslint-disable-next-line no-restricted-imports
-import {Link as RouterLink, withRouter, WithRouterProps} from 'react-router';
+import {NavLink} from 'react-router-dom';
 import styled from '@emotion/styled';
 import classNames from 'classnames';
-import {LocationDescriptor} from 'history';
-import * as qs from 'query-string';
+import type {LocationDescriptor} from 'history';
 
-type LinkProps = Omit<React.ComponentProps<typeof RouterLink>, 'to'>;
+import {locationDescriptorToTo} from 'sentry/utils/reactRouter6Compat/location';
+import normalizeUrl from 'sentry/utils/url/normalizeUrl';
+import {useLocation} from 'sentry/utils/useLocation';
 
-type Props = WithRouterProps &
-  LinkProps & {
-    /**
-     * Link target. We don't want to expose the ToLocationFunction on this component.
-     */
-    to: LocationDescriptor;
-    /**
-     * The class to apply when the link is 'active'
-     */
-    activeClassName?: string;
-    disabled?: boolean;
-    index?: boolean;
-    /**
-     * Should be should be supplied by the parent component
-     */
-    isActive?: (location: LocationDescriptor, indexOnly?: boolean) => boolean;
-    query?: string;
-  };
+interface ListLinkProps
+  extends Omit<
+    React.DetailedHTMLProps<React.HTMLAttributes<HTMLAnchorElement>, HTMLAnchorElement>,
+    'href' | 'target' | 'as' | 'css' | 'ref'
+  > {
+  /**
+   * Link target. We don't want to expose the ToLocationFunction on this component.
+   */
+  to: LocationDescriptor;
+  disabled?: boolean;
+  index?: boolean;
+  /**
+   * Should be should be supplied by the parent component
+   */
+  isActive?: (location: LocationDescriptor, indexOnly?: boolean) => boolean;
+}
 
 function ListLink({
   children,
   className,
   isActive,
-  query,
-  router,
   to,
-  activeClassName = 'active',
   index = false,
   disabled = false,
   ...props
-}: Props) {
-  const queryData = query ? qs.parse(query) : undefined;
-  const target: LocationDescriptor =
-    typeof to === 'string' ? {pathname: to, query: queryData} : to;
+}: ListLinkProps) {
+  const location = useLocation();
+  const target = normalizeUrl(to);
 
-  const active = isActive?.(target, index) ?? router.isActive(target, index);
+  const active =
+    isActive?.(target, index) ??
+    // XXX(epurkhiser): This is carry over from the react-router 3 days.
+    // There's probably a a better way to detect active
+    location.pathname === (typeof target === 'string' ? target : target.pathname);
 
   return (
-    <StyledLi
-      className={classNames({[activeClassName]: active}, className)}
-      disabled={disabled}
-    >
-      <RouterLink {...props} onlyActiveOnIndex={index} to={disabled ? '' : to}>
+    <StyledLi className={classNames({active}, className)} disabled={disabled}>
+      <NavLink {...props} to={disabled ? '' : locationDescriptorToTo(target)}>
         {children}
-      </RouterLink>
+      </NavLink>
     </StyledLi>
   );
 }
 
-export default withRouter(ListLink);
+export default ListLink;
 
 const StyledLi = styled('li', {
   shouldForwardProp: prop => prop !== 'disabled',
@@ -64,12 +59,16 @@ const StyledLi = styled('li', {
   ${p =>
     p.disabled &&
     `
-   a {
-    color:${p.theme.disabled} !important;
-    pointer-events: none;
-    :hover {
-      color: ${p.theme.disabled}  !important;
+  a {
+      color:${p.theme.disabled} !important;
+      :hover {
+        color: ${p.theme.disabled}  !important;
+      }
+      cursor: default !important;
     }
-   }
+
+  a:active {
+    pointer-events: none;
+  }
 `}
 `;

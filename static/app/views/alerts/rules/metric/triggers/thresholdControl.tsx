@@ -1,17 +1,16 @@
 import {Component} from 'react';
 import styled from '@emotion/styled';
 
-import Feature from 'sentry/components/acl/feature';
 import SelectControl from 'sentry/components/forms/controls/selectControl';
 import Input from 'sentry/components/input';
 import NumberDragControl from 'sentry/components/numberDragControl';
-import Tooltip from 'sentry/components/tooltip';
-import {t, tct, tn} from 'sentry/locale';
-import space from 'sentry/styles/space';
+import {Tooltip} from 'sentry/components/tooltip';
+import {t, tct} from 'sentry/locale';
+import {space} from 'sentry/styles/space';
+import type {ThresholdControlValue} from 'sentry/views/alerts/rules/metric/types';
 import {
   AlertRuleComparisonType,
   AlertRuleThresholdType,
-  ThresholdControlValue,
 } from 'sentry/views/alerts/rules/metric/types';
 
 type Props = ThresholdControlValue & {
@@ -19,10 +18,8 @@ type Props = ThresholdControlValue & {
   disableThresholdType: boolean;
   disabled: boolean;
   onChange: (value: ThresholdControlValue, e: React.FormEvent) => void;
-  onThresholdPeriodChange: (value: number) => void;
   onThresholdTypeChange: (thresholdType: AlertRuleThresholdType) => void;
   placeholder: string;
-  thresholdPeriod: number | null;
   type: string;
   hideControl?: boolean;
 };
@@ -90,14 +87,9 @@ class ThresholdControl extends Component<Props, State> {
     onChange({thresholdType, threshold: currentValue + delta}, e);
   };
 
-  handleThresholdPeriodChange = ({value}) => {
-    this.props.onThresholdPeriodChange(value);
-  };
-
   render() {
     const {currentValue} = this.state;
     const {
-      thresholdPeriod,
       thresholdType,
       comparisonType,
       hideControl,
@@ -127,8 +119,8 @@ class ThresholdControl extends Component<Props, State> {
                         ? t('When below Critical or Warning')
                         : t('Below')
                       : hideControl
-                      ? t('When lower than Critical or Warning')
-                      : t('Lower than'),
+                        ? t('When lower than Critical or Warning')
+                        : t('Lower than'),
                 },
                 {
                   value: AlertRuleThresholdType.ABOVE,
@@ -138,8 +130,8 @@ class ThresholdControl extends Component<Props, State> {
                         ? t('When above Critical or Warning')
                         : t('Above')
                       : hideControl
-                      ? t('When higher than Critical or Warning')
-                      : t('Higher than'),
+                        ? t('When higher than Critical or Warning')
+                        : t('Higher than'),
                 },
               ]}
               components={disableThresholdType ? {DropdownIndicator: null} : undefined}
@@ -195,22 +187,6 @@ class ThresholdControl extends Component<Props, State> {
             </ThresholdContainer>
           )}
         </Container>
-        {!hideControl && (
-          <Feature features={['metric-alert-threshold-period']}>
-            <SelectContainer>
-              <SelectControl
-                isDisabled={disabled}
-                name="thresholdPeriod"
-                value={thresholdPeriod}
-                options={[1, 2, 5, 10, 20].map(value => ({
-                  value,
-                  label: tn('For %s minute', 'For %s minutes', value),
-                }))}
-                onChange={this.handleThresholdPeriodChange}
-              />
-            </SelectContainer>
-          </Feature>
-        )}
       </Wrapper>
     );
   }

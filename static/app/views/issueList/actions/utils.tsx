@@ -1,10 +1,10 @@
 import {Fragment} from 'react';
-import capitalize from 'lodash/capitalize';
 
-import Alert from 'sentry/components/alert';
+import {Alert} from 'sentry/components/alert';
 import ExternalLink from 'sentry/components/links/externalLink';
 import {t, tct, tn} from 'sentry/locale';
-import {Organization, ResolutionStatusDetails} from 'sentry/types';
+import {capitalize} from 'sentry/utils/string/capitalize';
+import commonTheme from 'sentry/utils/theme';
 
 import ExtraDescription from './extraDescription';
 
@@ -14,11 +14,12 @@ export const BULK_LIMIT_STR = BULK_LIMIT.toLocaleString();
 export enum ConfirmAction {
   RESOLVE = 'resolve',
   UNRESOLVE = 'unresolve',
-  IGNORE = 'ignore',
+  ARCHIVE = 'archive',
   BOOKMARK = 'bookmark',
   UNBOOKMARK = 'unbookmark',
   MERGE = 'merge',
   DELETE = 'delete',
+  SET_PRIORITY = 'reprioritize',
 }
 
 function getBulkConfirmMessage(action: string, queryCount: number) {
@@ -43,14 +44,12 @@ function getBulkConfirmMessage(action: string, queryCount: number) {
 
 function PerformanceIssueAlert({
   allInQuerySelected,
-  organization,
   children,
 }: {
   allInQuerySelected: boolean;
   children: string;
-  organization: Organization;
 }) {
-  if (!allInQuerySelected || !organization.features.includes('performance-issues')) {
+  if (!allInQuerySelected) {
     return null;
   }
 
@@ -66,11 +65,9 @@ export function getConfirm({
   allInQuerySelected,
   query,
   queryCount,
-  organization,
 }: {
   allInQuerySelected: boolean;
   numIssues: number;
-  organization: Organization;
   query: string;
   queryCount: number;
 }) {
@@ -79,16 +76,20 @@ export function getConfirm({
     canBeUndone,
     append = '',
   }: {
-    action: ConfirmAction | string;
+    action: ConfirmAction;
     canBeUndone: boolean;
     append?: string;
   }) {
     const question = allInQuerySelected
       ? getBulkConfirmMessage(`${action}${append}`, queryCount)
       : tn(
-          `Are you sure you want to ${action} this %s issue${append}?`,
-          `Are you sure you want to ${action} these %s issues${append}?`,
-          numIssues
+          // Use sprintf argument swapping since the number value must come
+          // first. See https://github.com/alexei/sprintf.js#argument-swapping
+          `Are you sure you want to %2$s this %s issue%3$s?`,
+          `Are you sure you want to %2$s these %s issues%3$s?`,
+          numIssues,
+          action,
+          append
         );
 
     let message: React.ReactNode;
@@ -101,12 +102,12 @@ export function getConfirm({
                 'Bulk deletion is only recommended for junk data. To clear your stream, consider resolving or ignoring. [link:When should I delete events?]',
                 {
                   link: (
-                    <ExternalLink href="https://help.sentry.io/account/billing/when-should-i-delete-events/" />
+                    <ExternalLink href="https://sentry.zendesk.com/hc/en-us/articles/23813143627675-When-should-I-delete-events" />
                   ),
                 }
               )}
             </p>
-            <PerformanceIssueAlert {...{organization, allInQuerySelected}}>
+            <PerformanceIssueAlert allInQuerySelected={allInQuerySelected}>
               {t('Deleting performance issues is not yet supported and will be skipped.')}
             </PerformanceIssueAlert>
           </Fragment>
@@ -116,7 +117,7 @@ export function getConfirm({
         message = (
           <Fragment>
             <p>{t('Note that unmerging is currently an experimental feature.')}</p>
-            <PerformanceIssueAlert {...{organization, allInQuerySelected}}>
+            <PerformanceIssueAlert allInQuerySelected={allInQuerySelected}>
               {t('Merging performance issues is not yet supported and will be skipped.')}
             </PerformanceIssueAlert>
           </Fragment>
@@ -146,19 +147,24 @@ export function getLabel(numIssues: number, allInQuerySelected: boolean) {
   return function (action: string, append = '') {
     const capitalized = capitalize(action);
     const text = allInQuerySelected
-      ? t(`Bulk ${action} issues`)
-      : tn(
-          `${capitalized} %s selected issue`,
-          `${capitalized} %s selected issues`,
-          numIssues
-        );
+      ? t('Bulk %s issues', action)
+      : // Use sprintf argument swapping to put the capitalized string first. See
+        // https://github.com/alexei/sprintf.js#argument-swapping
+        tn(`%2$s %s selected issue`, `%2$s %s selected issues`, numIssues, capitalized);
 
     return text + append;
   };
 }
 
-export function performanceIssuesSupportsIgnoreAction(
-  statusDetails: ResolutionStatusDetails
-) {
-  return !(statusDetails.ignoreWindow || statusDetails.ignoreUserWindow);
-}
+// A mapping of which screen sizes will trigger the column to disappear
+// e.g. 'Trend': screen.small => 'Trend' column will disappear on screen.small widths
+export const COLUMN_BREAKPOINTS = {
+  ISSUE: undefined, // Issue column is always visible
+  TREND: commonTheme.breakpoints.small,
+  AGE: commonTheme.breakpoints.xlarge,
+  SEEN: commonTheme.breakpoints.xlarge,
+  EVENTS: commonTheme.breakpoints.medium,
+  USERS: commonTheme.breakpoints.medium,
+  PRIORITY: commonTheme.breakpoints.large,
+  ASSIGNEE: commonTheme.breakpoints.xsmall,
+};

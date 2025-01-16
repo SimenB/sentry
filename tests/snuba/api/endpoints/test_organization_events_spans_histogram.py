@@ -4,12 +4,10 @@ from django.urls import reverse
 from rest_framework.exceptions import ErrorDetail
 
 from sentry.testutils.cases import APITestCase, SnubaTestCase
-from sentry.testutils.helpers.datetime import before_now, iso_format
-from sentry.testutils.silo import region_silo_test
+from sentry.testutils.helpers.datetime import before_now
 from sentry.utils.samples import load_data
 
 
-@region_silo_test
 class OrganizationEventsSpansHistogramEndpointTest(APITestCase, SnubaTestCase):
     FEATURES = ["organizations:performance-span-histogram-view"]
     URL = "sentry-api-0-organization-events-spans-histogram"
@@ -22,7 +20,7 @@ class OrganizationEventsSpansHistogramEndpointTest(APITestCase, SnubaTestCase):
         self.project = self.create_project(organization=self.org)
         self.url = reverse(
             self.URL,
-            kwargs={"organization_slug": self.org.slug},
+            kwargs={"organization_id_or_slug": self.org.slug},
         )
 
         self.min_ago = before_now(minutes=1).replace(microsecond=0)
@@ -34,11 +32,10 @@ class OrganizationEventsSpansHistogramEndpointTest(APITestCase, SnubaTestCase):
                     "same_process_as_parent": True,
                     "parent_span_id": "a" * 16,
                     "span_id": x * 16,
-                    "start_timestamp": iso_format(self.min_ago + timedelta(seconds=1)),
-                    "timestamp": iso_format(self.min_ago + timedelta(seconds=4)),
+                    "start_timestamp": (self.min_ago + timedelta(seconds=1)).isoformat(),
+                    "timestamp": (self.min_ago + timedelta(seconds=4)).isoformat(),
                     "op": "django.middleware",
                     "description": "middleware span",
-                    "hash": "cd" * 8,
                     "exclusive_time": 3.0,
                 }
                 for x in ["b", "c"]
@@ -47,11 +44,10 @@ class OrganizationEventsSpansHistogramEndpointTest(APITestCase, SnubaTestCase):
                     "same_process_as_parent": True,
                     "parent_span_id": "a" * 16,
                     "span_id": x * 16,
-                    "start_timestamp": iso_format(self.min_ago + timedelta(seconds=4)),
-                    "timestamp": iso_format(self.min_ago + timedelta(seconds=5)),
+                    "start_timestamp": (self.min_ago + timedelta(seconds=4)).isoformat(),
+                    "timestamp": (self.min_ago + timedelta(seconds=5)).isoformat(),
                     "op": "django.middleware",
                     "description": "middleware span",
-                    "hash": "cd" * 8,
                     "exclusive_time": 10.0,
                 }
                 for x in ["d", "e", "f"]
@@ -73,7 +69,7 @@ class OrganizationEventsSpansHistogramEndpointTest(APITestCase, SnubaTestCase):
     def test_no_feature(self):
         query = {
             "projects": [-1],
-            "span": self.format_span("django.middleware", "cd" * 8),
+            "span": self.format_span("django.middleware", "2b9cbb96dbf59baa"),
             "numBuckets": 50,
         }
         response = self.do_request(query, False)
@@ -82,7 +78,7 @@ class OrganizationEventsSpansHistogramEndpointTest(APITestCase, SnubaTestCase):
     def test_no_projects(self):
         query = {
             "projects": [-1],
-            "span": self.format_span("django.middleware", "cd" * 8),
+            "span": self.format_span("django.middleware", "2b9cbb96dbf59baa"),
             "numBuckets": 50,
         }
         response = self.do_request(query)
@@ -104,7 +100,7 @@ class OrganizationEventsSpansHistogramEndpointTest(APITestCase, SnubaTestCase):
     def test_bad_params_missing_num_buckets(self):
         query = {
             "project": [self.project.id],
-            "span": self.format_span("django.middleware", "cd" * 8),
+            "span": self.format_span("django.middleware", "2b9cbb96dbf59baa"),
         }
 
         response = self.do_request(query)
@@ -117,7 +113,7 @@ class OrganizationEventsSpansHistogramEndpointTest(APITestCase, SnubaTestCase):
     def test_bad_params_invalid_num_buckets(self):
         query = {
             "project": [self.project.id],
-            "span": self.format_span("django.middleware", "cd" * 8),
+            "span": self.format_span("django.middleware", "2b9cbb96dbf59baa"),
             "numBuckets": "foo",
         }
 
@@ -131,7 +127,7 @@ class OrganizationEventsSpansHistogramEndpointTest(APITestCase, SnubaTestCase):
     def test_bad_params_outside_range_num_buckets(self):
         query = {
             "project": [self.project.id],
-            "span": self.format_span("django.middleware", "cd" * 8),
+            "span": self.format_span("django.middleware", "2b9cbb96dbf59baa"),
             "numBuckets": -1,
         }
 
@@ -145,7 +141,7 @@ class OrganizationEventsSpansHistogramEndpointTest(APITestCase, SnubaTestCase):
     def test_bad_params_num_buckets_too_large(self):
         query = {
             "project": [self.project.id],
-            "span": self.format_span("django.middleware", "cd" * 8),
+            "span": self.format_span("django.middleware", "2b9cbb96dbf59baa"),
             "numBuckets": 101,
         }
 
@@ -159,7 +155,7 @@ class OrganizationEventsSpansHistogramEndpointTest(APITestCase, SnubaTestCase):
     def test_bad_params_invalid_precision_too_small(self):
         query = {
             "project": [self.project.id],
-            "span": self.format_span("django.middleware", "cd" * 8),
+            "span": self.format_span("django.middleware", "2b9cbb96dbf59baa"),
             "numBuckets": 50,
             "precision": -1,
         }
@@ -174,7 +170,7 @@ class OrganizationEventsSpansHistogramEndpointTest(APITestCase, SnubaTestCase):
     def test_bad_params_invalid_precision_too_big(self):
         query = {
             "project": [self.project.id],
-            "span": self.format_span("django.middleware", "cd" * 8),
+            "span": self.format_span("django.middleware", "2b9cbb96dbf59baa"),
             "numBuckets": 50,
             "precision": 100,
         }
@@ -188,7 +184,7 @@ class OrganizationEventsSpansHistogramEndpointTest(APITestCase, SnubaTestCase):
     def test_bad_params_reverse_min_max(self):
         query = {
             "project": [self.project.id],
-            "span": self.format_span("django.middleware", "cd" * 8),
+            "span": self.format_span("django.middleware", "2b9cbb96dbf59baa"),
             "numBuckets": 50,
             "min": 10,
             "max": 5,
@@ -200,7 +196,7 @@ class OrganizationEventsSpansHistogramEndpointTest(APITestCase, SnubaTestCase):
     def test_bad_params_invalid_min(self):
         query = {
             "project": [self.project.id],
-            "span": self.format_span("django.middleware", "cd" * 8),
+            "span": self.format_span("django.middleware", "2b9cbb96dbf59baa"),
             "numBuckets": 50,
             "min": "foo",
         }
@@ -212,7 +208,7 @@ class OrganizationEventsSpansHistogramEndpointTest(APITestCase, SnubaTestCase):
     def test_bad_params_invalid_max(self):
         query = {
             "project": [self.project.id],
-            "span": self.format_span("django.middleware", "cd" * 8),
+            "span": self.format_span("django.middleware", "2b9cbb96dbf59baa"),
             "numBuckets": 50,
             "max": "bar",
         }
@@ -224,7 +220,7 @@ class OrganizationEventsSpansHistogramEndpointTest(APITestCase, SnubaTestCase):
     def test_bad_params_invalid_data_filter(self):
         query = {
             "project": [self.project.id],
-            "span": self.format_span("django.middleware", "cd" * 8),
+            "span": self.format_span("django.middleware", "2b9cbb96dbf59baa"),
             "numBuckets": 50,
             "dataFilter": "invalid",
         }
@@ -239,7 +235,7 @@ class OrganizationEventsSpansHistogramEndpointTest(APITestCase, SnubaTestCase):
         num_buckets = 5
         query = {
             "project": [self.project.id],
-            "span": self.format_span("django.view", "cd" * 8),
+            "span": self.format_span("django.view", "2b9cbb96dbf59baa"),
             "numBuckets": num_buckets,
         }
 
@@ -254,7 +250,7 @@ class OrganizationEventsSpansHistogramEndpointTest(APITestCase, SnubaTestCase):
         num_buckets = 50
         query = {
             "project": [self.project.id],
-            "span": self.format_span("django.middleware", "cd" * 8),
+            "span": self.format_span("django.middleware", "2b9cbb96dbf59baa"),
             "numBuckets": num_buckets,
         }
 
@@ -276,7 +272,7 @@ class OrganizationEventsSpansHistogramEndpointTest(APITestCase, SnubaTestCase):
         max = 11
         query = {
             "project": [self.project.id],
-            "span": self.format_span("django.middleware", "cd" * 8),
+            "span": self.format_span("django.middleware", "2b9cbb96dbf59baa"),
             "numBuckets": num_buckets,
             "min": min,
             "max": max,
@@ -299,7 +295,7 @@ class OrganizationEventsSpansHistogramEndpointTest(APITestCase, SnubaTestCase):
         min = 12
         query = {
             "project": [self.project.id],
-            "span": self.format_span("django.middleware", "cd" * 8),
+            "span": self.format_span("django.middleware", "2b9cbb96dbf59baa"),
             "numBuckets": num_buckets,
             "min": min,
         }
@@ -318,7 +314,7 @@ class OrganizationEventsSpansHistogramEndpointTest(APITestCase, SnubaTestCase):
         max = 2
         query = {
             "project": [self.project.id],
-            "span": self.format_span("django.middleware", "cd" * 8),
+            "span": self.format_span("django.middleware", "2b9cbb96dbf59baa"),
             "numBuckets": num_buckets,
             "max": max,
         }
@@ -339,11 +335,10 @@ class OrganizationEventsSpansHistogramEndpointTest(APITestCase, SnubaTestCase):
                 "same_process_as_parent": True,
                 "parent_span_id": "a" * 16,
                 "span_id": "e" * 16,
-                "start_timestamp": iso_format(self.min_ago + timedelta(seconds=1)),
-                "timestamp": iso_format(self.min_ago + timedelta(seconds=4)),
+                "start_timestamp": (self.min_ago + timedelta(seconds=1)).isoformat(),
+                "timestamp": (self.min_ago + timedelta(seconds=4)).isoformat(),
                 "op": "django.middleware",
                 "description": "middleware span",
-                "hash": "cd" * 8,
                 "exclusive_time": 60.0,
             }
         ]
@@ -352,7 +347,7 @@ class OrganizationEventsSpansHistogramEndpointTest(APITestCase, SnubaTestCase):
         self.create_event(spans=spans)
         query = {
             "project": [self.project.id],
-            "span": self.format_span("django.middleware", "cd" * 8),
+            "span": self.format_span("django.middleware", "2b9cbb96dbf59baa"),
             "numBuckets": 10,
             "dataFilter": "all",
         }
@@ -369,11 +364,10 @@ class OrganizationEventsSpansHistogramEndpointTest(APITestCase, SnubaTestCase):
                 "same_process_as_parent": True,
                 "parent_span_id": "a" * 16,
                 "span_id": "e" * 16,
-                "start_timestamp": iso_format(self.min_ago + timedelta(seconds=1)),
-                "timestamp": iso_format(self.min_ago + timedelta(seconds=4)),
+                "start_timestamp": (self.min_ago + timedelta(seconds=1)).isoformat(),
+                "timestamp": (self.min_ago + timedelta(seconds=4)).isoformat(),
                 "op": "django.middleware",
                 "description": "middleware span",
-                "hash": "cd" * 8,
                 "exclusive_time": 60.0,
             }
         ]
@@ -382,7 +376,7 @@ class OrganizationEventsSpansHistogramEndpointTest(APITestCase, SnubaTestCase):
         self.create_event(spans=spans)
         query = {
             "project": [self.project.id],
-            "span": self.format_span("django.middleware", "cd" * 8),
+            "span": self.format_span("django.middleware", "2b9cbb96dbf59baa"),
             "numBuckets": 10,
             "dataFilter": "exclude_outliers",
         }

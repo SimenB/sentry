@@ -1,65 +1,116 @@
-import React, {useMemo} from 'react';
+import type {ReactNode} from 'react';
+import {Fragment, useMemo} from 'react';
 import styled from '@emotion/styled';
-import {LocationDescriptor} from 'history';
+import type {LocationDescriptor} from 'history';
 
 import {AnnotatedText} from 'sentry/components/events/meta/annotatedText';
 import {KeyValueTableRow} from 'sentry/components/keyValueTable';
 import Link from 'sentry/components/links/link';
-import Tooltip from 'sentry/components/tooltip';
+import {CollapsibleValue} from 'sentry/components/structuredEventData/collapsibleValue';
+import {Tooltip} from 'sentry/components/tooltip';
 import Version from 'sentry/components/version';
-import {EventTag} from 'sentry/types/event';
-
-type Tag = {key: string; value: string[]};
+import {space} from 'sentry/styles/space';
 
 interface Props {
-  tag: Tag;
-  generateUrl?: (tag: EventTag) => LocationDescriptor;
-  query?: string;
+  name: string;
+  values: ReactNode[];
+  generateUrl?: (name: string, value: ReactNode) => LocationDescriptor;
 }
 
-function ReplayTagsTableRow({tag, query, generateUrl}: Props) {
+const expandedViewKeys = [
+  'sdk.replay.maskedViewClasses',
+  'sdk.replay.unmaskedViewClasses',
+];
+
+function renderValueList(values: ReactNode[]) {
+  if (typeof values[0] === 'string') {
+    return values[0];
+  }
+  const valueItems = values[0] as Array<string>;
+
+  if (!valueItems.length) {
+    return undefined;
+  }
+
+  return valueItems.map((value, index) => (
+    <Fragment key={`${index}-${value}`}>
+      {value}
+      <br />
+    </Fragment>
+  ));
+}
+
+function ReplayTagsTableRow({name, values, generateUrl}: Props) {
   const renderTagValue = useMemo(() => {
-    if (tag.key === 'release') {
-      return tag.value.map((value, index) => {
-        return (
-          <React.Fragment key={value}>
-            {index > 0 && ', '}
-            <Version key={index} version={value} anchor={false} withPackage />
-          </React.Fragment>
-        );
-      });
+    if (name === 'release') {
+      return values.map((value, index) => (
+        <Fragment key={`${name}-${index}-${value}`}>
+          {index > 0 && ', '}
+          <Version key={index} version={String(value)} anchor={false} withPackage />
+        </Fragment>
+      ));
+    }
+    if (
+      expandedViewKeys.includes(name) &&
+      renderValueList(values) &&
+      typeof renderValueList(values) !== 'string'
+    ) {
+      return (
+        <CollapsibleValue openTag="[" closeTag="]" path="$" noBasePadding>
+          {renderValueList(values)}
+        </CollapsibleValue>
+      );
     }
 
-    return tag.value.map((value, index) => {
-      const valueInQuery = query?.includes(`${tag.key}:${value}`);
-      const target = valueInQuery ? undefined : generateUrl?.({key: tag.key, value});
+    return values.map((value, index) => {
+      const target = generateUrl?.(name, value);
 
       return (
-        <React.Fragment key={value}>
+        <Fragment key={`${name}-${index}-${value}`}>
           {index > 0 && ', '}
           {target ? <Link to={target}>{value}</Link> : <AnnotatedText value={value} />}
-        </React.Fragment>
+        </Fragment>
       );
     });
-  }, [tag, query, generateUrl]);
+  }, [name, values, generateUrl]);
 
   return (
     <KeyValueTableRow
       keyName={
-        <StyledTooltip title={tag.key} showOnlyOnOverflow>
-          {tag.key}
+        <StyledTooltip title={name} showOnlyOnOverflow>
+          {name}
         </StyledTooltip>
       }
       value={
-        <StyledTooltip title={renderTagValue} isHoverable showOnlyOnOverflow>
-          {renderTagValue}
-        </StyledTooltip>
+        <ValueContainer>
+          <StyledTooltip
+            overlayStyle={
+              expandedViewKeys.includes(name) ? {textAlign: 'left'} : undefined
+            }
+            title={
+              expandedViewKeys.includes(name) ? renderValueList(values) : renderTagValue
+            }
+            isHoverable
+            showOnlyOnOverflow
+          >
+            {renderTagValue}
+          </StyledTooltip>
+        </ValueContainer>
       }
     />
   );
 }
 
 export default ReplayTagsTableRow;
+
+const ValueContainer = styled('div')`
+  span {
+    font-size: ${p => p.theme.fontSizeMedium};
+  }
+  display: flex;
+  padding: ${space(0.25)};
+  justify-content: flex-end;
+`;
 
 const StyledTooltip = styled(Tooltip)`
   ${p => p.theme.overflowEllipsis};

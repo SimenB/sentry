@@ -4,14 +4,21 @@ import EmailVerificationModal from 'sentry/components/modals/emailVerificationMo
 
 describe('Email Verification Modal', function () {
   it('renders', function () {
-    MockApiClient.warnOnMissingMocks();
+    MockApiClient.addMockResponse({
+      url: '/users/me/emails/',
+      body: [],
+    });
+
     render(
       <EmailVerificationModal
         Body={(p => p.children) as any}
         Header={(p => p.children) as any}
       />
     );
-    const message = screen.getByText('Please verify your email before');
+    const message = screen.getByText(
+      'Please verify your email before taking this action',
+      {exact: false}
+    );
     expect(message.parentElement).toHaveTextContent(
       'Please verify your email before taking this action, or go to your email settings.'
     );
@@ -24,7 +31,11 @@ describe('Email Verification Modal', function () {
 
   it('renders with action param', function () {
     const actionMessage = 'accepting the tenet';
-    MockApiClient.warnOnMissingMocks();
+    MockApiClient.addMockResponse({
+      url: '/users/me/emails/',
+      body: [],
+    });
+
     render(
       <EmailVerificationModal
         Body={(p => p.children) as any}
@@ -32,7 +43,10 @@ describe('Email Verification Modal', function () {
         actionMessage={actionMessage}
       />
     );
-    const message = screen.getByText('Please verify your email before');
+    const message = screen.getByText(
+      'Please verify your email before accepting the tenet',
+      {exact: false}
+    );
     expect(message.parentElement).toHaveTextContent(
       `Please verify your email before ${actionMessage}, or go to your email settings.`
     );

@@ -1,3 +1,4 @@
+import type {CSSProperties} from 'react';
 import styled from '@emotion/styled';
 
 type Props = {
@@ -15,29 +16,36 @@ type Props = {
    * In Safari (July 2022) you will see this instead: `...https://example.co`.
    *
    * See: https://stackoverflow.com/a/24800788
+   *
+   * @default 'right'
    */
   ellipsisDirection?: 'left' | 'right';
+  /**
+   * @default false
+   */
   isParagraph?: boolean;
+  style?: CSSProperties;
 };
 
 const TextOverflow = styled(
   ({
     children,
     className,
-    ellipsisDirection,
-    isParagraph,
+    ellipsisDirection = 'right',
+    isParagraph = false,
     ['data-test-id']: dataTestId,
+    style,
   }: Props) => {
     const Component = isParagraph ? 'p' : 'div';
     if (ellipsisDirection === 'left') {
       return (
-        <Component className={className} data-test-id={dataTestId}>
+        <Component className={className} style={style} data-test-id={dataTestId}>
           <bdi>{children}</bdi>
         </Component>
       );
     }
     return (
-      <Component className={className} data-test-id={dataTestId}>
+      <Component className={className} style={style} data-test-id={dataTestId}>
         {children}
       </Component>
     );
@@ -53,10 +61,5 @@ const TextOverflow = styled(
   width: auto;
   line-height: 1.2;
 `;
-
-TextOverflow.defaultProps = {
-  ellipsisDirection: 'right',
-  isParagraph: false,
-};
 
 export default TextOverflow;

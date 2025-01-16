@@ -1,136 +1,114 @@
-import {useCallback, useEffect, useState} from 'react';
-import {Location} from 'history';
+import {useCallback, useEffect, useMemo, useState} from 'react';
+import * as Sentry from '@sentry/react';
+import type {Location} from 'history';
 
-import type {Client} from 'sentry/api';
-import type {Organization} from 'sentry/types';
-import {TableData, TableDataRow} from 'sentry/utils/discover/discoverQuery';
-import EventView, {fromSorts} from 'sentry/utils/discover/eventView';
+import type {Organization} from 'sentry/types/organization';
+import EventView from 'sentry/utils/discover/eventView';
 import {doDiscoverQuery} from 'sentry/utils/discover/genericDiscoverQuery';
 import {decodeScalar} from 'sentry/utils/queryString';
-import fetchReplayList, {
-  DEFAULT_SORT,
-  REPLAY_LIST_FIELDS,
-} from 'sentry/utils/replays/fetchReplayList';
+import {DEFAULT_SORT} from 'sentry/utils/replays/fetchReplayList';
 import useApi from 'sentry/utils/useApi';
-import {ReplayListRecord} from 'sentry/views/replays/types';
-
-export type ReplayListRecordWithTx = ReplayListRecord & {
-  txEvent: {[x: string]: any};
-};
-
-type State = Awaited<ReturnType<typeof fetchReplayList>> & {
-  eventView: undefined | EventView;
-  replays?: ReplayListRecordWithTx[];
-};
+import type {ReplayListLocationQuery} from 'sentry/views/replays/types';
+import {REPLAY_LIST_FIELDS} from 'sentry/views/replays/types';
 
 type Options = {
-  eventsWithReplaysView: EventView;
   location: Location;
   organization: Organization;
+  replayIdsEventView: EventView;
+};
+
+export type EventSpanData = {
+  'count()': number;
+  replayId: string;
+  'span_ops_breakdown.relative': string;
+  'spans.browser': null | number;
+  'spans.db': null | number;
+  'spans.http': null | number;
+  'spans.resource': null | number;
+  'spans.ui': null | number;
+  timestamp: string;
+  trace: string;
+  'transaction.duration': number;
+};
+
+type Return = {
+  data: null | {
+    events: EventSpanData[];
+    replayRecordsEventView: EventView;
+  };
+  fetchError: any;
+  isFetching: boolean;
+  pageLinks: null | string;
 };
 
 function useReplaysFromTransaction({
-  eventsWithReplaysView,
   location,
   organization,
-}: Options) {
+  replayIdsEventView,
+}: Options): Return {
   const api = useApi();
-  const [data, setData] = useState<State>({
-    fetchError: undefined,
-    isFetching: true,
-    pageLinks: null,
-    replays: [],
-    eventView: undefined,
-  });
 
-  const load = useCallback(async () => {
-    const eventsData = await fetchEventsWithReplay({
-      api,
-      eventView: eventsWithReplaysView,
-      location,
-      organization,
+  const [response, setResponse] = useState<{
+    events: EventSpanData[];
+    pageLinks: null | string;
+    replayIds: undefined | string[];
+  }>({events: [], pageLinks: null, replayIds: undefined});
+
+  const [fetchError, setFetchError] = useState<any>();
+
+  const {cursor} = location.query;
+  const fetchReplayIds = useCallback(async () => {
+    try {
+      const [{data}, _textStatus, resp] = await doDiscoverQuery<{data: EventSpanData[]}>(
+        api,
+        `/organizations/${organization.slug}/events/`,
+        replayIdsEventView.getEventsAPIPayload({
+          query: {cursor},
+        } as Location<ReplayListLocationQuery>)
+      );
+
+      setResponse({
+        pageLinks: resp?.getResponseHeader('Link') ?? '',
+        replayIds: data.map(record => String(record.replayId)),
+        events: data || [],
+      });
+    } catch (err) {
+      Sentry.captureException(err);
+      setFetchError(err);
+    }
+  }, [api, cursor, organization.slug, replayIdsEventView]);
+
+  const replayRecordsEventView = useMemo(() => {
+    if (!response.replayIds) {
+      return null;
+    }
+
+    return EventView.fromSavedQuery({
+      id: '',
+      name: '',
+      version: 2,
+      fields: REPLAY_LIST_FIELDS,
+      projects: [],
+      query: response.replayIds.length ? `id:[${String(response.replayIds)}]` : undefined,
+      orderby: decodeScalar(location.query.sort, DEFAULT_SORT),
     });
-
-    const replayIds = eventsData?.map(row => row.replayId);
-
-    const eventView = EventView.fromNewQueryWithLocation(
-      {
-        id: '',
-        name: 'Replays within a transaction',
-        version: 2,
-        fields: REPLAY_LIST_FIELDS,
-        projects: [],
-        query: `id:[${String(replayIds)}]`,
-      },
-      location
-    );
-
-    eventView.sorts = fromSorts(decodeScalar(location.query.sort, DEFAULT_SORT));
-
-    const listData = await fetchReplayList({
-      api,
-      eventView,
-      location,
-      organization,
-    });
-
-    const replays: ReplayListRecordWithTx[] | undefined = listData.replays?.map(
-      replay => {
-        let slowestEvent: TableDataRow | undefined;
-        for (const event of eventsData ?? []) {
-          // attach the slowest tx event to the replay
-          if (
-            event.replayId === replay.id &&
-            (!slowestEvent ||
-              event['transaction.duration'] > slowestEvent['transaction.duration'])
-          ) {
-            slowestEvent = event;
-          }
-        }
-
-        return {
-          ...replay,
-          txEvent: slowestEvent ?? {},
-        };
-      }
-    );
-
-    setData({
-      ...listData,
-      eventView,
-      replays,
-    });
-  }, [api, eventsWithReplaysView, location, organization]);
+  }, [location.query.sort, response.replayIds]);
 
   useEffect(() => {
-    load();
-  }, [load]);
+    fetchReplayIds();
+  }, [fetchReplayIds]);
 
-  return data;
-}
-
-async function fetchEventsWithReplay({
-  api,
-  eventView,
-  location,
-  organization,
-}: {
-  api: Client;
-  eventView: EventView;
-  location: Location;
-  organization: Organization;
-}) {
-  try {
-    const [data] = await doDiscoverQuery<TableData>(
-      api,
-      `/organizations/${organization.slug}/events/`,
-      eventView.getEventsAPIPayload(location)
-    );
-
-    return data.data;
-  } catch (err) {
-    return null;
-  }
+  return {
+    data: replayRecordsEventView
+      ? {
+          events: response.events,
+          replayRecordsEventView,
+        }
+      : null,
+    fetchError,
+    isFetching: !fetchError && !response.replayIds,
+    pageLinks: response.pageLinks,
+  };
 }
 
 export default useReplaysFromTransaction;

@@ -1,9 +1,15 @@
 import * as Sentry from '@sentry/react';
 
+import {fetchOrganizationDetails} from 'sentry/actionCreators/organization';
 import {Client} from 'sentry/api';
 import ConfigStore from 'sentry/stores/configStore';
 import GuideStore from 'sentry/stores/guideStore';
-import trackAdvancedAnalyticsEvent from 'sentry/utils/analytics/trackAdvancedAnalyticsEvent';
+import type {Organization} from 'sentry/types/organization';
+import {trackAnalytics} from 'sentry/utils/analytics';
+import {getTourTask, isDemoModeEnabled} from 'sentry/utils/demoMode';
+
+import {demoEndModal} from './modal';
+import {updateOnboardingTask} from './onboardingTasks';
 
 const api = new Client();
 
@@ -47,8 +53,13 @@ export function dismissGuide(guide: string, step: number, orgId: string | null) 
   closeGuide(true);
 }
 
-export function recordFinish(guide: string, orgId: string | null) {
-  api.request('/assistant/', {
+export function recordFinish(
+  guide: string,
+  orgId: string | null,
+  orgSlug: string | null,
+  org: Organization | null
+) {
+  api.requestPromise('/assistant/', {
     method: 'PUT',
     data: {
       guide,
@@ -56,19 +67,28 @@ export function recordFinish(guide: string, orgId: string | null) {
     },
   });
 
+  const tourTask = getTourTask(guide);
+
+  if (isDemoModeEnabled() && tourTask && org) {
+    const {tour, task} = tourTask;
+    updateOnboardingTask(api, org, {task, status: 'complete', completionSeen: true});
+    fetchOrganizationDetails(api, org.slug, true, false);
+    demoEndModal({tour, orgSlug});
+  }
+
   const user = ConfigStore.get('user');
   if (!user) {
     return;
   }
 
-  trackAdvancedAnalyticsEvent('assistant.guide_finished', {
+  trackAnalytics('assistant.guide_finished', {
     organization: orgId,
     guide,
   });
 }
 
 export function recordDismiss(guide: string, step: number, orgId: string | null) {
-  api.request('/assistant/', {
+  api.requestPromise('/assistant/', {
     method: 'PUT',
     data: {
       guide,
@@ -80,7 +100,7 @@ export function recordDismiss(guide: string, step: number, orgId: string | null)
   if (!user) {
     return;
   }
-  trackAdvancedAnalyticsEvent('assistant.guide_dismissed', {
+  trackAnalytics('assistant.guide_dismissed', {
     organization: orgId,
     guide,
     step,

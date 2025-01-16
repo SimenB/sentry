@@ -1,30 +1,30 @@
-// eslint-disable-next-line no-restricted-imports
-import {withRouter, WithRouterProps} from 'react-router';
-
 import {
   addErrorMessage,
   addLoadingMessage,
   addSuccessMessage,
 } from 'sentry/actionCreators/indicator';
 import {navigateTo} from 'sentry/actionCreators/navigation';
-import Access from 'sentry/components/acl/access';
+import {hasEveryAccess} from 'sentry/components/acl/access';
 import GuideAnchor from 'sentry/components/assistant/guideAnchor';
-import Button, {ButtonProps} from 'sentry/components/button';
+import type {ButtonProps} from 'sentry/components/button';
+import {Button} from 'sentry/components/button';
 import Link from 'sentry/components/links/link';
 import {IconSiren} from 'sentry/icons';
 import type {SVGIconProps} from 'sentry/icons/svgIcon';
 import {t, tct} from 'sentry/locale';
-import type {Organization, Project} from 'sentry/types';
+import type {Organization} from 'sentry/types/organization';
+import type {Project} from 'sentry/types/project';
 import type EventView from 'sentry/utils/discover/eventView';
 import useApi from 'sentry/utils/useApi';
+import useProjects from 'sentry/utils/useProjects';
+import useRouter from 'sentry/utils/useRouter';
+import type {AlertType, AlertWizardAlertNames} from 'sentry/views/alerts/wizard/options';
 import {
-  AlertType,
-  AlertWizardAlertNames,
   AlertWizardRuleTemplates,
   DEFAULT_WIZARD_TEMPLATE,
 } from 'sentry/views/alerts/wizard/options';
 
-export type CreateAlertFromViewButtonProps = ButtonProps & {
+export type CreateAlertFromViewButtonProps = Omit<ButtonProps, 'aria-label'> & {
   /**
    * Discover query used to create the alert
    */
@@ -115,109 +115,100 @@ type CreateAlertButtonProps = {
   projectSlug?: string;
   referrer?: string;
   showPermissionGuide?: boolean;
-} & WithRouterProps &
-  ButtonProps;
+} & ButtonProps;
 
-const CreateAlertButton = withRouter(
-  ({
-    organization,
-    projectSlug,
-    iconProps,
-    referrer,
-    router,
-    hideIcon,
-    showPermissionGuide,
-    alertOption,
-    onEnter,
-    ...buttonProps
-  }: CreateAlertButtonProps) => {
-    const api = useApi();
-    const createAlertUrl = (providedProj: string): string => {
-      const params = new URLSearchParams();
-      if (referrer) {
-        params.append('referrer', referrer);
-      }
-      if (providedProj !== ':projectId') {
-        params.append('project', providedProj);
-      }
-      if (alertOption) {
-        params.append('alert_option', alertOption);
-      }
-      return `/organizations/${organization.slug}/alerts/wizard/?${params.toString()}`;
-    };
-
-    function handleClickWithoutProject(event: React.MouseEvent) {
-      event.preventDefault();
-      onEnter?.();
-
-      navigateTo(createAlertUrl(':projectId'), router);
+export default function CreateAlertButton({
+  organization,
+  projectSlug,
+  iconProps,
+  referrer,
+  hideIcon,
+  showPermissionGuide,
+  alertOption,
+  onEnter,
+  ...buttonProps
+}: CreateAlertButtonProps) {
+  const router = useRouter();
+  const api = useApi();
+  const {projects} = useProjects();
+  const createAlertUrl = (providedProj: string): string => {
+    const params = new URLSearchParams();
+    if (referrer) {
+      params.append('referrer', referrer);
     }
-
-    async function enableAlertsMemberWrite() {
-      const settingsEndpoint = `/organizations/${organization.slug}/`;
-      addLoadingMessage();
-      try {
-        await api.requestPromise(settingsEndpoint, {
-          method: 'PUT',
-          data: {
-            alertsMemberWrite: true,
-          },
-        });
-        addSuccessMessage(t('Successfully updated organization settings'));
-      } catch (err) {
-        addErrorMessage(t('Unable to update organization settings'));
-      }
+    if (providedProj !== ':projectId') {
+      params.append('project', providedProj);
     }
+    if (alertOption) {
+      params.append('alert_option', alertOption);
+    }
+    return `/organizations/${organization.slug}/alerts/wizard/?${params.toString()}`;
+  };
 
-    const permissionTooltipText = tct(
-      'Ask your organization owner or manager to [settingsLink:enable alerts access] for you.',
-      {settingsLink: <Link to={`/settings/${organization.slug}`} />}
-    );
+  function handleClickWithoutProject(event: React.MouseEvent) {
+    event.preventDefault();
+    onEnter?.();
 
-    const renderButton = (hasAccess: boolean) => (
-      <Button
-        disabled={!hasAccess}
-        title={!hasAccess ? permissionTooltipText : undefined}
-        icon={!hideIcon && <IconSiren {...iconProps} />}
-        to={projectSlug ? createAlertUrl(projectSlug) : undefined}
-        tooltipProps={{
-          isHoverable: true,
-          position: 'top',
-          overlayStyle: {
-            maxWidth: '270px',
-          },
-        }}
-        onClick={projectSlug ? onEnter : handleClickWithoutProject}
-        {...buttonProps}
-      >
-        {buttonProps.children ?? t('Create Alert')}
-      </Button>
-    );
-
-    const showGuide = !organization.alertsMemberWrite && !!showPermissionGuide;
-
-    return (
-      <Access organization={organization} access={['alerts:write']}>
-        {({hasAccess}) =>
-          showGuide ? (
-            <Access organization={organization} access={['org:write']}>
-              {({hasAccess: isOrgAdmin}) => (
-                <GuideAnchor
-                  target={isOrgAdmin ? 'alerts_write_owner' : 'alerts_write_member'}
-                  onFinish={isOrgAdmin ? enableAlertsMemberWrite : undefined}
-                >
-                  {renderButton(hasAccess)}
-                </GuideAnchor>
-              )}
-            </Access>
-          ) : (
-            renderButton(hasAccess)
-          )
-        }
-      </Access>
-    );
+    navigateTo(createAlertUrl(':projectId'), router);
   }
-);
+
+  async function enableAlertsMemberWrite() {
+    const settingsEndpoint = `/organizations/${organization.slug}/`;
+    addLoadingMessage();
+    try {
+      await api.requestPromise(settingsEndpoint, {
+        method: 'PUT',
+        data: {
+          alertsMemberWrite: true,
+        },
+      });
+      addSuccessMessage(t('Successfully updated organization settings'));
+    } catch (err) {
+      addErrorMessage(t('Unable to update organization settings'));
+    }
+  }
+
+  const permissionTooltipText = tct(
+    'Ask your organization owner or manager to [settingsLink:enable alerts access] for you.',
+    {settingsLink: <Link to={`/settings/${organization.slug}`} />}
+  );
+
+  const renderButton = (hasAccess: boolean) => (
+    <Button
+      disabled={!hasAccess}
+      title={!hasAccess ? permissionTooltipText : undefined}
+      icon={!hideIcon && <IconSiren {...iconProps} />}
+      to={projectSlug ? createAlertUrl(projectSlug) : undefined}
+      tooltipProps={{
+        isHoverable: true,
+        position: 'top',
+        overlayStyle: {
+          maxWidth: '270px',
+        },
+      }}
+      onClick={projectSlug ? onEnter : handleClickWithoutProject}
+      {...buttonProps}
+    >
+      {buttonProps.children ?? t('Create Alert')}
+    </Button>
+  );
+
+  const showGuide = !organization.alertsMemberWrite && !!showPermissionGuide;
+  const canCreateAlert =
+    hasEveryAccess(['alerts:write'], {organization}) ||
+    projects.some(p => hasEveryAccess(['alerts:write'], {project: p}));
+  const hasOrgWrite = hasEveryAccess(['org:write'], {organization});
+
+  return showGuide ? (
+    <GuideAnchor
+      target={hasOrgWrite ? 'alerts_write_owner' : 'alerts_write_member'}
+      onFinish={hasOrgWrite ? enableAlertsMemberWrite : undefined}
+    >
+      {renderButton(canCreateAlert)}
+    </GuideAnchor>
+  ) : (
+    renderButton(canCreateAlert)
+  );
+}
 
 export {CreateAlertFromViewButton};
-export default CreateAlertButton;

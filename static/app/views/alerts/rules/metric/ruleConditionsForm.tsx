@@ -1,35 +1,82 @@
 import {Fragment, PureComponent} from 'react';
-import {InjectedRouter} from 'react-router';
 import {components} from 'react-select';
 import {css} from '@emotion/react';
 import styled from '@emotion/styled';
+import omit from 'lodash/omit';
 import pick from 'lodash/pick';
 
 import {addErrorMessage} from 'sentry/actionCreators/indicator';
-import {Client} from 'sentry/api';
+import {fetchTagValues} from 'sentry/actionCreators/tags';
+import type {Client} from 'sentry/api';
 import Alert from 'sentry/components/alert';
-import SearchBar from 'sentry/components/events/searchBar';
+import {
+  OnDemandMetricAlert,
+  OnDemandWarningIcon,
+} from 'sentry/components/alerts/onDemandMetricAlert';
+import {getHasTag} from 'sentry/components/events/searchBar';
+import {
+  STATIC_FIELD_TAGS,
+  STATIC_FIELD_TAGS_WITHOUT_ERROR_FIELDS,
+  STATIC_FIELD_TAGS_WITHOUT_TRACING,
+  STATIC_FIELD_TAGS_WITHOUT_TRANSACTION_FIELDS,
+  STATIC_SEMVER_TAGS,
+  STATIC_SPAN_TAGS,
+} from 'sentry/components/events/searchBarFieldConstants';
 import SelectControl from 'sentry/components/forms/controls/selectControl';
 import SelectField from 'sentry/components/forms/fields/selectField';
 import FormField from 'sentry/components/forms/formField';
 import IdBadge from 'sentry/components/idBadge';
-import ExternalLink from 'sentry/components/links/externalLink';
 import ListItem from 'sentry/components/list/listItem';
-import {Panel, PanelBody} from 'sentry/components/panels';
+import {MetricSearchBar} from 'sentry/components/metrics/metricSearchBar';
+import {normalizeDateTimeParams} from 'sentry/components/organizations/pageFilters/parse';
+import Panel from 'sentry/components/panels/panel';
+import PanelBody from 'sentry/components/panels/panelBody';
+import {EAPSpanSearchQueryBuilder} from 'sentry/components/performance/spanSearchQueryBuilder';
+import {SearchQueryBuilder} from 'sentry/components/searchQueryBuilder';
+import {InvalidReason} from 'sentry/components/searchSyntax/parser';
 import {t, tct} from 'sentry/locale';
-import space from 'sentry/styles/space';
-import {Environment, Organization, Project, SelectValue} from 'sentry/types';
+import {space} from 'sentry/styles/space';
+import type {SelectValue} from 'sentry/types/core';
+import type {Tag, TagCollection} from 'sentry/types/group';
+import type {InjectedRouter} from 'sentry/types/legacyReactRouter';
+import type {Organization} from 'sentry/types/organization';
+import type {Environment, Project} from 'sentry/types/project';
+import {defined} from 'sentry/utils';
+import {isAggregateField, isMeasurement} from 'sentry/utils/discover/fields';
+import {DiscoverDatasets} from 'sentry/utils/discover/types';
 import {getDisplayName} from 'sentry/utils/environment';
-import {MobileVital, WebVital} from 'sentry/utils/fields';
-import {isActiveSuperuser} from 'sentry/utils/isActiveSuperuser';
+import {
+  ALLOWED_EXPLORE_VISUALIZE_AGGREGATES,
+  DEVICE_CLASS_TAG_VALUES,
+  FieldKind,
+  isDeviceClass,
+} from 'sentry/utils/fields';
+import {
+  getMeasurements,
+  type MeasurementCollection,
+} from 'sentry/utils/measurements/measurements';
+import {hasCustomMetrics} from 'sentry/utils/metrics/features';
+import {getMRI} from 'sentry/utils/metrics/mri';
+import {getOnDemandKeys, isOnDemandQueryString} from 'sentry/utils/onDemandMetrics';
+import {hasOnDemandMetricAlertFeature} from 'sentry/utils/onDemandMetrics/features';
+import withApi from 'sentry/utils/withApi';
 import withProjects from 'sentry/utils/withProjects';
+import withTags from 'sentry/utils/withTags';
 import WizardField from 'sentry/views/alerts/rules/metric/wizardField';
 import {
   convertDatasetEventTypesToSource,
   DATA_SOURCE_LABELS,
   DATA_SOURCE_TO_SET_AND_EVENT_TYPES,
 } from 'sentry/views/alerts/utils';
-import {AlertType} from 'sentry/views/alerts/wizard/options';
+import type {AlertType} from 'sentry/views/alerts/wizard/options';
+import {getSupportedAndOmittedTags} from 'sentry/views/alerts/wizard/options';
+import {
+  SpanTagsContext,
+  SpanTagsProvider,
+} from 'sentry/views/explore/contexts/spanTagsContext';
+import {hasEAPAlerts} from 'sentry/views/insights/common/utils/hasEAPAlerts';
+
+import {getProjectOptions} from '../utils';
 
 import {isCrashFreeAlert} from './utils/isCrashFreeAlert';
 import {DEFAULT_AGGREGATE, DEFAULT_TRANSACTION_AGGREGATE} from './constants';
@@ -48,38 +95,53 @@ const TIME_WINDOW_MAP: Record<TimeWindow, string> = {
 };
 
 type Props = {
+  aggregate: string;
   alertType: AlertType;
   api: Client;
   comparisonType: AlertRuleComparisonType;
   dataset: Dataset;
   disabled: boolean;
+  isEditing: boolean;
   onComparisonDeltaChange: (value: number) => void;
-  onFilterSearch: (query: string) => void;
+  onFilterSearch: (query: string, isQueryValid) => void;
   onTimeWindowChange: (value: number) => void;
   organization: Organization;
   project: Project;
   projects: Project[];
   router: InjectedRouter;
-  showMEPAlertBanner: boolean;
+  tags: TagCollection;
   thresholdChart: React.ReactNode;
   timeWindow: number;
+  // optional props
   allowChangeEventTypes?: boolean;
   comparisonDelta?: number;
   disableProjectSelector?: boolean;
+  isErrorMigration?: boolean;
+  isExtrapolatedChartData?: boolean;
+  isForLlmMetric?: boolean;
+  isLowConfidenceChartData?: boolean;
+  isTransactionMigration?: boolean;
   loadingProjects?: boolean;
 };
 
 type State = {
   environments: Environment[] | null;
+  filterKeys: TagCollection;
+  measurements: MeasurementCollection;
 };
 
 class RuleConditionsForm extends PureComponent<Props, State> {
   state: State = {
     environments: null,
+    measurements: {},
+    filterKeys: {},
   };
 
   componentDidMount() {
     this.fetchData();
+    const measurements = getMeasurements();
+    const filterKeys = this.getFilterKeys();
+    this.setState({measurements, filterKeys});
   }
 
   componentDidUpdate(prevProps: Props) {
@@ -89,6 +151,52 @@ class RuleConditionsForm extends PureComponent<Props, State> {
 
     this.fetchData();
   }
+
+  getFilterKeys = () => {
+    const {organization, dataset, tags} = this.props;
+    const {measurements} = this.state;
+    const measurementsWithKind = Object.keys(measurements).reduce(
+      (measurement_tags, key) => {
+        measurement_tags[key] = {
+          ...measurements[key],
+          kind: FieldKind.MEASUREMENT,
+        };
+        return measurement_tags;
+      },
+      {}
+    );
+    const orgHasPerformanceView = organization.features.includes('performance-view');
+    const combinedTags: TagCollection =
+      dataset === Dataset.ERRORS
+        ? Object.assign({}, STATIC_FIELD_TAGS_WITHOUT_TRANSACTION_FIELDS)
+        : dataset === Dataset.TRANSACTIONS
+          ? Object.assign(
+              {},
+              measurementsWithKind,
+              STATIC_SPAN_TAGS,
+              STATIC_FIELD_TAGS_WITHOUT_ERROR_FIELDS
+            )
+          : orgHasPerformanceView
+            ? Object.assign({}, measurementsWithKind, STATIC_SPAN_TAGS, STATIC_FIELD_TAGS)
+            : Object.assign({}, STATIC_FIELD_TAGS_WITHOUT_TRACING);
+
+    const tagsWithKind = Object.keys(tags).reduce<Record<string, Tag>>((acc, key) => {
+      acc[key] = {
+        ...tags[key]!,
+        kind: FieldKind.TAG,
+      };
+      return acc;
+    }, {});
+
+    const {omitTags} = getSupportedAndOmittedTags(dataset, organization);
+
+    Object.assign(combinedTags, tagsWithKind, STATIC_SEMVER_TAGS);
+    combinedTags.has = getHasTag(combinedTags);
+
+    const list =
+      omitTags && omitTags.length > 0 ? omit(combinedTags, omitTags) : combinedTags;
+    return list;
+  };
 
   formElemBaseStyle = {
     padding: `${space(0.5)}`,
@@ -113,12 +221,69 @@ class RuleConditionsForm extends PureComponent<Props, State> {
     }
   }
 
+  getEventFieldValues = async (tag, query): Promise<string[]> => {
+    const {api, organization, project, dataset, router} = this.props;
+
+    if (isAggregateField(tag.key) || isMeasurement(tag.key)) {
+      // We can't really auto suggest values for aggregate fields
+      // or measurements, so we simply don't
+      // NOTE: these in particular are for discover queries. We may not need/support these
+      return Promise.resolve([]);
+    }
+
+    // device.class is stored as "numbers" in snuba, but we want to suggest high, medium,
+    // and low search filter values because discover maps device.class to these values.
+    if (isDeviceClass(tag.key)) {
+      return Promise.resolve(DEVICE_CLASS_TAG_VALUES);
+    }
+
+    const values = await fetchTagValues({
+      api,
+      orgSlug: organization.slug,
+      tagKey: tag.key,
+      search: query,
+      projectIds: [project.id],
+      endpointParams: normalizeDateTimeParams(router.location.query), // allows searching for tags on transactions as well
+      includeTransactions: true, // allows searching for tags on sessions as well
+      includeSessions: dataset === Dataset.SESSIONS,
+    });
+
+    return values.filter(({name}) => defined(name)).map(({name}) => name);
+  };
+
   get timeWindowOptions() {
     let options: Record<string, string> = TIME_WINDOW_MAP;
+    const {alertType} = this.props;
+
+    if (alertType === 'custom_metrics') {
+      // Do not show ONE MINUTE interval as an option for custom_metrics alert
+      options = omit(options, TimeWindow.ONE_MINUTE.toString());
+    }
 
     if (isCrashFreeAlert(this.props.dataset)) {
       options = pick(TIME_WINDOW_MAP, [
         // TimeWindow.THIRTY_MINUTES, leaving this option out until we figure out the sub-hour session resolution chart limitations
+        TimeWindow.ONE_HOUR,
+        TimeWindow.TWO_HOURS,
+        TimeWindow.FOUR_HOURS,
+        TimeWindow.ONE_DAY,
+      ]);
+    }
+
+    if (this.props.comparisonType === AlertRuleComparisonType.DYNAMIC) {
+      options = pick(TIME_WINDOW_MAP, [
+        TimeWindow.FIFTEEN_MINUTES,
+        TimeWindow.THIRTY_MINUTES,
+        TimeWindow.ONE_HOUR,
+      ]);
+    }
+
+    if (this.props.dataset === Dataset.EVENTS_ANALYTICS_PLATFORM) {
+      options = pick(TIME_WINDOW_MAP, [
+        TimeWindow.FIVE_MINUTES,
+        TimeWindow.TEN_MINUTES,
+        TimeWindow.FIFTEEN_MINUTES,
+        TimeWindow.THIRTY_MINUTES,
         TimeWindow.ONE_HOUR,
         TimeWindow.TWO_HOURS,
         TimeWindow.FOUR_HOURS,
@@ -141,27 +306,27 @@ class RuleConditionsForm extends PureComponent<Props, State> {
       case Dataset.METRICS:
       case Dataset.SESSIONS:
         return t('Filter sessions by release version\u2026');
-      case Dataset.TRANSACTIONS:
       default:
         return t('Filter transactions by URL, tags, and other properties\u2026');
     }
   }
 
-  get searchSupportedTags() {
-    if (isCrashFreeAlert(this.props.dataset)) {
-      return {
-        release: {
-          key: 'release',
-          name: 'release',
-        },
-      };
-    }
-
-    return undefined;
+  get selectControlStyles() {
+    return {
+      control: (provided: {[x: string]: string | number | boolean}) => ({
+        ...provided,
+        minWidth: 200,
+        maxWidth: 300,
+      }),
+      container: (provided: {[x: string]: string | number | boolean}) => ({
+        ...provided,
+        margin: `${space(0.5)}`,
+      }),
+    };
   }
 
   renderEventTypeFilter() {
-    const {organization, disabled, alertType} = this.props;
+    const {organization, disabled, alertType, isErrorMigration} = this.props;
 
     const dataSourceOptions = [
       {
@@ -183,7 +348,10 @@ class RuleConditionsForm extends PureComponent<Props, State> {
       },
     ];
 
-    if (organization.features.includes('performance-view') && alertType === 'custom') {
+    if (
+      organization.features.includes('performance-view') &&
+      (alertType === 'custom_transactions' || alertType === 'custom_metrics')
+    ) {
       dataSourceOptions.push({
         label: t('Transactions'),
         options: [
@@ -209,6 +377,7 @@ class RuleConditionsForm extends PureComponent<Props, State> {
         {({onChange, onBlur, model}) => {
           const formDataset = model.getValue('dataset');
           const formEventTypes = model.getValue('eventTypes');
+          const aggregate = model.getValue('aggregate');
           const mappedValue = convertDatasetEventTypesToSource(
             formDataset,
             formEventTypes
@@ -217,25 +386,29 @@ class RuleConditionsForm extends PureComponent<Props, State> {
             <SelectControl
               value={mappedValue}
               inFieldLabel={t('Events: ')}
-              onChange={optionObj => {
-                const optionValue = optionObj.value;
-                onChange(optionValue, {});
-                onBlur(optionValue, {});
+              onChange={({value}) => {
+                onChange(value, {});
+                onBlur(value, {});
                 // Reset the aggregate to the default (which works across
                 // datatypes), otherwise we may send snuba an invalid query
                 // (transaction aggregate on events datasource = bad).
-                optionValue === 'transaction'
-                  ? model.setValue('aggregate', DEFAULT_TRANSACTION_AGGREGATE)
-                  : model.setValue('aggregate', DEFAULT_AGGREGATE);
+                const newAggregate =
+                  value === Datasource.TRANSACTION
+                    ? DEFAULT_TRANSACTION_AGGREGATE
+                    : DEFAULT_AGGREGATE;
+                if (alertType === 'custom_transactions' && aggregate !== newAggregate) {
+                  model.setValue('aggregate', newAggregate);
+                }
 
                 // set the value of the dataset and event type from data source
                 const {dataset: datasetFromDataSource, eventTypes} =
-                  DATA_SOURCE_TO_SET_AND_EVENT_TYPES[optionValue] ?? {};
+                  DATA_SOURCE_TO_SET_AND_EVENT_TYPES[value] ?? {};
+
                 model.setValue('dataset', datasetFromDataSource);
                 model.setValue('eventTypes', eventTypes);
               }}
               options={dataSourceOptions}
-              isDisabled={disabled}
+              isDisabled={disabled || isErrorMigration}
             />
           );
         }}
@@ -243,57 +416,19 @@ class RuleConditionsForm extends PureComponent<Props, State> {
     );
   }
 
-  renderIdBadge(project: Project) {
-    return (
-      <IdBadge
-        project={project}
-        avatarProps={{consistentWidth: true}}
-        avatarSize={18}
-        disableLink
-        hideName
-      />
-    );
-  }
-
   renderProjectSelector() {
     const {
       project: _selectedProject,
-      projects,
+      projects, // note: org projects
       disabled,
       organization,
       disableProjectSelector,
     } = this.props;
-    const hasOpenMembership = organization.features.includes('open-membership');
-    const myProjects = projects.filter(project => project.hasAccess && project.isMember);
-    const allProjects = projects.filter(
-      project => project.hasAccess && !project.isMember
-    );
-
-    const myProjectOptions = myProjects.map(myProject => ({
-      value: myProject.id,
-      label: myProject.slug,
-      leadingItems: this.renderIdBadge(myProject),
-    }));
-
-    const openMembershipProjects = [
-      {
-        label: t('My Projects'),
-        options: myProjectOptions,
-      },
-      {
-        label: t('All Projects'),
-        options: allProjects.map(allProject => ({
-          value: allProject.id,
-          label: allProject.slug,
-          leadingItems: this.renderIdBadge(allProject),
-        })),
-      },
-    ];
-
-    const projectOptions =
-      hasOpenMembership || isActiveSuperuser()
-        ? openMembershipProjects
-        : myProjectOptions;
+    const projectOptions = getProjectOptions({
+      organization,
+      projects,
+      isFormDisabled: disabled,
+    });
 
     return (
       <FormField
@@ -329,7 +464,7 @@ class RuleConditionsForm extends PureComponent<Props, State> {
                     undefined &&
                   nextSelectedProject.teams.length
                 ) {
-                  model.setValue('owner', `team:${nextSelectedProject.teams[0].id}`);
+                  model.setValue('owner', `team:${nextSelectedProject.teams[0]!.id}`);
                 }
                 onChange(value, {});
                 onBlur(value, {});
@@ -354,8 +489,15 @@ class RuleConditionsForm extends PureComponent<Props, State> {
   }
 
   renderInterval() {
-    const {organization, disabled, alertType, timeWindow, onTimeWindowChange} =
-      this.props;
+    const {
+      organization,
+      timeWindow,
+      disabled,
+      alertType,
+      project,
+      isForLlmMetric,
+      onTimeWindowChange,
+    } = this.props;
 
     return (
       <Fragment>
@@ -365,36 +507,28 @@ class RuleConditionsForm extends PureComponent<Props, State> {
           </StyledListTitle>
         </StyledListItem>
         <FormRow>
-          <WizardField
-            name="aggregate"
-            help={null}
-            organization={organization}
-            disabled={disabled}
-            style={{
-              ...this.formElemBaseStyle,
-              flex: 1,
-            }}
-            inline={false}
-            flexibleControlStateSize
-            columnWidth={200}
-            alertType={alertType}
-            required
-          />
+          {isForLlmMetric ? null : (
+            <WizardField
+              name="aggregate"
+              help={null}
+              organization={organization}
+              disabled={disabled}
+              project={project}
+              style={{
+                ...this.formElemBaseStyle,
+                flex: 1,
+              }}
+              inline={false}
+              flexibleControlStateSize
+              columnWidth={200}
+              alertType={alertType}
+              required
+            />
+          )}
           <SelectControl
             name="timeWindow"
-            styles={{
-              control: (provided: {[x: string]: string | number | boolean}) => ({
-                ...provided,
-                minWidth: 200,
-                maxWidth: 300,
-              }),
-              container: (provided: {[x: string]: string | number | boolean}) => ({
-                ...provided,
-                margin: `${space(0.5)}`,
-              }),
-            }}
+            styles={this.selectControlStyles}
             options={this.timeWindowOptions}
-            required
             isDisabled={disabled}
             value={timeWindow}
             onChange={({value}) => onTimeWindowChange(value)}
@@ -408,15 +542,22 @@ class RuleConditionsForm extends PureComponent<Props, State> {
 
   render() {
     const {
+      alertType,
       organization,
       disabled,
       onFilterSearch,
       allowChangeEventTypes,
       dataset,
-      showMEPAlertBanner,
+      isExtrapolatedChartData,
+      isTransactionMigration,
+      isErrorMigration,
+      aggregate,
+      project,
+      comparisonType,
+      isLowConfidenceChartData,
     } = this.props;
-    const {environments} = this.state;
 
+    const {environments, filterKeys} = this.state;
     const environmentOptions: SelectValue<string | null>[] = [
       {
         value: null,
@@ -426,127 +567,203 @@ class RuleConditionsForm extends PureComponent<Props, State> {
         []),
     ];
 
-    const transactionTags = [
-      'transaction',
-      'transaction.duration',
-      'transaction.op',
-      'transaction.status',
-    ];
-    const measurementTags = Object.values({...WebVital, ...MobileVital});
-    const eventOmitTags =
-      dataset === 'events' ? [...measurementTags, ...transactionTags] : [];
-
-    const hasMetricDataset =
-      organization.features.includes('metrics-performance-alerts') ||
-      organization.features.includes('mep-rollout-flag');
+    const confidenceEnabled = hasEAPAlerts(organization);
 
     return (
       <Fragment>
         <ChartPanel>
           <StyledPanelBody>{this.props.thresholdChart}</StyledPanelBody>
         </ChartPanel>
-        {showMEPAlertBanner && hasMetricDataset && (
-          <AlertContainer>
-            <Alert type="info" showIcon>
-              {tct(
-                'Filtering by these conditions automatically switch you to indexed events. [link:Learn more].',
-                {
-                  link: (
-                    <ExternalLink href="https://docs.sentry.io/product/sentry-basics/search/searchable-properties/#processed-event-properties" />
-                  ),
-                }
-              )}
-            </Alert>
-          </AlertContainer>
-        )}
-        {this.renderInterval()}
-        <StyledListItem>{t('Filter events')}</StyledListItem>
-        <FormRow noMargin columns={1 + (allowChangeEventTypes ? 1 : 0) + 1}>
-          {this.renderProjectSelector()}
-          <SelectField
-            name="environment"
-            placeholder={t('All Environments')}
-            style={{
-              ...this.formElemBaseStyle,
-              minWidth: 230,
-              flex: 1,
-            }}
-            styles={{
-              singleValue: (base: any) => ({
-                ...base,
-              }),
-              option: (base: any) => ({
-                ...base,
-              }),
-            }}
-            options={environmentOptions}
-            isDisabled={disabled || this.state.environments === null}
-            isClearable
-            inline={false}
-            flexibleControlStateSize
-          />
-          {allowChangeEventTypes && this.renderEventTypeFilter()}
-        </FormRow>
-        <FormRow>
-          <FormField
-            name="query"
-            inline={false}
-            style={{
-              ...this.formElemBaseStyle,
-              flex: '6 0 500px',
-            }}
-            flexibleControlStateSize
-          >
-            {({onChange, onBlur, onKeyDown, initialData}) => (
-              <SearchContainer>
-                <StyledSearchBar
-                  searchSource="alert_builder"
-                  defaultQuery={initialData?.query ?? ''}
-                  omitTags={[
-                    'event.type',
-                    'release.version',
-                    'release.stage',
-                    'release.package',
-                    'release.build',
-                    'project',
-                    ...eventOmitTags,
-                  ]}
-                  includeSessionTagsValues={dataset === Dataset.SESSIONS}
-                  disabled={disabled}
-                  useFormWrapper={false}
-                  organization={organization}
-                  placeholder={this.searchPlaceholder}
-                  onChange={onChange}
-                  query={initialData.query}
-                  onKeyDown={e => {
-                    /**
-                     * Do not allow enter key to submit the alerts form since it is unlikely
-                     * users will be ready to create the rule as this sits above required fields.
-                     */
-                    if (e.key === 'Enter') {
-                      e.preventDefault();
-                      e.stopPropagation();
-                    }
-
-                    onKeyDown?.(e);
-                  }}
-                  onClose={query => {
-                    onFilterSearch(query);
-                    onBlur(query);
-                  }}
-                  onSearch={query => {
-                    onFilterSearch(query);
-                    onChange(query, {});
-                  }}
-                  {...(this.searchSupportedTags
-                    ? {supportedTags: this.searchSupportedTags}
-                    : {})}
-                  hasRecentSearches={dataset !== Dataset.SESSIONS}
+        {isTransactionMigration ? (
+          <Fragment>
+            <Spacer />
+            <HiddenListItem />
+            <HiddenListItem />
+          </Fragment>
+        ) : (
+          <Fragment>
+            <SpanTagsProvider
+              dataset={DiscoverDatasets.SPANS_EAP}
+              enabled={
+                organization.features.includes('alerts-eap') &&
+                alertType === 'eap_metrics'
+              }
+            >
+              {isExtrapolatedChartData && (
+                <OnDemandMetricAlert
+                  message={t(
+                    'The chart data above is an estimate based on the stored transactions that match the filters specified.'
+                  )}
                 />
-              </SearchContainer>
-            )}
-          </FormField>
-        </FormRow>
+              )}
+              {confidenceEnabled && isLowConfidenceChartData && (
+                <Alert showIcon type="warning">
+                  {t(
+                    'Your low sample count may impact the accuracy of this alert. Edit your query or increase your sampling rate.'
+                  )}
+                </Alert>
+              )}
+              {!isErrorMigration && this.renderInterval()}
+              <StyledListItem>{t('Filter events')}</StyledListItem>
+              <FormRow noMargin columns={1 + (allowChangeEventTypes ? 1 : 0) + 1}>
+                {this.renderProjectSelector()}
+                <SelectField
+                  name="environment"
+                  placeholder={t('All Environments')}
+                  style={{
+                    ...this.formElemBaseStyle,
+                    minWidth: 230,
+                    flex: 1,
+                  }}
+                  styles={{
+                    singleValue: (base: any) => ({
+                      ...base,
+                    }),
+                    option: (base: any) => ({
+                      ...base,
+                    }),
+                  }}
+                  options={environmentOptions}
+                  isDisabled={
+                    disabled || this.state.environments === null || isErrorMigration
+                  }
+                  isClearable
+                  inline={false}
+                  flexibleControlStateSize
+                />
+                {allowChangeEventTypes && this.renderEventTypeFilter()}
+              </FormRow>
+              <FormRow noMargin>
+                <FormField
+                  name="query"
+                  inline={false}
+                  style={{
+                    ...this.formElemBaseStyle,
+                    flex: '6 0 500px',
+                  }}
+                  flexibleControlStateSize
+                >
+                  {({onChange, onBlur, initialData, value}) => {
+                    return hasCustomMetrics(organization) &&
+                      alertType === 'custom_metrics' ? (
+                      <MetricSearchBar
+                        mri={getMRI(aggregate)}
+                        projectIds={[project.id]}
+                        placeholder={this.searchPlaceholder}
+                        query={initialData.query}
+                        defaultQuery={initialData?.query ?? ''}
+                        useFormWrapper={false}
+                        searchSource="alert_builder"
+                        onChange={query => {
+                          onFilterSearch(query, true);
+                          onChange(query, {});
+                        }}
+                      />
+                    ) : alertType === 'eap_metrics' ? (
+                      <SpanTagsContext.Consumer>
+                        {tags => (
+                          <EAPSpanSearchQueryBuilder
+                            numberTags={tags?.number ?? {}}
+                            stringTags={tags?.string ?? {}}
+                            initialQuery={value ?? ''}
+                            searchSource="alerts"
+                            onSearch={(query, {parsedQuery}) => {
+                              onFilterSearch(query, parsedQuery);
+                              onChange(query, {});
+                            }}
+                            supportedAggregates={ALLOWED_EXPLORE_VISUALIZE_AGGREGATES}
+                            projects={[parseInt(project.id, 10)]}
+                          />
+                        )}
+                      </SpanTagsContext.Consumer>
+                    ) : (
+                      <SearchContainer>
+                        <SearchQueryBuilder
+                          initialQuery={initialData?.query ?? ''}
+                          getTagValues={this.getEventFieldValues}
+                          placeholder={this.searchPlaceholder}
+                          searchSource="alert_builder"
+                          filterKeys={filterKeys}
+                          disabled={disabled || isErrorMigration}
+                          onChange={onChange}
+                          invalidMessages={{
+                            [InvalidReason.WILDCARD_NOT_ALLOWED]: t(
+                              'The wildcard operator is not supported here.'
+                            ),
+                            [InvalidReason.FREE_TEXT_NOT_ALLOWED]: t(
+                              'Free text search is not allowed. If you want to partially match transaction names, use glob patterns like "transaction:*transaction-name*"'
+                            ),
+                          }}
+                          onSearch={query => {
+                            onFilterSearch(query, true);
+                            onChange(query, {});
+                          }}
+                          onBlur={(query, {parsedQuery}) => {
+                            onFilterSearch(query, parsedQuery);
+                            onBlur(query);
+                          }}
+                          // We only need strict validation for Transaction queries, everything else is fine
+                          disallowUnsupportedFilters={
+                            organization.features.includes('alert-allow-indexed') ||
+                            (hasOnDemandMetricAlertFeature(organization) &&
+                              isOnDemandQueryString(value))
+                              ? false
+                              : dataset === Dataset.GENERIC_METRICS
+                          }
+                        />
+                        {isExtrapolatedChartData && isOnDemandQueryString(value) && (
+                          <OnDemandWarningIcon
+                            color="gray500"
+                            msg={tct(
+                              `We don’t routinely collect metrics from [fields]. However, we’ll do so [strong:once this alert has been saved.]`,
+                              {
+                                fields: (
+                                  <strong>
+                                    {getOnDemandKeys(value)
+                                      .map(key => `"${key}"`)
+                                      .join(', ')}
+                                  </strong>
+                                ),
+                                strong: <strong />,
+                              }
+                            )}
+                          />
+                        )}
+                      </SearchContainer>
+                    );
+                  }}
+                </FormField>
+              </FormRow>
+              <FormRow noMargin>
+                <FormField
+                  name="query"
+                  inline={false}
+                  style={{
+                    ...this.formElemBaseStyle,
+                    flex: '6 0 500px',
+                  }}
+                  flexibleControlStateSize
+                >
+                  {args => {
+                    if (
+                      args.value?.includes('is:unresolved') &&
+                      comparisonType === AlertRuleComparisonType.DYNAMIC
+                    ) {
+                      return (
+                        <OnDemandMetricAlert
+                          message={t(
+                            "'is:unresolved' queries are not supported by Anomaly Detection alerts."
+                          )}
+                        />
+                      );
+                    }
+                    return null;
+                  }}
+                </FormField>
+              </FormRow>
+            </SpanTagsProvider>
+          </Fragment>
+        )}
       </Fragment>
     );
   }
@@ -559,12 +776,22 @@ const StyledListTitle = styled('div')`
   }
 `;
 
-const ChartPanel = styled(Panel)`
-  margin-bottom: ${space(1)};
+// This is a temporary hacky solution to hide list items without changing the numbering of the rest of the list
+// TODO(issues): Remove this once the migration is complete
+const HiddenListItem = styled(ListItem)`
+  position: absolute;
+  width: 0px;
+  height: 0px;
+  opacity: 0;
+  pointer-events: none;
 `;
 
-const AlertContainer = styled('div')`
+const Spacer = styled('div')`
   margin-bottom: ${space(2)};
+`;
+
+const ChartPanel = styled(Panel)`
+  margin-bottom: ${space(1)};
 `;
 
 const StyledPanelBody = styled(PanelBody)`
@@ -576,14 +803,12 @@ const StyledPanelBody = styled(PanelBody)`
 
 const SearchContainer = styled('div')`
   display: flex;
-`;
-
-const StyledSearchBar = styled(SearchBar)`
-  flex-grow: 1;
+  align-items: center;
+  gap: ${space(1)};
 `;
 
 const StyledListItem = styled(ListItem)`
-  margin-bottom: ${space(1)};
+  margin-bottom: ${space(0.5)};
   font-size: ${p => p.theme.fontSizeExtraLarge};
   line-height: 1.3;
 `;
@@ -602,4 +827,4 @@ const FormRow = styled('div')<{columns?: number; noMargin?: boolean}>`
     `}
 `;
 
-export default withProjects(RuleConditionsForm);
+export default withApi(withProjects(withTags(RuleConditionsForm)));

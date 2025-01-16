@@ -1,10 +1,12 @@
-import type {eventWithTime} from 'rrweb/typings/types';
-
-import type {RawCrumb} from 'sentry/types/breadcrumbs';
+import type {Duration} from 'moment-timezone';
 
 // Keep this in sync with the backend blueprint
 // "ReplayRecord" is distinct from the common: "replay = new ReplayReader()"
 export type ReplayRecord = {
+  /**
+   * Number that represents how much user activity happened in a replay.
+   */
+  activity: number;
   browser: {
     name: null | string;
     version: null | string;
@@ -12,68 +14,88 @@ export type ReplayRecord = {
   /**
    * The number of errors associated with the replay.
    */
-  countErrors: number;
+  count_errors: number;
   /**
    * The number of segments that make up the replay.
    */
-  countSegments: number;
+  count_segments: number;
   /**
    * The number of urls visited in the replay.
    */
-  countUrls: number;
+  count_urls: number;
   device: {
     brand: null | string;
     family: null | string;
-    model: null | string;
+    model_id: null | string;
     name: null | string;
   };
   dist: null | string;
   /**
-   * Difference of `updated-at` and `created-at` in seconds.
+   * Difference of `finished_at` and `started_at` in seconds.
    */
-  duration: number; // Seconds
+  duration: Duration;
   environment: null | string;
-  errorIds: string[];
+  error_ids: string[];
   /**
    * The **latest** timestamp received as determined by the SDK.
    */
-  finishedAt: Date;
+  finished_at: Date;
+  /**
+   * Whether the currently authenticated user has seen this replay or not.
+   */
+  has_viewed: boolean;
   /**
    * The ID of the Replay instance
    */
   id: string;
   /**
-   * The longest transaction associated with the replay measured in milliseconds.
+   * Whether the replay was deleted.
+   * When deleted the rrweb data & attachments are removed from blob storage,
+   * but the record of the replay is not removed.
    */
-  longestTransaction: number;
+  is_archived: boolean;
   os: {
     name: null | string;
     version: null | string;
   };
   platform: string;
-  projectId: string;
+  project_id: string;
   releases: null | string[];
   sdk: {
-    name: string;
-    version: string;
+    name: null | string;
+    version: null | string;
   };
   /**
    * The **earliest** timestamp received as determined by the SDK.
    */
-  startedAt: Date;
+  started_at: Date;
   tags: Record<string, string[]>;
-  title: string;
-  traceIds: string[];
+  trace_ids: string[];
   urls: string[];
   user: {
-    displayName: null | string;
+    display_name: null | string;
     email: null | string;
     id: null | string;
-    ip_address: null | string;
-    name: null | string;
+    ip: null | string;
+    username: null | string;
   };
-  userAgent: string;
+  /**
+   * The number of dead clicks associated with the replay.
+   */
+  count_dead_clicks?: number;
+  /**
+   * The number of rage clicks associated with the replay.
+   */
+  count_rage_clicks?: number;
 };
+
+// The ReplayRecord fields, but with nested fields represented as `foo.bar`.
+export type ReplayRecordNestedFieldName =
+  | keyof ReplayRecord
+  | `browser.${keyof ReplayRecord['browser']}`
+  | `device.${keyof ReplayRecord['device']}`
+  | `os.${keyof ReplayRecord['os']}`
+  | `user.${keyof ReplayRecord['user']}`;
 
 export type ReplayListLocationQuery = {
   cursor?: string;
@@ -90,15 +112,47 @@ export type ReplayListLocationQuery = {
   utc?: 'true' | 'false';
 };
 
+export type ReplayListQueryReferrer =
+  | 'replayList'
+  | 'issueReplays'
+  | 'transactionReplays';
+
+// Sync with ReplayListRecord below
+export const REPLAY_LIST_FIELDS = [
+  'activity',
+  'browser.name',
+  'browser.version',
+  'count_dead_clicks',
+  'count_errors',
+  'count_rage_clicks',
+  'duration',
+  'finished_at',
+  'has_viewed',
+  'id',
+  'is_archived',
+  'os.name',
+  'os.version',
+  'project_id',
+  'started_at',
+  'user',
+];
+
+// Sync with REPLAY_LIST_FIELDS above
 export type ReplayListRecord = Pick<
   ReplayRecord,
-  | 'countErrors'
+  | 'activity'
+  | 'browser'
+  | 'count_dead_clicks'
+  | 'count_errors'
+  | 'count_rage_clicks'
   | 'duration'
-  | 'finishedAt'
+  | 'finished_at'
+  | 'has_viewed'
   | 'id'
-  | 'projectId'
-  | 'startedAt'
-  | 'urls'
+  | 'is_archived'
+  | 'os'
+  | 'project_id'
+  | 'started_at'
   | 'user'
 >;
 
@@ -108,41 +162,6 @@ export type ReplaySegment = {
   replayId: string;
   segmentId: number;
 };
-
-/**
- * Highlight Replay Plugin types
- */
-export interface Highlight {
-  nodeId: number;
-  text: string;
-  color?: string;
-}
-
-export type RecordingEvent = eventWithTime;
-
-export interface ReplaySpan<T = Record<string, any>> {
-  data: T;
-  endTimestamp: number;
-  id: string;
-  op: string;
-  startTimestamp: number;
-  timestamp: number;
-  description?: string;
-}
-
-export type MemorySpanType = ReplaySpan<{
-  memory: {
-    jsHeapSizeLimit: number;
-    totalJSHeapSize: number;
-    usedJSHeapSize: number;
-  };
-}>;
-
-export type NetworkSpan = ReplaySpan;
-
-type Overwrite<T, U> = Pick<T, Exclude<keyof T, keyof U>> & U;
-
-export type ReplayCrumb = Overwrite<RawCrumb, {timestamp: number}>;
 
 /**
  * This is a result of a custom discover query
@@ -156,4 +175,51 @@ export interface ReplayError {
   ['project.name']: string;
   timestamp: string;
   title: string;
+}
+
+export type DeadRageSelectorItem = {
+  aria_label: string;
+  dom_element: {
+    fullSelector: string;
+    projectId: number;
+    selector: string;
+  };
+  element: string;
+  project_id: number;
+  count_dead_clicks?: number;
+  count_rage_clicks?: number;
+};
+
+export type DeadRageSelectorListResponse = {
+  data: {
+    count_dead_clicks: number;
+    count_rage_clicks: number;
+    dom_element: string;
+    element: ReplayClickElement;
+    project_id: number;
+  }[];
+};
+
+export type ReplayClickElement = {
+  alt: string;
+  aria_label: string;
+  class: string[];
+  component_name: string;
+  id: string;
+  role: string;
+  tag: string;
+  testid: string;
+  title: string;
+};
+
+export interface DeadRageSelectorQueryParams {
+  isWidgetData: boolean;
+  cursor?: string | string[] | undefined | null;
+  per_page?: number;
+  prefix?: string;
+  sort?:
+    | 'count_dead_clicks'
+    | '-count_dead_clicks'
+    | 'count_rage_clicks'
+    | '-count_rage_clicks';
 }

@@ -1,32 +1,34 @@
-import {Fragment} from 'react';
-import {browserHistory} from 'react-router';
+import {Fragment, useCallback, useMemo} from 'react';
 import styled from '@emotion/styled';
-import {Location} from 'history';
+import type {Location} from 'history';
 import omit from 'lodash/omit';
 
-import CompactSelect from 'sentry/components/compactSelect';
-import DatePageFilter from 'sentry/components/datePageFilter';
-import EnvironmentPageFilter from 'sentry/components/environmentPageFilter';
-import SearchBar from 'sentry/components/events/searchBar';
+import {CompactSelect} from 'sentry/components/compactSelect';
 import * as Layout from 'sentry/components/layouts/thirds';
+import {DatePageFilter} from 'sentry/components/organizations/datePageFilter';
+import {EnvironmentPageFilter} from 'sentry/components/organizations/environmentPageFilter';
 import PageFilterBar from 'sentry/components/organizations/pageFilterBar';
 import {normalizeDateTimeParams} from 'sentry/components/organizations/pageFilters/parse';
 import Pagination from 'sentry/components/pagination';
-import space from 'sentry/styles/space';
-import {Organization} from 'sentry/types';
+import {SpanSearchQueryBuilder} from 'sentry/components/performance/spanSearchQueryBuilder';
+import {space} from 'sentry/styles/space';
+import type {Organization} from 'sentry/types/organization';
 import {defined} from 'sentry/utils';
-import trackAdvancedAnalyticsEvent from 'sentry/utils/analytics/trackAdvancedAnalyticsEvent';
+import {trackAnalytics} from 'sentry/utils/analytics';
 import DiscoverQuery from 'sentry/utils/discover/discoverQuery';
-import EventView from 'sentry/utils/discover/eventView';
+import type EventView from 'sentry/utils/discover/eventView';
 import SuspectSpansQuery from 'sentry/utils/performance/suspectSpans/suspectSpansQuery';
+import {VisuallyCompleteWithData} from 'sentry/utils/performanceForSentry';
 import {decodeScalar} from 'sentry/utils/queryString';
+import {useNavigate} from 'sentry/utils/useNavigate';
 import useProjects from 'sentry/utils/useProjects';
+import SpanMetricsTable from 'sentry/views/performance/transactionSummary/transactionSpans/spanMetricsTable';
 
-import {SetStateAction} from '../types';
+import type {SetStateAction} from '../types';
 
 import OpsFilter from './opsFilter';
 import SuspectSpansTable from './suspectSpansTable';
-import {SpanSort, SpansTotalValues} from './types';
+import type {SpanSort, SpansTotalValues} from './types';
 import {
   getSuspectSpanSortFromEventView,
   getTotalsView,
@@ -38,12 +40,12 @@ import {
 
 const ANALYTICS_VALUES = {
   spanOp: (organization: Organization, value: string | undefined) =>
-    trackAdvancedAnalyticsEvent('performance_views.spans.change_op', {
+    trackAnalytics('performance_views.spans.change_op', {
       organization,
       operation_name: value,
     }),
   sort: (organization: Organization, value: string | undefined) =>
-    trackAdvancedAnalyticsEvent('performance_views.spans.change_sort', {
+    trackAnalytics('performance_views.spans.change_sort', {
       organization,
       sort_column: value,
     }),
@@ -60,30 +62,34 @@ type Props = {
 
 function SpansContent(props: Props) {
   const {location, organization, eventView, projectId, transactionName} = props;
+  const navigate = useNavigate();
   const query = decodeScalar(location.query.query, '');
 
-  function handleChange(key: string) {
-    return function (value: string | undefined) {
-      ANALYTICS_VALUES[key]?.(organization, value);
+  const handleChange = useCallback(
+    (key: string) => {
+      return function (value: string | undefined) {
+        ANALYTICS_VALUES[key]?.(organization, value);
 
-      const queryParams = normalizeDateTimeParams({
-        ...(location.query || {}),
-        [key]: value,
-      });
+        const queryParams = normalizeDateTimeParams({
+          ...(location.query || {}),
+          [key]: value,
+        });
 
-      // do not propagate pagination when making a new search
-      const toOmit = ['cursor'];
-      if (!defined(value)) {
-        toOmit.push(key);
-      }
-      const searchQueryParams = omit(queryParams, toOmit);
+        // do not propagate pagination when making a new search
+        const toOmit = ['cursor'];
+        if (!defined(value)) {
+          toOmit.push(key);
+        }
+        const searchQueryParams = omit(queryParams, toOmit);
 
-      browserHistory.push({
-        ...location,
-        query: searchQueryParams,
-      });
-    };
-  }
+        navigate({
+          ...location,
+          query: searchQueryParams,
+        });
+      };
+    },
+    [location, navigate, organization]
+  );
 
   const spanOp = decodeScalar(location.query.spanOp);
   const spanGroup = decodeScalar(location.query.spanGroup);
@@ -92,6 +98,18 @@ function SpansContent(props: Props) {
   const totalsView = getTotalsView(eventView);
 
   const {projects} = useProjects();
+
+  const onSearch = useMemo(() => handleChange('query'), [handleChange]);
+  const projectIds = useMemo(() => eventView.project.slice(), [eventView]);
+
+  const hasNewSpansUIFlag =
+    organization.features.includes('performance-spans-new-ui') &&
+    organization.features.includes('insights-initial-modules');
+
+  // TODO: Remove this flag when the feature is GA'd and replace the old content entirely
+  if (hasNewSpansUIFlag) {
+    return <SpansContentV2 {...props} />;
+  }
 
   return (
     <Layout.Main fullWidth>
@@ -106,25 +124,25 @@ function SpansContent(props: Props) {
         <PageFilterBar condensed>
           <EnvironmentPageFilter />
           <DatePageFilter
-            alignDropdown="left"
             maxPickableDays={SPAN_RETENTION_DAYS}
             relativeOptions={SPAN_RELATIVE_PERIODS}
           />
         </PageFilterBar>
-        <StyledSearchBar
-          organization={organization}
-          projectIds={eventView.project}
-          query={query}
-          fields={eventView.fields}
-          onSearch={handleChange('query')}
-        />
-        <CompactSelect
-          value={sort.field}
-          options={SPAN_SORT_OPTIONS.map(opt => ({value: opt.field, label: opt.label}))}
-          onChange={opt => handleChange('sort')(opt.value)}
-          triggerProps={{prefix: sort.prefix}}
-          triggerLabel={sort.label}
-        />
+        <StyledSearchBarWrapper>
+          <SpanSearchQueryBuilder
+            projects={projectIds}
+            initialQuery={query}
+            onSearch={onSearch}
+            searchSource="transaction_spans"
+          />
+          <CompactSelect
+            value={sort.field}
+            options={SPAN_SORT_OPTIONS.map(opt => ({value: opt.field, label: opt.label}))}
+            onChange={opt => handleChange('sort')(opt.value)}
+            triggerProps={{prefix: sort.prefix}}
+            triggerLabel={sort.label}
+          />
+        </StyledSearchBarWrapper>
       </FilterActions>
       <DiscoverQuery
         eventView={totalsView}
@@ -133,7 +151,6 @@ function SpansContent(props: Props) {
         referrer="api.performance.transaction-spans"
         cursor="0:0:1"
         noPagination
-        useEvents
       >
         {({tableData}) => {
           const totals: SpansTotalValues | null =
@@ -150,16 +167,22 @@ function SpansContent(props: Props) {
             >
               {({suspectSpans, isLoading, pageLinks}) => (
                 <Fragment>
-                  <SuspectSpansTable
-                    location={location}
-                    organization={organization}
-                    transactionName={transactionName}
-                    project={projects.find(p => p.id === projectId)}
+                  <VisuallyCompleteWithData
+                    id="TransactionSpans-SuspectSpansTable"
+                    hasData={!!suspectSpans?.length}
                     isLoading={isLoading}
-                    suspectSpans={suspectSpans ?? []}
-                    totals={totals}
-                    sort={sort.field}
-                  />
+                  >
+                    <SuspectSpansTable
+                      location={location}
+                      organization={organization}
+                      transactionName={transactionName}
+                      project={projects.find(p => p.id === projectId)}
+                      isLoading={isLoading}
+                      suspectSpans={suspectSpans ?? []}
+                      totals={totals}
+                      sort={sort.field}
+                    />
+                  </VisuallyCompleteWithData>
                   <Pagination pageLinks={pageLinks ?? null} />
                 </Fragment>
               )}
@@ -167,6 +190,74 @@ function SpansContent(props: Props) {
           );
         }}
       </DiscoverQuery>
+    </Layout.Main>
+  );
+}
+
+// TODO: Temporary component while we make the switch to spans only. Will fully replace the old Spans tab when GA'd
+function SpansContentV2(props: Props) {
+  const {location, organization, eventView, projectId, transactionName} = props;
+  const navigate = useNavigate();
+  const {projects} = useProjects();
+  const project = projects.find(p => p.id === projectId);
+  const spansQuery = decodeScalar(location.query.spansQuery, '');
+
+  const handleChange = useCallback(
+    (key: string) => {
+      return function (value: string | undefined) {
+        ANALYTICS_VALUES[key]?.(organization, value);
+
+        const queryParams = normalizeDateTimeParams({
+          ...(location.query || {}),
+          [key]: value,
+        });
+
+        // do not propagate pagination when making a new search
+        const toOmit = ['cursor'];
+        if (!defined(value)) {
+          toOmit.push(key);
+        }
+        const searchQueryParams = omit(queryParams, toOmit);
+
+        navigate({
+          ...location,
+          query: searchQueryParams,
+        });
+      };
+    },
+    [location, navigate, organization]
+  );
+
+  const onSearch = useMemo(() => handleChange('spansQuery'), [handleChange]);
+  const projectIds = useMemo(() => eventView.project.slice(), [eventView]);
+
+  return (
+    <Layout.Main fullWidth>
+      <FilterActions>
+        <OpsFilter
+          location={location}
+          eventView={eventView}
+          organization={organization}
+          handleOpChange={handleChange('spanOp')}
+          transactionName={transactionName}
+        />
+        <PageFilterBar condensed>
+          <EnvironmentPageFilter />
+          <DatePageFilter />
+        </PageFilterBar>
+        <SpanSearchQueryBuilder
+          projects={projectIds}
+          initialQuery={spansQuery}
+          onSearch={onSearch}
+          searchSource="transaction_spans"
+        />
+      </FilterActions>
+
+      <SpanMetricsTable
+        project={project}
+        transactionName={transactionName}
+        query={spansQuery ?? ''}
+      />
     </Layout.Main>
   );
 }
@@ -192,7 +283,7 @@ const FilterActions = styled('div')`
   }
 `;
 
-const StyledSearchBar = styled(SearchBar)`
+const StyledSearchBarWrapper = styled('div')`
   @media (min-width: ${p => p.theme.breakpoints.small}) {
     order: 1;
     grid-column: 1/5;

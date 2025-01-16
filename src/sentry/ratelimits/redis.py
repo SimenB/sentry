@@ -30,7 +30,7 @@ def _bucket_start_time(bucket_number: int, window: int) -> int:
 
 class RedisRateLimiter(RateLimiter):
     def __init__(self, **options: Any) -> None:
-        cluster_key = getattr(settings, "SENTRY_RATE_LIMIT_REDIS_CLUSTER", "default")
+        cluster_key = settings.SENTRY_RATE_LIMIT_REDIS_CLUSTER
         self.client = redis.redis_clusters.get(cluster_key)
 
     def _construct_redis_key(
@@ -95,7 +95,9 @@ class RedisRateLimiter(RateLimiter):
     ) -> tuple[bool, int, int]:
         """
         Does a rate limit check as well as returning the new rate limit value and when the next
-        rate limit window will start
+        rate limit window will start.
+
+        Note that the counter is incremented when the check is done.
         """
         request_time = time()
         if window is None or window == 0:
@@ -106,8 +108,11 @@ class RedisRateLimiter(RateLimiter):
         # Reset Time = next time bucket's start time
         reset_time = _bucket_start_time(_time_bucket(request_time, window) + 1, window)
         try:
-            result = self.client.incr(redis_key)
-            self.client.expire(redis_key, expiration)
+            pipe = self.client.pipeline()
+            pipe.incr(redis_key)
+            pipe.expire(redis_key, expiration)
+            pipeline_result = pipe.execute()
+            result = pipeline_result[0]
         except RedisError:
             # We don't want rate limited endpoints to fail when ratelimits
             # can't be updated. We do want to know when that happens.
@@ -115,3 +120,7 @@ class RedisRateLimiter(RateLimiter):
             return False, 0, reset_time
 
         return result > limit, result, reset_time
+
+    def reset(self, key: str, project: Project | None = None, window: int | None = None) -> None:
+        redis_key = self._construct_redis_key(key, project=project, window=window)
+        self.client.delete(redis_key)

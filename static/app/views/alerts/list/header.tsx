@@ -1,16 +1,16 @@
-import {InjectedRouter} from 'react-router';
-import styled from '@emotion/styled';
-
 import {navigateTo} from 'sentry/actionCreators/navigation';
-import Button from 'sentry/components/button';
+import {LinkButton} from 'sentry/components/button';
 import ButtonBar from 'sentry/components/buttonBar';
 import CreateAlertButton from 'sentry/components/createAlertButton';
-import GlobalSelectionLink from 'sentry/components/globalSelectionLink';
+import FeedbackWidgetButton from 'sentry/components/feedback/widget/feedbackWidgetButton';
 import * as Layout from 'sentry/components/layouts/thirds';
+import {PageHeadingQuestionTooltip} from 'sentry/components/pageHeadingQuestionTooltip';
+import {TabList} from 'sentry/components/tabs';
 import {IconSettings} from 'sentry/icons';
 import {t} from 'sentry/locale';
 import ProjectsStore from 'sentry/stores/projectsStore';
-import space from 'sentry/styles/space';
+import type {InjectedRouter} from 'sentry/types/legacyReactRouter';
+import normalizeUrl from 'sentry/utils/url/normalizeUrl';
 import useOrganization from 'sentry/utils/useOrganization';
 import usePageFilters from 'sentry/utils/usePageFilters';
 
@@ -19,7 +19,7 @@ type Props = {
   router: InjectedRouter;
 };
 
-const AlertHeader = ({router, activeTab}: Props) => {
+function AlertHeader({router, activeTab}: Props) {
   const organization = useOrganization();
   const {selection} = usePageFilters();
   /**
@@ -32,23 +32,33 @@ const AlertHeader = ({router, activeTab}: Props) => {
   };
 
   const alertRulesLink = (
-    <li className={activeTab === 'rules' ? 'active' : ''}>
-      <GlobalSelectionLink to={`/organizations/${organization.slug}/alerts/rules/`}>
-        {t('Alert Rules')}
-      </GlobalSelectionLink>
-    </li>
+    <TabList.Item
+      key="rules"
+      to={normalizeUrl(`/organizations/${organization.slug}/alerts/rules/`)}
+    >
+      {t('Alert Rules')}
+    </TabList.Item>
   );
 
   return (
     <Layout.Header>
       <Layout.HeaderContent>
-        <StyledLayoutTitle>{t('Alerts')}</StyledLayoutTitle>
+        <Layout.Title>
+          {t('Alerts')}
+          <PageHeadingQuestionTooltip
+            docsUrl="https://docs.sentry.io/product/alerts/"
+            title={t(
+              'Real-time visibility into problems with your code and the impact on your users, along with a view of your existing alert rules, their status, project, team, and creation date.'
+            )}
+          />
+        </Layout.Title>
       </Layout.HeaderContent>
       <Layout.HeaderActions>
-        <Actions gap={1}>
+        <ButtonBar gap={1}>
           <CreateAlertButton
             organization={organization}
             iconProps={{size: 'sm'}}
+            size="sm"
             priority="primary"
             referrer="alert_stream"
             showPermissionGuide
@@ -60,32 +70,29 @@ const AlertHeader = ({router, activeTab}: Props) => {
           >
             {t('Create Alert')}
           </CreateAlertButton>
-          <Button
+          <FeedbackWidgetButton />
+          <LinkButton
+            size="sm"
             onClick={handleNavigateToSettings}
             href="#"
             icon={<IconSettings size="sm" />}
             aria-label={t('Settings')}
           />
-        </Actions>
+        </ButtonBar>
       </Layout.HeaderActions>
-      <Layout.HeaderNavTabs underlined>
-        {alertRulesLink}
-        <li className={activeTab === 'stream' ? 'active' : ''}>
-          <GlobalSelectionLink to={`/organizations/${organization.slug}/alerts/`}>
+      <Layout.HeaderTabs value={activeTab}>
+        <TabList hideBorder>
+          {alertRulesLink}
+          <TabList.Item
+            key="stream"
+            to={normalizeUrl(`/organizations/${organization.slug}/alerts/`)}
+          >
             {t('History')}
-          </GlobalSelectionLink>
-        </li>
-      </Layout.HeaderNavTabs>
+          </TabList.Item>
+        </TabList>
+      </Layout.HeaderTabs>
     </Layout.Header>
   );
-};
+}
 
 export default AlertHeader;
-
-const StyledLayoutTitle = styled(Layout.Title)`
-  margin-top: ${space(0.5)};
-`;
-
-const Actions = styled(ButtonBar)`
-  height: 32px;
-`;

@@ -1,7 +1,8 @@
-import {JsonFormObject} from 'sentry/components/forms/types';
+import type {JsonFormObject} from 'sentry/components/forms/types';
 import languages from 'sentry/data/languages';
-import timezones from 'sentry/data/timezones';
+import {timezoneOptions} from 'sentry/data/timezones';
 import {t} from 'sentry/locale';
+import {removeBodyTheme} from 'sentry/utils/removeBodyTheme';
 
 // Export route to make these forms searchable by label/help
 export const route = '/settings/account/details/';
@@ -22,25 +23,28 @@ const formGroups: JsonFormObject[] = [
         help: t(
           "Select your theme preference. It can be synced to your system's theme, always light mode, or always dark mode."
         ),
-        choices: [
-          ['light', t('Light')],
-          ['dark', t('Dark')],
-          ['system', t('Default to system')],
+        options: [
+          {value: 'light', label: t('Light')},
+          {value: 'dark', label: t('Dark')},
+          {value: 'system', label: t('Default to system')},
         ],
         getData: transformOptions,
+        onChange: () => {
+          removeBodyTheme();
+        },
       },
       {
         name: 'language',
         type: 'select',
         label: t('Language'),
-        choices: languages,
+        options: languages.map(([value, label]) => ({value, label})),
         getData: transformOptions,
       },
       {
         name: 'timezone',
         type: 'select',
         label: t('Timezone'),
-        choices: timezones,
+        options: timezoneOptions,
         getData: transformOptions,
       },
       {
@@ -53,13 +57,26 @@ const formGroups: JsonFormObject[] = [
         name: 'stacktraceOrder',
         type: 'select',
         required: false,
-        choices: [
-          [-1, t('Default (let Sentry decide)')],
-          [1, t('Most recent call last')],
-          [2, t('Most recent call first')],
+        options: [
+          {value: -1, label: t('Default')},
+          {value: 1, label: t('Oldest')},
+          {value: 2, label: t('Newest')},
         ],
         label: t('Stack Trace Order'),
         help: t('Choose the default ordering of frames in stack traces'),
+        getData: transformOptions,
+      },
+      {
+        name: 'defaultIssueEvent',
+        type: 'select',
+        required: false,
+        options: [
+          {value: 'recommended', label: t('Recommended')},
+          {value: 'latest', label: t('Latest')},
+          {value: 'oldest', label: t('Oldest')},
+        ],
+        label: t('Default Issue Event'),
+        help: t('Choose what event gets displayed by default'),
         getData: transformOptions,
       },
     ],

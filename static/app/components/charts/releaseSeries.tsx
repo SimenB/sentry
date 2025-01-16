@@ -1,25 +1,28 @@
 import {Component} from 'react';
-// eslint-disable-next-line no-restricted-imports
-import {withRouter, WithRouterProps} from 'react-router';
+import type {Theme} from '@emotion/react';
 import {withTheme} from '@emotion/react';
-import {Query} from 'history';
+import type {Query} from 'history';
 import isEqual from 'lodash/isEqual';
 import memoize from 'lodash/memoize';
 import partition from 'lodash/partition';
 
 import {addErrorMessage} from 'sentry/actionCreators/indicator';
-import {Client, ResponseMeta} from 'sentry/api';
+import type {Client, ResponseMeta} from 'sentry/api';
 import MarkLine from 'sentry/components/charts/components/markLine';
 import {t} from 'sentry/locale';
-import {DateString, Organization} from 'sentry/types';
-import {Series} from 'sentry/types/echarts';
+import type {DateString} from 'sentry/types/core';
+import type {Series} from 'sentry/types/echarts';
+import type {WithRouterProps} from 'sentry/types/legacyReactRouter';
+import type {Organization} from 'sentry/types/organization';
 import {escape} from 'sentry/utils';
 import {getFormattedDate, getUtcDateString} from 'sentry/utils/dates';
-import {formatVersion} from 'sentry/utils/formatters';
 import parseLinkHeader from 'sentry/utils/parseLinkHeader';
-import {Theme} from 'sentry/utils/theme';
+import normalizeUrl from 'sentry/utils/url/normalizeUrl';
+import {formatVersion} from 'sentry/utils/versions/formatVersion';
 import withApi from 'sentry/utils/withApi';
 import withOrganization from 'sentry/utils/withOrganization';
+// eslint-disable-next-line no-restricted-imports
+import withSentryRouter from 'sentry/utils/withSentryRouter';
 
 type ReleaseMetaBasic = {
   date: string;
@@ -43,7 +46,7 @@ function getOrganizationReleases(
   organization: Organization,
   conditions: ReleaseConditions
 ) {
-  const query = {};
+  const query: Record<string, string> = {};
   Object.keys(conditions).forEach(key => {
     let value = conditions[key];
     if (value && (key === 'start' || key === 'end')) {
@@ -61,7 +64,15 @@ function getOrganizationReleases(
   }) as Promise<[ReleaseMetaBasic[], any, ResponseMeta]>;
 }
 
-type Props = WithRouterProps & {
+const getOrganizationReleasesMemoized = memoize(
+  getOrganizationReleases,
+  (_, __, conditions) =>
+    Object.values(conditions)
+      .map(val => JSON.stringify(val))
+      .join('-')
+);
+
+export interface ReleaseSeriesProps extends WithRouterProps {
   api: Client;
   children: (s: State) => React.ReactNode;
   end: DateString;
@@ -71,6 +82,7 @@ type Props = WithRouterProps & {
   start: DateString;
   theme: Theme;
   emphasizeReleases?: string[];
+  enabled?: boolean;
   memoized?: boolean;
   period?: string | null;
   preserveQueryParams?: boolean;
@@ -79,14 +91,14 @@ type Props = WithRouterProps & {
   releases?: ReleaseMetaBasic[] | null;
   tooltip?: Exclude<Parameters<typeof MarkLine>[0], undefined>['tooltip'];
   utc?: boolean | null;
-};
+}
 
 type State = {
   releaseSeries: Series[];
   releases: ReleaseMetaBasic[] | null;
 };
 
-class ReleaseSeries extends Component<Props, State> {
+class ReleaseSeries extends Component<ReleaseSeriesProps, State> {
   state: State = {
     releases: null,
     releaseSeries: [],
@@ -94,7 +106,7 @@ class ReleaseSeries extends Component<Props, State> {
 
   componentDidMount() {
     this._isMounted = true;
-    const {releases} = this.props;
+    const {releases, enabled = true} = this.props;
 
     if (releases) {
       // No need to fetch releases if passed in from props
@@ -102,17 +114,23 @@ class ReleaseSeries extends Component<Props, State> {
       return;
     }
 
-    this.fetchData();
+    if (enabled) {
+      this.fetchData();
+    }
   }
 
   componentDidUpdate(prevProps) {
+    const {enabled = true} = this.props;
+
     if (
-      !isEqual(prevProps.projects, this.props.projects) ||
-      !isEqual(prevProps.environments, this.props.environments) ||
-      !isEqual(prevProps.start, this.props.start) ||
-      !isEqual(prevProps.end, this.props.end) ||
-      !isEqual(prevProps.period, this.props.period) ||
-      !isEqual(prevProps.query, this.props.query)
+      (!isEqual(prevProps.projects, this.props.projects) ||
+        !isEqual(prevProps.environments, this.props.environments) ||
+        !isEqual(prevProps.start, this.props.start) ||
+        !isEqual(prevProps.end, this.props.end) ||
+        !isEqual(prevProps.period, this.props.period) ||
+        !isEqual(prevProps.query, this.props.query) ||
+        (!prevProps.enabled && this.props.enabled)) &&
+      enabled
     ) {
       this.fetchData();
     } else if (!isEqual(prevProps.emphasizeReleases, this.props.emphasizeReleases)) {
@@ -126,15 +144,6 @@ class ReleaseSeries extends Component<Props, State> {
   }
 
   _isMounted: boolean = false;
-
-  getOrganizationReleasesMemoized = memoize(
-    (api: Client, organization: Organization, conditions: ReleaseConditions) =>
-      getOrganizationReleases(api, organization, conditions),
-    (_, __, conditions) =>
-      Object.values(conditions)
-        .map(val => JSON.stringify(val))
-        .join('-')
-  );
 
   async fetchData() {
     const {
@@ -161,7 +170,7 @@ class ReleaseSeries extends Component<Props, State> {
     while (hasMore) {
       try {
         const getReleases = memoized
-          ? this.getOrganizationReleasesMemoized
+          ? getOrganizationReleasesMemoized
           : getOrganizationReleases;
         const [newReleases, , resp] = await getReleases(api, organization, conditions);
         releases.push(...newReleases);
@@ -173,7 +182,7 @@ class ReleaseSeries extends Component<Props, State> {
         if (pageLinks) {
           const paginationObject = parseLinkHeader(pageLinks);
           hasMore = paginationObject?.next?.results ?? false;
-          conditions.cursor = paginationObject.next.cursor;
+          conditions.cursor = paginationObject.next!.cursor;
         } else {
           hasMore = false;
         }
@@ -254,10 +263,14 @@ class ReleaseSeries extends Component<Props, State> {
         name: formatVersion(release.version, true),
         value: formatVersion(release.version, true),
         onClick: () => {
-          router.push({
-            pathname: `/organizations/${organization.slug}/releases/${release.version}/`,
-            query,
-          });
+          router.push(
+            normalizeUrl({
+              pathname: `/organizations/${
+                organization.slug
+              }/releases/${encodeURIComponent(release.version)}/`,
+              query,
+            })
+          );
         },
         label: {
           formatter: () => formatVersion(release.version, true),
@@ -266,6 +279,10 @@ class ReleaseSeries extends Component<Props, State> {
       tooltip: tooltip || {
         trigger: 'item',
         formatter: ({data}: any) => {
+          // Should only happen when navigating pages
+          if (!data) {
+            return '';
+          }
           // XXX using this.props here as this function does not get re-run
           // unless projects are changed. Using a closure variable would result
           // in stale values.
@@ -279,9 +296,8 @@ class ReleaseSeries extends Component<Props, State> {
               'Release'
             )}</strong></span> ${version}</div>`,
             '</div>',
-            '<div class="tooltip-date">',
+            '<div class="tooltip-footer">',
             time,
-            '</div>',
             '</div>',
             '<div class="tooltip-arrow"></div>',
           ].join('');
@@ -307,4 +323,4 @@ class ReleaseSeries extends Component<Props, State> {
   }
 }
 
-export default withRouter(withOrganization(withApi(withTheme(ReleaseSeries))));
+export default withSentryRouter(withOrganization(withApi(withTheme(ReleaseSeries))));

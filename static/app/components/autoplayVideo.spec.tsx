@@ -10,6 +10,13 @@ jest.mock('react', () => {
     useRef: jest.fn(),
   };
 });
+// XXX: Mocking useRef throws an error for AnimatePrecense, so it must be mocked as well
+jest.mock('framer-motion', () => {
+  return {
+    ...jest.requireActual('framer-motion'),
+    AnimatePresence: jest.fn().mockImplementation(({children}) => <div>{children}</div>),
+  };
+});
 
 // Use a proxy to prevent <video ref={ref}/> from overriding our ref.current
 const makeProxyMock = (video: Partial<HTMLVideoElement>) => {
@@ -19,10 +26,7 @@ const makeProxyMock = (video: Partial<HTMLVideoElement>) => {
       get(obj, prop) {
         return obj[prop];
       },
-      set(obj, prop) {
-        if (prop === 'current') {
-          obj.current = obj.current;
-        }
+      set(_obj, _prop) {
         return true;
       },
     }
@@ -36,7 +40,7 @@ describe('autoplayVideo', () => {
       play: jest.fn().mockReturnValue(Promise.resolve()),
     });
 
-    // @ts-ignore we are mocking useRef
+    // @ts-expect-error we are mocking useRef
     React.useRef.mockImplementation(() => mock);
 
     render(<AutoplayVideo aria-label="video" src="https://example.com/video.mp4" />);
@@ -52,7 +56,7 @@ describe('autoplayVideo', () => {
       play: jest.fn().mockReturnValue(null),
     });
 
-    // @ts-ignore we are mocking useRef
+    // @ts-expect-error we are mocking useRef
     React.useRef.mockImplementation(() => mock);
 
     render(<AutoplayVideo aria-label="video" src="https://example.com/video.mp4" />);

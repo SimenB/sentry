@@ -1,30 +1,28 @@
 import {Fragment, useMemo} from 'react';
 import styled from '@emotion/styled';
 import debounce from 'lodash/debounce';
+import partition from 'lodash/partition';
 
 import TeamAvatar from 'sentry/components/avatar/teamAvatar';
-import Badge from 'sentry/components/badge';
-import CompactSelect from 'sentry/components/compactSelect';
+import Badge from 'sentry/components/badge/badge';
+import {CompactSelect} from 'sentry/components/compactSelect';
 import {DEFAULT_DEBOUNCE_DURATION} from 'sentry/constants';
 import {IconUser} from 'sentry/icons';
 import {t} from 'sentry/locale';
-import useTeams from 'sentry/utils/useTeams';
+import type {Team} from 'sentry/types/organization';
+import {useTeams} from 'sentry/utils/useTeams';
 
 interface Props {
   handleChangeFilter: (activeFilters: string[]) => void;
   selectedTeams: string[];
   /**
-   * only show teams user is a member of
+   * hide other teams suggestion
    */
-  showIsMemberTeams?: boolean;
+  hideOtherTeams?: boolean;
   /**
-   * show My Teams as the default dropdown description
+   * hide unassigned suggestion
    */
-  showMyTeamsDescription?: boolean;
-  /**
-   * show suggested options (My Teams and Unassigned)
-   */
-  showSuggestedOptions?: boolean;
+  hideUnassigned?: boolean;
 }
 
 const suggestedOptions = [
@@ -38,24 +36,23 @@ const suggestedOptions = [
   },
 ];
 
+const makeTeamOption = (team: Team) => ({
+  value: team.id,
+  label: `#${team.slug}`,
+  leadingItems: <TeamAvatar team={team} size={18} />,
+});
+
 function TeamFilter({
   selectedTeams,
   handleChangeFilter,
-  showIsMemberTeams = false,
-  showSuggestedOptions = true,
-  showMyTeamsDescription = false,
+  hideUnassigned = false,
+  hideOtherTeams = false,
 }: Props) {
-  const {teams, onSearch, fetching} = useTeams({provideUserTeams: showIsMemberTeams});
+  const {teams, onSearch, fetching} = useTeams();
 
-  const teamOptions = useMemo(
-    () =>
-      teams.map(team => ({
-        value: team.id,
-        label: `#${team.slug}`,
-        leadingItems: <TeamAvatar team={team} size={18} />,
-      })),
-    [teams]
-  );
+  const [myTeams, otherTeams] = partition(teams, team => team.isMember);
+  const myTeamOptions = myTeams.map(makeTeamOption);
+  const otherTeamOptions = otherTeams.map(makeTeamOption);
 
   const [triggerIcon, triggerLabel] = useMemo(() => {
     const firstSelectedSuggestion =
@@ -75,29 +72,31 @@ function TeamFilter({
       ];
     }
 
-    return [
-      <IconUser key={0} />,
-      showMyTeamsDescription ? t('My Teams') : t('All Teams'),
-    ];
-  }, [selectedTeams, teams, showMyTeamsDescription]);
+    return [<IconUser key={0} />, t('All Teams')];
+  }, [selectedTeams, teams]);
 
   return (
     <CompactSelect
       multiple
-      isClearable
-      isSearchable
-      isLoading={fetching}
+      clearable
+      searchable
+      loading={fetching}
       menuTitle={t('Filter teams')}
-      options={
-        showSuggestedOptions
-          ? [
-              {value: '_suggested', label: t('Suggested'), options: suggestedOptions},
-              {value: '_teams', label: t('Teams'), options: teamOptions},
-            ]
-          : teamOptions
-      }
+      options={[
+        {
+          value: '_suggested',
+          label: t('Suggested'),
+          options: suggestedOptions.filter(
+            opt => !hideUnassigned || opt.value !== 'unassigned'
+          ),
+        },
+        {value: '_my_teams', label: t('My Teams'), options: myTeamOptions},
+        ...(hideOtherTeams
+          ? []
+          : [{value: '_teams', label: t('Other Teams'), options: otherTeamOptions}]),
+      ]}
       value={selectedTeams}
-      onInputChange={debounce(val => void onSearch(val), DEFAULT_DEBOUNCE_DURATION)}
+      onSearch={debounce(val => void onSearch(val), DEFAULT_DEBOUNCE_DURATION)}
       onChange={opts => {
         // Compact select type inference does not work - onChange type is actually T | null.
         if (!opts) {

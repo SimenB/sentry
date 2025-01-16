@@ -1,57 +1,61 @@
-import {css} from '@emotion/react';
+import type {Theme} from '@emotion/react';
+import {css, useTheme} from '@emotion/react';
 import styled from '@emotion/styled';
 
+import BreadcrumbItem from 'sentry/components/replays/breadcrumbs/breadcrumbItem';
 import * as Timeline from 'sentry/components/replays/breadcrumbs/timeline';
-import {getCrumbsByColumn} from 'sentry/components/replays/utils';
-import Tooltip from 'sentry/components/tooltip';
-import space from 'sentry/styles/space';
-import {Crumb} from 'sentry/types/breadcrumbs';
+import {getFramesByColumn} from 'sentry/components/replays/utils';
+import {Tooltip} from 'sentry/components/tooltip';
+import {space} from 'sentry/styles/space';
+import {uniq} from 'sentry/utils/array/uniq';
+import getFrameDetails from 'sentry/utils/replays/getFrameDetails';
 import useActiveReplayTab from 'sentry/utils/replays/hooks/useActiveReplayTab';
 import useCrumbHandlers from 'sentry/utils/replays/hooks/useCrumbHandlers';
+import type {ReplayFrame} from 'sentry/utils/replays/types';
 import type {Color} from 'sentry/utils/theme';
-import theme from 'sentry/utils/theme';
-import BreadcrumbItem from 'sentry/views/replays/detail/breadcrumbs/breadcrumbItem';
 
-const EVENT_STICK_MARKER_WIDTH = 4;
+const NODE_SIZES = [8, 12, 16];
 
-type Props = {
-  crumbs: Crumb[];
+interface Props {
   durationMs: number;
+  frames: ReplayFrame[];
   startTimestampMs: number;
   width: number;
   className?: string;
-};
+}
 
-function ReplayTimelineEvents({
+export default function ReplayTimelineEvents({
   className,
-  crumbs,
   durationMs,
+  frames,
   startTimestampMs,
   width,
 }: Props) {
-  const totalColumns = Math.floor(width / EVENT_STICK_MARKER_WIDTH);
-  const eventsByCol = getCrumbsByColumn(
-    startTimestampMs,
-    durationMs,
-    crumbs,
-    totalColumns
-  );
+  const markerWidth = frames.length < 200 ? 4 : frames.length < 500 ? 6 : 10;
+
+  const totalColumns = Math.floor(width / markerWidth);
+  const framesByCol = getFramesByColumn(durationMs, frames, totalColumns);
 
   return (
     <Timeline.Columns className={className} totalColumns={totalColumns} remainder={0}>
-      {Array.from(eventsByCol.entries()).map(([column, breadcrumbs]) => (
-        <EventColumn key={column} column={column}>
-          <Event crumbs={breadcrumbs} startTimestampMs={startTimestampMs} />
+      {Array.from(framesByCol.entries()).map(([column, colFrames]) => (
+        <EventColumn key={column} style={{gridColumn: Math.floor(column)}}>
+          <Event
+            frames={colFrames}
+            markerWidth={markerWidth}
+            startTimestampMs={startTimestampMs}
+          />
         </EventColumn>
       ))}
     </Timeline.Columns>
   );
 }
 
-const EventColumn = styled(Timeline.Col)<{column: number}>`
-  grid-column: ${p => Math.floor(p.column)};
+const EventColumn = styled(Timeline.Col)`
   place-items: stretch;
   display: grid;
+  align-items: center;
+  position: relative;
 
   &:hover {
     z-index: ${p => p.theme.zIndex.initial};
@@ -59,29 +63,34 @@ const EventColumn = styled(Timeline.Col)<{column: number}>`
 `;
 
 function Event({
-  crumbs,
+  frames,
+  markerWidth,
   startTimestampMs,
 }: {
-  crumbs: Crumb[];
+  frames: ReplayFrame[];
+  markerWidth: number;
   startTimestampMs: number;
-  className?: string;
 }) {
-  const {setActiveTab} = useActiveReplayTab();
-  const {handleMouseEnter, handleMouseLeave, handleClick} =
-    useCrumbHandlers(startTimestampMs);
+  const theme = useTheme();
+  const {onMouseEnter, onMouseLeave, onClickTimestamp} = useCrumbHandlers();
+  const {setActiveTab} = useActiveReplayTab({});
 
-  const title = crumbs.map(crumb => (
+  const buttons = frames.map((frame, i) => (
     <BreadcrumbItem
-      key={crumb.id}
-      crumb={crumb}
+      frame={frame}
+      extraction={undefined}
+      key={i}
+      onClick={() => {
+        onClickTimestamp(frame);
+        setActiveTab(getFrameDetails(frame).tabKey);
+      }}
+      onMouseEnter={onMouseEnter}
+      onMouseLeave={onMouseLeave}
       startTimestampMs={startTimestampMs}
-      isHovered={false}
-      isSelected={false}
-      onMouseEnter={handleMouseEnter}
-      onMouseLeave={handleMouseLeave}
-      onClick={handleClick}
+      onInspectorExpanded={() => {}}
     />
   ));
+  const title = <TooltipWrapper>{buttons}</TooltipWrapper>;
 
   const overlayStyle = css`
     /* We make sure to override existing styles */
@@ -94,94 +103,108 @@ function Event({
     }
   `;
 
-  // If we have more than 3 events we want to make sure of showing all the different colors that we have
-  const colors = [...new Set(crumbs.map(crumb => crumb.color))];
+  const firstFrame = frames.at(0);
+
+  // We want to show the full variety of colors available.
+  const uniqueColors = uniq(frames.map(frame => getFrameDetails(frame).color));
 
   // We just need to stack up to 3 times
-  const totalStackNumber = Math.min(crumbs.length, 3);
+  const frameCount = Math.min(uniqueColors.length, 3);
 
-  // If there is only 1 event use the tab navigation handler on the node
-  const nodeClickHandler = () => {
-    if (crumbs.length === 1) {
-      const crumb = crumbs[0];
-
-      switch (crumb.type) {
-        case 'navigation':
-        case 'debug':
-          setActiveTab('network');
-          break;
-        case 'ui':
-          setActiveTab('dom');
-          break;
-        case 'error':
-        default:
-          setActiveTab('console');
-          break;
-      }
+  // Sort the frame colors by color priority
+  // Priority order: red300, yellow300, green300, purple300, gray300
+  const sortedUniqueColors = uniqueColors.sort(function (x, y) {
+    const colorOrder: Color[] = [
+      'red300',
+      'yellow300',
+      'green300',
+      'purple300',
+      'gray300',
+    ];
+    function getColorPos(c: Color) {
+      return colorOrder.indexOf(c);
     }
-  };
+    return getColorPos(x) - getColorPos(y);
+  });
 
   return (
-    <IconPosition onClick={nodeClickHandler}>
-      <IconNodeTooltip title={title} overlayStyle={overlayStyle} isHoverable>
-        {crumbs.slice(0, totalStackNumber).map((crumb, index) => (
-          <IconNode
-            color={colors[index] || crumb.color}
-            key={crumb.id}
-            stack={{totalStackNumber, index}}
-          />
-        ))}
-      </IconNodeTooltip>
+    <IconPosition style={{marginLeft: `${markerWidth / 2}px`}}>
+      <Tooltip
+        title={title}
+        overlayStyle={overlayStyle}
+        containerDisplayMode="grid"
+        isHoverable
+      >
+        <IconNode
+          colors={sortedUniqueColors}
+          frameCount={frameCount}
+          onClick={() => {
+            if (firstFrame) {
+              onClickTimestamp(firstFrame);
+            }
+          }}
+        />
+      </Tooltip>
     </IconPosition>
   );
 }
 
-const getNodeDimensions = ({
-  stack,
-}: {
-  stack: {
-    index: number;
-    totalStackNumber: number;
-  };
-}) => {
-  const {totalStackNumber, index} = stack;
-  const multiplier = totalStackNumber - index;
-  const size = (multiplier + 1) * 4;
-  return `
-    width: ${size}px;
-    height: ${size}px;
-  `;
-};
-
-const IconNodeTooltip = styled(Tooltip)`
-  display: grid;
-  justify-items: center;
-  align-items: center;
-`;
-
 const IconPosition = styled('div')`
   position: absolute;
   transform: translate(-50%);
-  margin-left: ${EVENT_STICK_MARKER_WIDTH / 2}px;
-  align-self: center;
-  display: grid;
 `;
 
-const IconNode = styled('div')<{
-  color: Color;
-  stack: {
-    index: number;
-    totalStackNumber: number;
-  };
-}>`
+const getBackgroundGradient = ({
+  colors,
+  frameCount,
+  theme,
+}: {
+  colors: Color[];
+  frameCount: number;
+  theme: Theme;
+}) => {
+  const c0 = theme[colors[0]!] ?? colors[0]!;
+  const c1 = theme[colors[1]!] ?? colors[1]! ?? c0;
+  const c2 = theme[colors[2]!] ?? colors[2]! ?? c1;
+
+  if (frameCount === 1) {
+    return `background: ${c0};`;
+  }
+  if (frameCount === 2) {
+    return `
+      background: ${c0};
+      background: radial-gradient(
+        circle at center,
+        ${c1} 30%,
+        ${c0} 30%
+      );`;
+  }
+  return `
+    background: ${c0};
+    background: radial-gradient(
+      circle at center,
+      ${c2} 30%,
+      ${c1} 30%,
+      ${c1} 50%,
+      ${c0} 50%
+    );`;
+};
+
+const IconNode = styled('button')<{colors: Color[]; frameCount: number}>`
+  padding: 0;
+  border: none;
   grid-column: 1;
   grid-row: 1;
-  ${getNodeDimensions}
+  width: ${p => NODE_SIZES[p.frameCount - 1]}px;
+  height: ${p => NODE_SIZES[p.frameCount - 1]}px;
   border-radius: 50%;
   color: ${p => p.theme.white};
-  background: ${p => p.theme[p.color] ?? p.color};
-  box-shadow: ${p => p.theme.dropShadowLightest};
+  ${getBackgroundGradient}
+  box-shadow: ${p => p.theme.dropShadowLight};
   user-select: none;
 `;
 
-export default ReplayTimelineEvents;
+const TooltipWrapper = styled('div')`
+  max-height: 80vh;
+  overflow: auto;
+`;

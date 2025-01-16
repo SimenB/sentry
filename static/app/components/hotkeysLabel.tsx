@@ -1,6 +1,7 @@
 import styled from '@emotion/styled';
 
-import space from 'sentry/styles/space';
+import {space} from 'sentry/styles/space';
+import toArray from 'sentry/utils/array/toArray';
 import {getKeyCode} from 'sentry/utils/getKeyCode';
 
 const macModifiers = {
@@ -56,11 +57,9 @@ type Props = {
   forcePlatform?: 'macos' | 'generic';
 };
 
-const HotkeysLabel = ({value, forcePlatform}: Props) => {
+function HotkeysLabel({value, forcePlatform}: Props) {
   // Split by commas and then split by +, but allow escaped /+
-  const hotkeySets = (Array.isArray(value) ? value : [value]).map(o =>
-    o.trim().split('+')
-  );
+  const hotkeySets = toArray(value).map(o => o.trim().split('+'));
 
   const isMac = forcePlatform
     ? forcePlatform === 'macos'
@@ -80,7 +79,7 @@ const HotkeysLabel = ({value, forcePlatform}: Props) => {
   }
 
   return <HotkeysContainer>{finalKeySet.map(key => key.label)}</HotkeysContainer>;
-};
+}
 
 export default HotkeysLabel;
 

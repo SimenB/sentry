@@ -1,29 +1,7 @@
-import {initializeOrg} from 'sentry-test/initializeOrg';
 import {render, screen, userEvent} from 'sentry-test/reactTestingLibrary';
 
 import {FrameRegisters} from 'sentry/components/events/interfaces/frame/frameRegisters';
 import {FrameRegisterValue} from 'sentry/components/events/interfaces/frame/frameRegisters/value';
-import {OrganizationContext} from 'sentry/views/organizationContext';
-import {RouteContext} from 'sentry/views/routeContext';
-
-function TestComponent({children}: {children: React.ReactNode}) {
-  const {organization, router} = initializeOrg();
-
-  return (
-    <OrganizationContext.Provider value={organization}>
-      <RouteContext.Provider
-        value={{
-          router,
-          location: router.location,
-          params: {},
-          routes: [],
-        }}
-      >
-        {children}
-      </RouteContext.Provider>
-    </OrganizationContext.Provider>
-  );
-}
 
 describe('FrameRegisters', function () {
   it('should render registers', function () {
@@ -33,12 +11,7 @@ describe('FrameRegisters', function () {
       r12: '0x0000000000000000',
     };
 
-    const {container} = render(
-      <TestComponent>
-        <FrameRegisters registers={registers} />
-      </TestComponent>
-    );
-    expect(container).toSnapshot();
+    render(<FrameRegisters registers={registers} />);
   });
 
   it('should skip registers without a value', function () {
@@ -48,12 +21,7 @@ describe('FrameRegisters', function () {
       r12: '0x0000000000000000',
     };
 
-    const {container} = render(
-      <TestComponent>
-        <FrameRegisters registers={registers} />
-      </TestComponent>
-    );
-    expect(container).toSnapshot();
+    render(<FrameRegisters registers={registers} />);
   });
 });
 
@@ -63,21 +31,13 @@ describe('FrameRegistersValue', function () {
 
   describe('with string value', function () {
     it('should display the hexadecimal value', function () {
-      render(
-        <TestComponent>
-          <FrameRegisterValue value={hexadecimalValue} />
-        </TestComponent>
-      );
+      render(<FrameRegisterValue value={hexadecimalValue} />);
       expect(screen.getByText(hexadecimalValue)).toBeInTheDocument();
     });
 
-    it('should display the numeric value', function () {
-      render(
-        <TestComponent>
-          <FrameRegisterValue value={hexadecimalValue} />
-        </TestComponent>
-      );
-      userEvent.click(screen.getByLabelText('Toggle register value format'));
+    it('should display the numeric value', async function () {
+      render(<FrameRegisterValue value={hexadecimalValue} />);
+      await userEvent.click(screen.getByLabelText('Toggle register value format'));
       expect(screen.queryByText(hexadecimalValue)).not.toBeInTheDocument();
       expect(screen.getByText(numericValue)).toBeInTheDocument();
     });
@@ -85,21 +45,13 @@ describe('FrameRegistersValue', function () {
 
   describe('with numeric value', function () {
     it('should display the hexadecimal value', function () {
-      render(
-        <TestComponent>
-          <FrameRegisterValue value={numericValue} />
-        </TestComponent>
-      );
+      render(<FrameRegisterValue value={numericValue} />);
       expect(screen.getByText(hexadecimalValue)).toBeInTheDocument();
     });
 
-    it('should display the numeric value', function () {
-      render(
-        <TestComponent>
-          <FrameRegisterValue value={numericValue} />
-        </TestComponent>
-      );
-      userEvent.click(screen.getByLabelText('Toggle register value format'));
+    it('should display the numeric value', async function () {
+      render(<FrameRegisterValue value={numericValue} />);
+      await userEvent.click(screen.getByLabelText('Toggle register value format'));
       expect(screen.queryByText(hexadecimalValue)).not.toBeInTheDocument();
       expect(screen.getByText(numericValue)).toBeInTheDocument();
     });
@@ -109,21 +61,13 @@ describe('FrameRegistersValue', function () {
     const unknownValue = 'xyz';
 
     it('should display the hexadecimal value', function () {
-      render(
-        <TestComponent>
-          <FrameRegisterValue value={unknownValue} />
-        </TestComponent>
-      );
+      render(<FrameRegisterValue value={unknownValue} />);
       expect(screen.getByText(unknownValue)).toBeInTheDocument();
     });
 
-    it('should display the numeric value', function () {
-      render(
-        <TestComponent>
-          <FrameRegisterValue value={unknownValue} />
-        </TestComponent>
-      );
-      userEvent.click(screen.getByLabelText('Toggle register value format'));
+    it('should display the numeric value', async function () {
+      render(<FrameRegisterValue value={unknownValue} />);
+      await userEvent.click(screen.getByLabelText('Toggle register value format'));
       expect(screen.getByText(unknownValue)).toBeInTheDocument();
     });
   });

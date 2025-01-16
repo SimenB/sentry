@@ -1,9 +1,10 @@
-import {createContext, Fragment, Ref, useEffect, useRef} from 'react';
+import type {Ref} from 'react';
+import {createContext, Fragment, useEffect, useRef} from 'react';
 import identity from 'lodash/identity';
 
-import {Client} from 'sentry/api';
-import {Organization} from 'sentry/types';
-import trackAdvancedAnalyticsEvent from 'sentry/utils/analytics/trackAdvancedAnalyticsEvent';
+import type {Client} from 'sentry/api';
+import type {Organization} from 'sentry/types/organization';
+import {trackAnalytics} from 'sentry/utils/analytics';
 import useApi from 'sentry/utils/useApi';
 import useOrganization from 'sentry/utils/useOrganization';
 
@@ -56,7 +57,7 @@ function queriesToMap(collectedQueries: Record<symbol, BatchQueryDefinition>) {
   keys.forEach(key => {
     const query = collectedQueries[key];
     mergeMap[mergeKey(query)] = mergeMap[mergeKey(query)] || [];
-    mergeMap[mergeKey(query)].push(query);
+    mergeMap[mergeKey(query)]!.push(query);
     delete collectedQueries[key];
   });
 
@@ -80,12 +81,12 @@ function _handleUnmergeableQueries(mergeMap: MergeMap) {
   let queriesSent = 0;
   Object.keys(mergeMap).forEach(k => {
     // Using async forEach to ensure calls start in parallel.
-    const mergeList = mergeMap[k];
+    const mergeList = mergeMap[k]!;
 
     if (mergeList.length === 1) {
       const [queryDefinition] = mergeList;
       queriesSent++;
-      _handleUnmergeableQuery(queryDefinition);
+      _handleUnmergeableQuery(queryDefinition!);
     }
   });
 
@@ -95,16 +96,16 @@ function _handleUnmergeableQueries(mergeMap: MergeMap) {
 function _handleMergeableQueries(mergeMap: MergeMap) {
   let queriesSent = 0;
   Object.keys(mergeMap).forEach(async k => {
-    const mergeList = mergeMap[k];
+    const mergeList = mergeMap[k]!;
 
     if (mergeList.length <= 1) {
       return;
     }
 
     const [exampleDefinition] = mergeList;
-    const batchProperty = exampleDefinition.batchProperty;
-    const query = {...exampleDefinition.requestQueryObject.query};
-    const requestQueryObject = {...exampleDefinition.requestQueryObject, query};
+    const batchProperty = exampleDefinition!.batchProperty;
+    const query = {...exampleDefinition!.requestQueryObject.query};
+    const requestQueryObject = {...exampleDefinition!.requestQueryObject, query};
 
     const batchValues: string[] = [];
 
@@ -128,8 +129,8 @@ function _handleMergeableQueries(mergeMap: MergeMap) {
 
     queriesSent++;
     const requestPromise = requestFunction(
-      exampleDefinition.api,
-      exampleDefinition.path,
+      exampleDefinition!.api,
+      exampleDefinition!.path,
       requestQueryObject
     );
 
@@ -170,7 +171,7 @@ function handleBatching(
 
   const queriesSaved = queriesCollected - queriesSent;
 
-  trackAdvancedAnalyticsEvent('performance_views.landingv3.batch_queries', {
+  trackAnalytics('performance_views.landingv3.batch_queries', {
     organization,
     num_collected: queriesCollected,
     num_saved: queriesSaved,
@@ -178,7 +179,7 @@ function handleBatching(
   });
 }
 
-export const GenericQueryBatcher = ({children}: {children: React.ReactNode}) => {
+export function GenericQueryBatcher({children}: {children: React.ReactNode}) {
   const queries = useRef<Record<symbol, BatchQueryDefinition>>({});
 
   const timeoutRef = useRef<number | undefined>(undefined);
@@ -212,7 +213,7 @@ export const GenericQueryBatcher = ({children}: {children: React.ReactNode}) => 
       {children}
     </GenericQueryBatcherProvider>
   );
-};
+}
 
 type NodeContext = {
   batchProperty: string;

@@ -1,10 +1,10 @@
 import styled from '@emotion/styled';
 
-import space from 'sentry/styles/space';
+import {space} from 'sentry/styles/space';
 
 export const SubHeading = styled('h3')`
   font-size: ${p => p.theme.fontSizeLarge};
-  font-weight: normal;
+  font-weight: ${p => p.theme.fontWeightNormal};
   color: ${p => p.theme.textColor};
   margin: 0;
   overflow: hidden;

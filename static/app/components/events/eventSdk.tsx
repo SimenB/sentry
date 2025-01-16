@@ -1,18 +1,24 @@
-import EventDataSection from 'sentry/components/events/eventDataSection';
 import {t} from 'sentry/locale';
-import {Event} from 'sentry/types/event';
+import type {Event} from 'sentry/types/event';
+import {isEmptyObject} from 'sentry/utils/object/isEmptyObject';
+import {SectionKey} from 'sentry/views/issueDetails/streamline/context';
+import {InterimSection} from 'sentry/views/issueDetails/streamline/interimSection';
 
 import KeyValueList from './interfaces/keyValueList';
 import {AnnotatedText} from './meta/annotatedText';
 
 type Props = {
-  sdk: NonNullable<Event['sdk']>;
   meta?: Record<any, any>;
+  sdk?: Event['sdk'];
 };
 
 export function EventSdk({sdk, meta}: Props) {
+  if (!sdk || isEmptyObject(sdk)) {
+    return null;
+  }
+
   return (
-    <EventDataSection type="sdk" title={t('SDK')}>
+    <InterimSection title={t('SDK')} type={SectionKey.SDK} initialCollapse>
       <KeyValueList
         data={[
           {
@@ -43,6 +49,6 @@ export function EventSdk({sdk, meta}: Props) {
           },
         ]}
       />
-    </EventDataSection>
+    </InterimSection>
   );
 }

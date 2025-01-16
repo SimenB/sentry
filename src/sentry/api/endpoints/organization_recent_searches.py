@@ -3,6 +3,8 @@ from rest_framework import serializers
 from rest_framework.request import Request
 from rest_framework.response import Response
 
+from sentry.api.api_owners import ApiOwner
+from sentry.api.api_publish_status import ApiPublishStatus
 from sentry.api.base import region_silo_endpoint
 from sentry.api.bases.organization import OrganizationEndpoint, OrganizationPermission
 from sentry.api.serializers import serialize
@@ -24,6 +26,11 @@ class OrganizationRecentSearchPermission(OrganizationPermission):
 
 @region_silo_endpoint
 class OrganizationRecentSearchesEndpoint(OrganizationEndpoint):
+    owner = ApiOwner.UNOWNED
+    publish_status = {
+        "GET": ApiPublishStatus.PRIVATE,
+        "POST": ApiPublishStatus.PRIVATE,
+    }
     permission_classes = (OrganizationRecentSearchPermission,)
 
     def get(self, request: Request, organization) -> Response:
@@ -45,7 +52,11 @@ class OrganizationRecentSearchesEndpoint(OrganizationEndpoint):
         except ValueError as e:
             return Response({"detail": "Invalid input for `limit`. Error: %s" % str(e)}, status=400)
 
-        query_kwargs = {"organization": organization, "user": request.user, "type": search_type}
+        query_kwargs = {
+            "organization": organization,
+            "user_id": request.user.id,
+            "type": search_type,
+        }
 
         if "query" in request.GET:
             query_kwargs["query__icontains"] = request.GET["query"]
@@ -63,8 +74,8 @@ class OrganizationRecentSearchesEndpoint(OrganizationEndpoint):
             result = serializer.validated_data
 
             created = RecentSearch.objects.create_or_update(
-                organization=organization,
-                user=request.user,
+                organization_id=organization.id,
+                user_id=request.user.id,
                 type=result["type"],
                 query=result["query"],
                 values={"last_seen": timezone.now()},

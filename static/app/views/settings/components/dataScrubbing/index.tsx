@@ -3,18 +3,22 @@ import styled from '@emotion/styled';
 
 import {addErrorMessage, addSuccessMessage} from 'sentry/actionCreators/indicator';
 import {openModal} from 'sentry/actionCreators/modal';
-import Button from 'sentry/components/button';
+import {Button, LinkButton} from 'sentry/components/button';
 import EmptyMessage from 'sentry/components/emptyMessage';
 import ExternalLink from 'sentry/components/links/externalLink';
-import {Panel, PanelAlert, PanelBody, PanelHeader} from 'sentry/components/panels';
+import Panel from 'sentry/components/panels/panel';
+import PanelAlert from 'sentry/components/panels/panelAlert';
+import PanelBody from 'sentry/components/panels/panelBody';
+import PanelHeader from 'sentry/components/panels/panelHeader';
 import {IconWarning} from 'sentry/icons';
 import {t, tct} from 'sentry/locale';
-import space from 'sentry/styles/space';
-import {Organization, Project} from 'sentry/types';
+import {space} from 'sentry/styles/space';
+import type {Organization} from 'sentry/types/organization';
+import type {Project} from 'sentry/types/project';
 import {defined} from 'sentry/utils';
 import useApi from 'sentry/utils/useApi';
 import {useNavigate} from 'sentry/utils/useNavigate';
-import {useRouteContext} from 'sentry/utils/useRouteContext';
+import {useParams} from 'sentry/utils/useParams';
 
 import Add from './modals/add';
 import Edit from './modals/edit';
@@ -22,7 +26,7 @@ import {convertRelayPiiConfig} from './convertRelayPiiConfig';
 import {OrganizationRules} from './organizationRules';
 import Rules from './rules';
 import submitRules from './submitRules';
-import {Rule} from './types';
+import type {Rule} from './types';
 
 const ADVANCED_DATASCRUBBING_LINK =
   'https://docs.sentry.io/product/data-management-settings/scrubbing/advanced-datascrubbing/';
@@ -34,7 +38,7 @@ type Props = {
   disabled?: boolean;
   onSubmitSuccess?: (data: {relayPiiConfig: string}) => void;
   project?: Project;
-  relayPiiConfig?: string;
+  relayPiiConfig?: string | null;
 };
 
 export function DataScrubbing({
@@ -49,7 +53,7 @@ export function DataScrubbing({
   const api = useApi();
   const [rules, setRules] = useState<Rule[]>([]);
   const navigate = useNavigate();
-  const routeContext = useRouteContext();
+  const params = useParams();
 
   const successfullySaved = useCallback(
     (response: {relayPiiConfig: string}, successMessage: string) => {
@@ -70,8 +74,8 @@ export function DataScrubbing({
 
   useEffect(() => {
     if (
-      !defined(routeContext.params.scrubbingId) ||
-      !rules.some(rule => String(rule.id) === routeContext.params.scrubbingId)
+      !defined(params.scrubbingId) ||
+      !rules.some(rule => String(rule.id) === params.scrubbingId)
     ) {
       return;
     }
@@ -80,7 +84,7 @@ export function DataScrubbing({
       modalProps => (
         <Edit
           {...modalProps}
-          rule={rules[routeContext.params.scrubbingId]}
+          rule={rules[params.scrubbingId!]}
           projectId={project?.id}
           savedRules={rules}
           api={api}
@@ -97,7 +101,7 @@ export function DataScrubbing({
       {onClose: handleCloseModal}
     );
   }, [
-    routeContext.params.scrubbingId,
+    params.scrubbingId,
     rules,
     project?.id,
     api,
@@ -190,9 +194,9 @@ export function DataScrubbing({
           />
         )}
         <PanelAction>
-          <Button href={ADVANCED_DATASCRUBBING_LINK} external>
+          <LinkButton href={ADVANCED_DATASCRUBBING_LINK} external>
             {t('Read Docs')}
-          </Button>
+          </LinkButton>
           <Button disabled={disabled} onClick={handleAdd} priority="primary">
             {t('Add Rule')}
           </Button>

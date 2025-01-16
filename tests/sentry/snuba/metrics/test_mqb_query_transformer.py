@@ -11,12 +11,18 @@ from snuba_sdk.function import Function
 from snuba_sdk.orderby import Direction, OrderBy
 from snuba_sdk.query import Query
 
-from sentry.snuba.metrics import MetricConditionField, MetricField, MetricGroupByField, MetricsQuery
-from sentry.snuba.metrics import OrderBy as MetricsOrderBy
+from sentry.snuba.metrics import (
+    DeprecatingMetricsQuery,
+    MetricConditionField,
+    MetricField,
+    MetricGroupByField,
+    MetricOrderByField,
+)
 from sentry.snuba.metrics.mqb_query_transformer import (
     MQBQueryTransformationException,
-    tranform_mqb_query_to_metrics_query,
+    transform_mqb_query_to_metrics_query,
 )
+from sentry.snuba.metrics.naming_layer.mri import TransactionMRI
 
 """
 Notes:
@@ -136,7 +142,7 @@ VALID_QUERIES_INTEGRATION_TEST_CASES = [
             granularity=Granularity(granularity=86400),
             totals=None,
         ),
-        MetricsQuery(
+        DeprecatingMetricsQuery(
             org_id=11,
             project_ids=[11],
             select=[
@@ -174,7 +180,8 @@ VALID_QUERIES_INTEGRATION_TEST_CASES = [
             start=datetime.datetime(2022, 3, 24, 11, 11, 35, 447729),
             end=datetime.datetime(2022, 6, 22, 11, 11, 35, 447729),
             granularity=Granularity(granularity=86400),
-            where=None,
+            where=[],
+            having=[],
             groupby=[MetricGroupByField("transaction")],
             limit=Limit(limit=51),
             offset=Offset(offset=0),
@@ -207,7 +214,7 @@ VALID_QUERIES_INTEGRATION_TEST_CASES = [
                 Function(
                     function="team_key_transaction",
                     parameters=[
-                        Column("d:transactions/duration@millisecond"),
+                        Column(TransactionMRI.TEAM_KEY_TRANSACTION.value),
                         [(13, "foo_transaction")],
                     ],
                     alias="team_key_transaction",
@@ -221,7 +228,7 @@ VALID_QUERIES_INTEGRATION_TEST_CASES = [
                 Function(
                     function="team_key_transaction",
                     parameters=[
-                        Column("d:transactions/duration@millisecond"),
+                        Column(TransactionMRI.TEAM_KEY_TRANSACTION.value),
                         [(13, "foo_transaction")],
                     ],
                     alias="team_key_transaction",
@@ -263,7 +270,7 @@ VALID_QUERIES_INTEGRATION_TEST_CASES = [
                     lhs=Function(
                         function="team_key_transaction",
                         parameters=[
-                            Column("d:transactions/duration@millisecond"),
+                            Column(TransactionMRI.TEAM_KEY_TRANSACTION.value),
                             [(13, "foo_transaction")],
                         ],
                         alias="team_key_transaction",
@@ -286,7 +293,7 @@ VALID_QUERIES_INTEGRATION_TEST_CASES = [
                     exp=Function(
                         function="team_key_transaction",
                         parameters=[
-                            Column("d:transactions/duration@millisecond"),
+                            Column(TransactionMRI.TEAM_KEY_TRANSACTION.value),
                             [(13, "foo_transaction")],
                         ],
                         alias="team_key_transaction",
@@ -300,7 +307,7 @@ VALID_QUERIES_INTEGRATION_TEST_CASES = [
             granularity=Granularity(granularity=86400),
             totals=None,
         ),
-        MetricsQuery(
+        DeprecatingMetricsQuery(
             org_id=14,
             project_ids=[13],
             select=[
@@ -342,6 +349,7 @@ VALID_QUERIES_INTEGRATION_TEST_CASES = [
                     rhs=1,
                 )
             ],
+            having=[],
             groupby=[
                 MetricGroupByField("transaction.status"),
                 MetricGroupByField(
@@ -356,7 +364,7 @@ VALID_QUERIES_INTEGRATION_TEST_CASES = [
                 MetricGroupByField("project_id"),
             ],
             orderby=[
-                MetricsOrderBy(
+                MetricOrderByField(
                     field=MetricField(
                         op="p95",
                         metric_mri="d:transactions/duration@millisecond",
@@ -364,7 +372,7 @@ VALID_QUERIES_INTEGRATION_TEST_CASES = [
                     ),
                     direction=Direction.ASC,
                 ),
-                MetricsOrderBy(
+                MetricOrderByField(
                     field=MetricField(
                         op="team_key_transaction",
                         metric_mri="d:transactions/duration@millisecond",
@@ -379,6 +387,321 @@ VALID_QUERIES_INTEGRATION_TEST_CASES = [
             include_series=False,
         ),
         id="team_key_transaction + groupby & select aliasing test case",
+    ),
+    pytest.param(
+        Query(
+            match=Entity("generic_metrics_distributions"),
+            select=[
+                Function(
+                    function="p95",
+                    parameters=[Column("d:transactions/duration@millisecond")],
+                    alias="p95",
+                ),
+                Function(
+                    function="team_key_transaction",
+                    parameters=[
+                        Column(TransactionMRI.TEAM_KEY_TRANSACTION.value),
+                        [(13, "foo_transaction")],
+                    ],
+                    alias="team_key_transaction",
+                ),
+            ],
+            groupby=[
+                Function(
+                    function="team_key_transaction",
+                    parameters=[
+                        Column(TransactionMRI.TEAM_KEY_TRANSACTION.value),
+                        [(13, "foo_transaction")],
+                    ],
+                    alias="team_key_transaction",
+                ),
+            ],
+            array_join=None,
+            where=[
+                Condition(
+                    lhs=Column(
+                        name="timestamp",
+                    ),
+                    op=Op.GTE,
+                    rhs=datetime.datetime(2022, 3, 24, 11, 11, 36, 75132),
+                ),
+                Condition(
+                    lhs=Column(
+                        name="timestamp",
+                    ),
+                    op=Op.LT,
+                    rhs=datetime.datetime(2022, 6, 22, 11, 11, 36, 75132),
+                ),
+                Condition(
+                    lhs=Column(
+                        name="project_id",
+                    ),
+                    op=Op.IN,
+                    rhs=[13],
+                ),
+                Condition(
+                    lhs=Column(
+                        name="org_id",
+                    ),
+                    op=Op.EQ,
+                    rhs=14,
+                ),
+                Condition(
+                    lhs=Function(
+                        function="team_key_transaction",
+                        parameters=[
+                            Column(TransactionMRI.TEAM_KEY_TRANSACTION.value),
+                            [(13, "foo_transaction")],
+                        ],
+                        alias="team_key_transaction",
+                    ),
+                    op=Op.EQ,
+                    rhs=1,
+                ),
+            ],
+            having=[],
+            orderby=[
+                OrderBy(
+                    exp=Function(
+                        function="team_key_transaction",
+                        parameters=[
+                            Column(TransactionMRI.TEAM_KEY_TRANSACTION.value),
+                            [(13, "foo_transaction")],
+                        ],
+                        alias="team_key_transaction",
+                    ),
+                    direction=Direction.ASC,
+                ),
+                OrderBy(
+                    exp=Function(
+                        function="p95",
+                        parameters=[Column("d:transactions/duration@millisecond")],
+                        alias="p95",
+                    ),
+                    direction=Direction.ASC,
+                ),
+            ],
+            limitby=None,
+            limit=Limit(limit=51),
+            offset=Offset(offset=0),
+            granularity=Granularity(granularity=86400),
+            totals=None,
+        ),
+        DeprecatingMetricsQuery(
+            org_id=14,
+            project_ids=[13],
+            select=[
+                MetricField(
+                    op="p95",
+                    metric_mri="d:transactions/duration@millisecond",
+                    alias="p95",
+                ),
+                MetricField(
+                    op="team_key_transaction",
+                    metric_mri="d:transactions/duration@millisecond",
+                    params={"team_key_condition_rhs": [(13, "foo_transaction")]},
+                    alias="team_key_transaction",
+                ),
+            ],
+            start=datetime.datetime(2022, 3, 24, 11, 11, 36, 75132),
+            end=datetime.datetime(2022, 6, 22, 11, 11, 36, 75132),
+            granularity=Granularity(granularity=86400),
+            where=[
+                MetricConditionField(
+                    lhs=MetricField(
+                        op="team_key_transaction",
+                        metric_mri="d:transactions/duration@millisecond",
+                        params={"team_key_condition_rhs": [(13, "foo_transaction")]},
+                        alias="team_key_transaction",
+                    ),
+                    op=Op.EQ,
+                    rhs=1,
+                )
+            ],
+            groupby=[
+                MetricGroupByField(
+                    MetricField(
+                        op="team_key_transaction",
+                        metric_mri="d:transactions/duration@millisecond",
+                        params={"team_key_condition_rhs": [(13, "foo_transaction")]},
+                        alias="team_key_transaction",
+                    ),
+                ),
+            ],
+            having=[],
+            orderby=[
+                MetricOrderByField(
+                    field=MetricField(
+                        op="team_key_transaction",
+                        metric_mri="d:transactions/duration@millisecond",
+                        params={"team_key_condition_rhs": [(13, "foo_transaction")]},
+                        alias="team_key_transaction",
+                    ),
+                    direction=Direction.ASC,
+                ),
+                MetricOrderByField(
+                    field=MetricField(
+                        op="p95",
+                        metric_mri="d:transactions/duration@millisecond",
+                        alias="p95",
+                    ),
+                    direction=Direction.ASC,
+                ),
+            ],
+            limit=Limit(limit=51),
+            offset=Offset(offset=0),
+            include_series=False,
+        ),
+        id="team_key_transaction transformation with p95 in select",
+    ),
+    pytest.param(
+        Query(
+            match=Entity("generic_metrics_distributions"),
+            select=[
+                AliasedExpression(
+                    exp=Column("e:transactions/user_misery@ratio"),
+                    alias="user_misery",
+                ),
+                Function(
+                    function="team_key_transaction",
+                    parameters=[
+                        Column(TransactionMRI.TEAM_KEY_TRANSACTION.value),
+                        [(13, "foo_transaction")],
+                    ],
+                    alias="team_key_transaction",
+                ),
+            ],
+            groupby=[
+                Function(
+                    function="team_key_transaction",
+                    parameters=[
+                        Column(TransactionMRI.TEAM_KEY_TRANSACTION.value),
+                        [(13, "foo_transaction")],
+                    ],
+                    alias="team_key_transaction",
+                ),
+            ],
+            array_join=None,
+            where=[
+                Condition(
+                    lhs=Column(
+                        name="timestamp",
+                    ),
+                    op=Op.GTE,
+                    rhs=datetime.datetime(2022, 3, 24, 11, 11, 36, 75132),
+                ),
+                Condition(
+                    lhs=Column(
+                        name="timestamp",
+                    ),
+                    op=Op.LT,
+                    rhs=datetime.datetime(2022, 6, 22, 11, 11, 36, 75132),
+                ),
+                Condition(
+                    lhs=Column(
+                        name="project_id",
+                    ),
+                    op=Op.IN,
+                    rhs=[13],
+                ),
+                Condition(
+                    lhs=Column(
+                        name="org_id",
+                    ),
+                    op=Op.EQ,
+                    rhs=14,
+                ),
+                Condition(
+                    lhs=Function(
+                        function="team_key_transaction",
+                        parameters=[
+                            Column(TransactionMRI.TEAM_KEY_TRANSACTION.value),
+                            [(13, "foo_transaction")],
+                        ],
+                        alias="team_key_transaction",
+                    ),
+                    op=Op.EQ,
+                    rhs=1,
+                ),
+            ],
+            having=[],
+            orderby=[
+                OrderBy(
+                    exp=Function(
+                        function="team_key_transaction",
+                        parameters=[
+                            Column(TransactionMRI.TEAM_KEY_TRANSACTION.value),
+                            [(13, "foo_transaction")],
+                        ],
+                        alias="team_key_transaction",
+                    ),
+                    direction=Direction.ASC,
+                ),
+            ],
+            limitby=None,
+            limit=Limit(limit=51),
+            offset=Offset(offset=0),
+            granularity=Granularity(granularity=86400),
+            totals=None,
+        ),
+        DeprecatingMetricsQuery(
+            org_id=14,
+            project_ids=[13],
+            select=[
+                MetricField(
+                    op=None,
+                    metric_mri="e:transactions/user_misery@ratio",
+                    alias="user_misery",
+                ),
+                MetricField(
+                    op="team_key_transaction",
+                    metric_mri="s:transactions/user@none",
+                    params={"team_key_condition_rhs": [(13, "foo_transaction")]},
+                    alias="team_key_transaction",
+                ),
+            ],
+            start=datetime.datetime(2022, 3, 24, 11, 11, 36, 75132),
+            end=datetime.datetime(2022, 6, 22, 11, 11, 36, 75132),
+            granularity=Granularity(granularity=86400),
+            where=[
+                MetricConditionField(
+                    lhs=MetricField(
+                        op="team_key_transaction",
+                        metric_mri="s:transactions/user@none",
+                        params={"team_key_condition_rhs": [(13, "foo_transaction")]},
+                        alias="team_key_transaction",
+                    ),
+                    op=Op.EQ,
+                    rhs=1,
+                )
+            ],
+            having=[],
+            groupby=[
+                MetricGroupByField(
+                    MetricField(
+                        op="team_key_transaction",
+                        metric_mri="s:transactions/user@none",
+                        params={"team_key_condition_rhs": [(13, "foo_transaction")]},
+                        alias="team_key_transaction",
+                    ),
+                ),
+            ],
+            orderby=[
+                MetricOrderByField(
+                    field=MetricField(
+                        op="team_key_transaction",
+                        metric_mri="s:transactions/user@none",
+                        params={"team_key_condition_rhs": [(13, "foo_transaction")]},
+                        alias="team_key_transaction",
+                    ),
+                    direction=Direction.ASC,
+                ),
+            ],
+            limit=Limit(limit=51),
+            offset=Offset(offset=0),
+            include_series=False,
+        ),
+        id="team_key_transaction transformation with single order by and user_misery in select",
     ),
     pytest.param(
         Query(
@@ -466,7 +789,7 @@ VALID_QUERIES_INTEGRATION_TEST_CASES = [
             granularity=Granularity(granularity=86400),
             totals=None,
         ),
-        MetricsQuery(
+        DeprecatingMetricsQuery(
             org_id=19,
             project_ids=[18],
             select=[
@@ -505,7 +828,8 @@ VALID_QUERIES_INTEGRATION_TEST_CASES = [
             start=datetime.datetime(2022, 3, 24, 11, 11, 37, 278535),
             end=datetime.datetime(2022, 6, 22, 11, 11, 37, 278535),
             granularity=Granularity(granularity=86400),
-            where=None,
+            where=[],
+            having=[],
             groupby=[
                 MetricGroupByField("transaction", alias=None),
                 MetricGroupByField("project_id", alias=None),
@@ -591,7 +915,7 @@ VALID_QUERIES_INTEGRATION_TEST_CASES = [
             granularity=Granularity(granularity=3600),
             totals=None,
         ),
-        MetricsQuery(
+        DeprecatingMetricsQuery(
             org_id=2,
             project_ids=[2],
             select=[
@@ -623,6 +947,7 @@ VALID_QUERIES_INTEGRATION_TEST_CASES = [
                     ),
                 ),
             ],
+            having=[],
             groupby=[
                 MetricGroupByField("project_id", alias=None),
                 MetricGroupByField("transaction", alias=None),
@@ -699,7 +1024,7 @@ VALID_QUERIES_INTEGRATION_TEST_CASES = [
             granularity=Granularity(granularity=60),
             totals=None,
         ),
-        MetricsQuery(
+        DeprecatingMetricsQuery(
             org_id=2,
             project_ids=[2],
             select=[
@@ -712,7 +1037,8 @@ VALID_QUERIES_INTEGRATION_TEST_CASES = [
             start=datetime.datetime(2022, 6, 21, 10, 0, tzinfo=None),
             end=datetime.datetime(2022, 6, 21, 12, 0, tzinfo=None),
             granularity=Granularity(granularity=60),
-            where=None,
+            where=[],
+            having=[],
             groupby=None,
             include_series=True,
             include_totals=True,
@@ -778,7 +1104,7 @@ VALID_QUERIES_INTEGRATION_TEST_CASES = [
             granularity=Granularity(granularity=3600),
             totals=None,
         ),
-        MetricsQuery(
+        DeprecatingMetricsQuery(
             org_id=3,
             project_ids=[3],
             select=[
@@ -792,7 +1118,8 @@ VALID_QUERIES_INTEGRATION_TEST_CASES = [
             start=datetime.datetime(2022, 3, 24, 14, 52, 59, 179755),
             end=datetime.datetime(2022, 6, 22, 14, 52, 59, 179755),
             granularity=Granularity(3600),
-            where=None,
+            where=[],
+            having=[],
             groupby=None,
             include_series=False,
             include_totals=True,
@@ -865,7 +1192,7 @@ VALID_QUERIES_INTEGRATION_TEST_CASES = [
             granularity=Granularity(granularity=3600),
             totals=None,
         ),
-        MetricsQuery(
+        DeprecatingMetricsQuery(
             org_id=3,
             project_ids=[3],
             select=[
@@ -891,7 +1218,8 @@ VALID_QUERIES_INTEGRATION_TEST_CASES = [
             start=datetime.datetime(2022, 3, 24, 14, 52, 59, 179755),
             end=datetime.datetime(2022, 6, 22, 14, 52, 59, 179755),
             granularity=Granularity(3600),
-            where=None,
+            where=[],
+            having=[],
             groupby=None,
             include_series=False,
             include_totals=True,
@@ -900,6 +1228,379 @@ VALID_QUERIES_INTEGRATION_TEST_CASES = [
         ),
         id="count_transaction_name query test case",
     ),
+    # "has" condition in where
+    pytest.param(
+        Query(
+            match=Entity("generic_metrics_distributions"),
+            select=[
+                Function(
+                    function="count",
+                    parameters=[
+                        Column("d:transactions/duration@millisecond"),
+                    ],
+                    alias="duration_count",
+                ),
+            ],
+            groupby=[],
+            array_join=None,
+            where=[
+                Condition(
+                    lhs=Column(
+                        name="timestamp",
+                    ),
+                    op=Op.GTE,
+                    rhs=datetime.datetime(2022, 3, 24, 14, 52, 59, 179755),
+                ),
+                Condition(
+                    lhs=Column(
+                        name="timestamp",
+                    ),
+                    op=Op.LT,
+                    rhs=datetime.datetime(2022, 6, 22, 14, 52, 59, 179755),
+                ),
+                Condition(
+                    lhs=Column(
+                        name="project_id",
+                    ),
+                    op=Op.IN,
+                    rhs=[3],
+                ),
+                Condition(
+                    lhs=Column(
+                        name="org_id",
+                    ),
+                    op=Op.EQ,
+                    rhs=3,
+                ),
+                Condition(
+                    lhs=Function(
+                        function="has",
+                        parameters=[
+                            Column(
+                                name="tags.key",
+                            ),
+                            "transaction",
+                        ],
+                    ),
+                    op=Op.EQ,
+                    rhs=1,
+                ),
+            ],
+            having=[],
+            orderby=[],
+            limitby=None,
+            limit=Limit(limit=50),
+            offset=Offset(offset=0),
+            granularity=Granularity(granularity=3600),
+            totals=None,
+        ),
+        DeprecatingMetricsQuery(
+            org_id=3,
+            project_ids=[3],
+            select=[
+                MetricField(
+                    op="count",
+                    metric_mri="d:transactions/duration@millisecond",
+                    alias="duration_count",
+                ),
+            ],
+            start=datetime.datetime(2022, 3, 24, 14, 52, 59, 179755),
+            end=datetime.datetime(2022, 6, 22, 14, 52, 59, 179755),
+            granularity=Granularity(3600),
+            where=[
+                Condition(
+                    lhs=Function(
+                        function="has",
+                        parameters=[
+                            Column(
+                                name="tags.key",
+                            ),
+                            "transaction",
+                        ],
+                    ),
+                    op=Op.EQ,
+                    rhs=1,
+                )
+            ],
+            having=[],
+            groupby=None,
+            include_series=False,
+            include_totals=True,
+            limit=Limit(limit=50),
+            offset=Offset(offset=0),
+        ),
+        id="has operator query test case",
+    ),
+    pytest.param(
+        Query(
+            match=Entity("generic_metrics_distributions"),
+            select=[
+                Function(
+                    function="count",
+                    parameters=[
+                        Column("d:transactions/duration@millisecond"),
+                    ],
+                    alias="duration_count",
+                ),
+            ],
+            groupby=[Column("project_id")],
+            array_join=None,
+            where=[
+                Condition(
+                    lhs=Column(
+                        name="timestamp",
+                    ),
+                    op=Op.GTE,
+                    rhs=datetime.datetime(2022, 3, 24, 14, 52, 59, 179755),
+                ),
+                Condition(
+                    lhs=Column(
+                        name="timestamp",
+                    ),
+                    op=Op.LT,
+                    rhs=datetime.datetime(2022, 6, 22, 14, 52, 59, 179755),
+                ),
+                Condition(
+                    lhs=Column(
+                        name="project_id",
+                    ),
+                    op=Op.IN,
+                    rhs=[3],
+                ),
+                Condition(
+                    lhs=Column(
+                        name="org_id",
+                    ),
+                    op=Op.EQ,
+                    rhs=3,
+                ),
+            ],
+            having=[],
+            orderby=[
+                OrderBy(
+                    Column("project_id"),
+                    Direction.ASC,
+                )
+            ],
+            limitby=None,
+            limit=Limit(limit=50),
+            offset=Offset(offset=0),
+            granularity=Granularity(granularity=3600),
+            totals=None,
+        ),
+        DeprecatingMetricsQuery(
+            org_id=3,
+            project_ids=[3],
+            select=[
+                MetricField(
+                    op="count",
+                    metric_mri="d:transactions/duration@millisecond",
+                    alias="duration_count",
+                ),
+            ],
+            start=datetime.datetime(2022, 3, 24, 14, 52, 59, 179755),
+            end=datetime.datetime(2022, 6, 22, 14, 52, 59, 179755),
+            granularity=Granularity(3600),
+            where=[],
+            groupby=[MetricGroupByField(field="project_id")],
+            having=[],
+            orderby=[MetricOrderByField(field="project_id", direction=Direction.ASC)],
+            include_series=False,
+            include_totals=True,
+            limit=Limit(limit=50),
+            offset=Offset(offset=0),
+        ),
+        id="order by project id column",
+    ),
+    pytest.param(
+        Query(
+            match=Entity("generic_metrics_distributions"),
+            select=[
+                Function(
+                    function="count",
+                    parameters=[
+                        Column("d:transactions/duration@millisecond"),
+                    ],
+                    alias="count",
+                ),
+            ],
+            groupby=[Column("project_id")],
+            array_join=None,
+            where=[
+                Condition(
+                    lhs=Column(
+                        name="timestamp",
+                    ),
+                    op=Op.GTE,
+                    rhs=datetime.datetime(2022, 3, 24, 14, 52, 59, 179755),
+                ),
+                Condition(
+                    lhs=Column(
+                        name="timestamp",
+                    ),
+                    op=Op.LT,
+                    rhs=datetime.datetime(2022, 6, 22, 14, 52, 59, 179755),
+                ),
+                Condition(
+                    lhs=Column(
+                        name="project_id",
+                    ),
+                    op=Op.IN,
+                    rhs=[3],
+                ),
+                Condition(
+                    lhs=Column(
+                        name="org_id",
+                    ),
+                    op=Op.EQ,
+                    rhs=3,
+                ),
+            ],
+            having=[Condition(Column("count"), Op.GT, 1000)],
+            orderby=[
+                OrderBy(
+                    Column("project_id"),
+                    Direction.ASC,
+                )
+            ],
+            limitby=None,
+            limit=Limit(limit=50),
+            offset=Offset(offset=0),
+            granularity=Granularity(granularity=3600),
+            totals=None,
+        ),
+        DeprecatingMetricsQuery(
+            org_id=3,
+            project_ids=[3],
+            select=[
+                MetricField("count", "d:transactions/duration@millisecond", alias="count"),
+            ],
+            start=datetime.datetime(2022, 3, 24, 14, 52, 59, 179755),
+            end=datetime.datetime(2022, 6, 22, 14, 52, 59, 179755),
+            granularity=Granularity(3600),
+            where=[],
+            groupby=[MetricGroupByField(field="project_id")],
+            having=[Condition(Column("count"), Op.GT, 1000)],
+            orderby=[MetricOrderByField(field="project_id", direction=Direction.ASC)],
+            include_series=False,
+            include_totals=True,
+            limit=Limit(limit=50),
+            offset=Offset(offset=0),
+        ),
+        id="having clauses are passed through",
+    ),
+    pytest.param(
+        Query(
+            match=Entity("generic_metrics_distributions"),
+            select=[
+                Function(
+                    function="count",
+                    parameters=[
+                        Column("d:transactions/duration@millisecond"),
+                    ],
+                    alias="duration_count",
+                ),
+            ],
+            groupby=[Column("project_id")],
+            array_join=None,
+            where=[
+                Condition(
+                    lhs=Column(
+                        name="timestamp",
+                    ),
+                    op=Op.GTE,
+                    rhs=datetime.datetime(2022, 3, 24, 14, 52, 59, 179755),
+                ),
+                Condition(
+                    lhs=Column(
+                        name="timestamp",
+                    ),
+                    op=Op.LT,
+                    rhs=datetime.datetime(2022, 6, 22, 14, 52, 59, 179755),
+                ),
+                Condition(
+                    lhs=Column(
+                        name="project_id",
+                    ),
+                    op=Op.IN,
+                    rhs=[3],
+                ),
+                Condition(
+                    lhs=Column(
+                        name="org_id",
+                    ),
+                    op=Op.EQ,
+                    rhs=3,
+                ),
+                BooleanCondition(
+                    op=BooleanOp.AND,
+                    conditions=[
+                        Condition(
+                            lhs=Column("tag[transaction]"),
+                            op=Op.EQ,
+                            rhs="bar",
+                        ),
+                        Condition(
+                            lhs=Column("tag[transaction]"),
+                            op=Op.EQ,
+                            rhs="foo",
+                        ),
+                    ],
+                ),
+            ],
+            having=[],
+            orderby=[
+                OrderBy(
+                    Column("project_id"),
+                    Direction.ASC,
+                )
+            ],
+            limitby=None,
+            limit=Limit(limit=50),
+            offset=Offset(offset=0),
+            granularity=Granularity(granularity=3600),
+            totals=None,
+        ),
+        DeprecatingMetricsQuery(
+            org_id=3,
+            project_ids=[3],
+            select=[
+                MetricField(
+                    op="count",
+                    metric_mri="d:transactions/duration@millisecond",
+                    alias="duration_count",
+                ),
+            ],
+            start=datetime.datetime(2022, 3, 24, 14, 52, 59, 179755),
+            end=datetime.datetime(2022, 6, 22, 14, 52, 59, 179755),
+            granularity=Granularity(3600),
+            where=[
+                BooleanCondition(
+                    op=BooleanOp.AND,
+                    conditions=[
+                        Condition(
+                            lhs=Column("tag[transaction]"),
+                            op=Op.EQ,
+                            rhs="bar",
+                        ),
+                        Condition(
+                            lhs=Column("tag[transaction]"),
+                            op=Op.EQ,
+                            rhs="foo",
+                        ),
+                    ],
+                )
+            ],
+            groupby=[MetricGroupByField(field="project_id")],
+            having=[],
+            orderby=[MetricOrderByField(field="project_id", direction=Direction.ASC)],
+            include_series=False,
+            include_totals=True,
+            limit=Limit(limit=50),
+            offset=Offset(offset=0),
+        ),
+        id="where with boolean condition",
+    ),
 ]
 
 
@@ -907,8 +1608,8 @@ VALID_QUERIES_INTEGRATION_TEST_CASES = [
     "input, output",
     VALID_QUERIES_INTEGRATION_TEST_CASES,
 )
-def test_mqb_to_metrics_query_tranformer(input, output):
-    assert tranform_mqb_query_to_metrics_query(input) == output
+def test_mqb_to_metrics_query_transformer(input, output):
+    assert transform_mqb_query_to_metrics_query(input) == output
 
 
 def _construct_snuba_sdk_query(
@@ -925,6 +1626,8 @@ def _construct_snuba_sdk_query(
         orderby = []
     if where is None:
         where = []
+    if having is None:
+        having = []
 
     return Query(
         match=Entity(entity),
@@ -1165,37 +1868,6 @@ INVALID_QUERIES_INTEGRATION_TEST_CASES = [
         "Unsupported groupby field Condition(lhs=Column(name='tag[transaction]', entity=None, subscriptable='tag', key='transaction'), op=<Op.EQ: '='>, rhs='bar')",
         id="Unsupported Condition in groupby statement",
     ),
-    # Where Clause Validation
-    pytest.param(
-        _construct_snuba_sdk_query(
-            select=[
-                Function(
-                    function="count_transaction_name",
-                    parameters=[Column("d:transactions/duration@millisecond"), "has_value"],
-                    alias="has_value_transaction_count",
-                ),
-            ],
-            where=[
-                BooleanCondition(
-                    op=BooleanOp.AND,
-                    conditions=[
-                        Condition(
-                            lhs=Column("tag[transaction]"),
-                            op=Op.EQ,
-                            rhs="bar",
-                        ),
-                        Condition(
-                            lhs=Column("tag[transaction]"),
-                            op=Op.EQ,
-                            rhs="foo",
-                        ),
-                    ],
-                ),
-            ],
-        ),
-        "Unsupported condition type in where clause",
-        id="Unsupported BooleanCondition in where clause",
-    ),
     pytest.param(
         _construct_snuba_sdk_query(
             select=[
@@ -1244,31 +1916,6 @@ INVALID_QUERIES_INTEGRATION_TEST_CASES = [
         "Unsupported function 'p95' in where",
         id="Unsupported function/operation in where clause",
     ),
-    # Validate having clause
-    pytest.param(
-        _construct_snuba_sdk_query(
-            select=[
-                Function(
-                    function="count_transaction_name",
-                    parameters=[Column("d:transactions/duration@millisecond"), "has_value"],
-                    alias="has_value_transaction_count",
-                ),
-            ],
-            having=[
-                Condition(
-                    lhs=Function(
-                        function="count_transaction_name",
-                        parameters=[Column("d:transactions/duration@millisecond"), "has_value"],
-                        alias="has_value_transaction_count",
-                    ),
-                    op=Op.EQ,
-                    rhs=1,
-                )
-            ],
-        ),
-        "Having clauses are not supported by the metrics layer",
-        id="Unsupported having clause",
-    ),
     # Validate OrderBy statements
     pytest.param(
         _construct_snuba_sdk_query(
@@ -1303,26 +1950,6 @@ INVALID_QUERIES_INTEGRATION_TEST_CASES = [
         "Operation histogram cannot be used to order a query",
         id="histogram is not supported in orderby",
     ),
-    # Validate this transformation is only for performance metrics
-    pytest.param(
-        _construct_snuba_sdk_query(
-            entity="metrics_sets",
-            select=[
-                Function(
-                    function="histogram",
-                    parameters=[
-                        Column("d:transactions/duration@millisecond"),
-                        0,  # histogram_from
-                        5,  # histogram_to
-                        5,  # num_buckets
-                    ],
-                    alias="histogram_transaction_duration",
-                ),
-            ],
-        ),
-        "Unsupported entity name for metrics_sets MQB to MetricsQuery Transformation",
-        id="Transformation only supports performance metrics",
-    ),
 ]
 
 
@@ -1332,4 +1959,4 @@ INVALID_QUERIES_INTEGRATION_TEST_CASES = [
 )
 def test_invalid_mqb_queries(input, error_message):
     with pytest.raises(MQBQueryTransformationException, match=re.escape(error_message)):
-        tranform_mqb_query_to_metrics_query(input)
+        transform_mqb_query_to_metrics_query(input)

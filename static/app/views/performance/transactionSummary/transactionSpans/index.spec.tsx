@@ -1,22 +1,37 @@
+import {LocationFixture} from 'sentry-fixture/locationFixture';
+import {OrganizationFixture} from 'sentry-fixture/organization';
+
 import {initializeOrg} from 'sentry-test/initializeOrg';
 import {generateSuspectSpansResponse} from 'sentry-test/performance/initializePerformanceData';
-import {act, render, screen, within} from 'sentry-test/reactTestingLibrary';
+import {
+  act,
+  render,
+  screen,
+  waitForElementToBeRemoved,
+  within,
+} from 'sentry-test/reactTestingLibrary';
 
 import ProjectsStore from 'sentry/stores/projectsStore';
+import {useLocation} from 'sentry/utils/useLocation';
 import TransactionSpans from 'sentry/views/performance/transactionSummary/transactionSpans';
 import {
   SpanSortOthers,
   SpanSortPercentiles,
 } from 'sentry/views/performance/transactionSummary/transactionSpans/types';
 
-function initializeData({query} = {query: {}}) {
-  const features = ['performance-view', 'performance-suspect-spans-view'];
-  const organization = TestStubs.Organization({
-    features,
-    projects: [TestStubs.Project()],
+jest.mock('sentry/utils/useLocation');
+
+const mockUseLocation = jest.mocked(useLocation);
+
+function initializeData(options: {query: {}; additionalFeatures?: string[]}) {
+  const {query, additionalFeatures} = options;
+
+  const defaultFeatures = ['performance-view'];
+
+  const organization = OrganizationFixture({
+    features: [...defaultFeatures, ...(additionalFeatures ? additionalFeatures : [])],
   });
   const initialData = initializeOrg({
-    ...initializeOrg(),
     organization,
     router: {
       location: {
@@ -28,21 +43,24 @@ function initializeData({query} = {query: {}}) {
       },
     },
   });
-  act(() => void ProjectsStore.loadInitialData(initialData.organization.projects));
+  act(() => void ProjectsStore.loadInitialData(initialData.projects));
   return initialData;
 }
 
 describe('Performance > Transaction Spans', function () {
-  let eventsMock;
-  let eventsSpanOpsMock;
-  let eventsSpansPerformanceMock;
+  let eventsMock: jest.Mock;
+  let eventsSpanOpsMock: jest.Mock;
+  let eventsSpansPerformanceMock: jest.Mock;
   beforeEach(function () {
+    mockUseLocation.mockReturnValue(
+      LocationFixture({pathname: '/organizations/org-slug/performance/summary'})
+    );
     MockApiClient.addMockResponse({
       url: '/organizations/org-slug/projects/',
       body: [],
     });
     MockApiClient.addMockResponse({
-      url: '/prompts-activity/',
+      url: '/organizations/org-slug/prompts-activity/',
       body: {},
     });
     MockApiClient.addMockResponse({
@@ -59,6 +77,18 @@ describe('Performance > Transaction Spans', function () {
     });
     eventsSpanOpsMock = MockApiClient.addMockResponse({
       url: '/organizations/org-slug/events-span-ops/',
+      body: [],
+    });
+    MockApiClient.addMockResponse({
+      url: '/organizations/org-slug/replay-count/',
+      body: {},
+    });
+    MockApiClient.addMockResponse({
+      url: '/organizations/org-slug/spans/fields/',
+      body: [],
+    });
+    MockApiClient.addMockResponse({
+      url: '/organizations/org-slug/recent-searches/',
       body: [],
     });
   });
@@ -81,7 +111,7 @@ describe('Performance > Transaction Spans', function () {
         query: {sort: SpanSortOthers.SUM_EXCLUSIVE_TIME},
       });
       render(<TransactionSpans location={initialData.router.location} />, {
-        context: initialData.routerContext,
+        router: initialData.router,
         organization: initialData.organization,
       });
 
@@ -104,7 +134,7 @@ describe('Performance > Transaction Spans', function () {
         query: {sort: SpanSortOthers.SUM_EXCLUSIVE_TIME},
       });
       render(<TransactionSpans location={initialData.router.location} />, {
-        context: initialData.routerContext,
+        router: initialData.router,
         organization: initialData.organization,
       });
 
@@ -112,7 +142,6 @@ describe('Performance > Transaction Spans', function () {
       const grid = await screen.findByTestId('grid-editable');
       expect(await within(grid).findByText('Span Operation')).toBeInTheDocument();
       expect(await within(grid).findByText('Span Name')).toBeInTheDocument();
-      expect(await within(grid).findByText('Total Count')).toBeInTheDocument();
       expect(await within(grid).findByText('Frequency')).toBeInTheDocument();
       expect(await within(grid).findByText('P75 Self Time')).toBeInTheDocument();
       expect(await within(grid).findByText('Total Self Time')).toBeInTheDocument();
@@ -135,40 +164,23 @@ describe('Performance > Transaction Spans', function () {
       it('renders the right percentile header', async function () {
         const initialData = initializeData({query: {sort}});
         render(<TransactionSpans location={initialData.router.location} />, {
-          context: initialData.routerContext,
+          router: initialData.router,
           organization: initialData.organization,
         });
 
         const grid = await screen.findByTestId('grid-editable');
         expect(await within(grid).findByText('Span Operation')).toBeInTheDocument();
         expect(await within(grid).findByText('Span Name')).toBeInTheDocument();
-        expect(await within(grid).findByText('Total Count')).toBeInTheDocument();
         expect(await within(grid).findByText('Frequency')).toBeInTheDocument();
         expect(await within(grid).findByText(label)).toBeInTheDocument();
         expect(await within(grid).findByText('Total Self Time')).toBeInTheDocument();
       });
     });
 
-    it('renders the right count header', async function () {
-      const initialData = initializeData({query: {sort: SpanSortOthers.COUNT}});
-      render(<TransactionSpans location={initialData.router.location} />, {
-        context: initialData.routerContext,
-        organization: initialData.organization,
-      });
-
-      const grid = await screen.findByTestId('grid-editable');
-      expect(await within(grid).findByText('Span Operation')).toBeInTheDocument();
-      expect(await within(grid).findByText('Span Name')).toBeInTheDocument();
-      expect(await within(grid).findByText('Total Count')).toBeInTheDocument();
-      expect(await within(grid).findByText('Frequency')).toBeInTheDocument();
-      expect(await within(grid).findByText('P75 Self Time')).toBeInTheDocument();
-      expect(await within(grid).findByText('Total Self Time')).toBeInTheDocument();
-    });
-
     it('renders the right avg occurrence header', async function () {
       const initialData = initializeData({query: {sort: SpanSortOthers.AVG_OCCURRENCE}});
       render(<TransactionSpans location={initialData.router.location} />, {
-        context: initialData.routerContext,
+        router: initialData.router,
         organization: initialData.organization,
       });
 
@@ -179,6 +191,39 @@ describe('Performance > Transaction Spans', function () {
       expect(await within(grid).findByText('Frequency')).toBeInTheDocument();
       expect(await within(grid).findByText('P75 Self Time')).toBeInTheDocument();
       expect(await within(grid).findByText('Total Self Time')).toBeInTheDocument();
+    });
+  });
+
+  describe('Spans Tab V2', function () {
+    it('does not propagate transaction search query and properly tokenizes span query', async function () {
+      const initialData = initializeData({
+        query: {query: 'http.method:POST', spansQuery: 'span.op:db span.action:SELECT'},
+        additionalFeatures: [
+          'performance-view',
+          'performance-spans-new-ui',
+          'insights-initial-modules',
+        ],
+      });
+
+      render(<TransactionSpans location={initialData.router.location} />, {
+        router: initialData.router,
+        organization: initialData.organization,
+      });
+
+      await waitForElementToBeRemoved(() => screen.queryAllByTestId('loading-indicator'));
+
+      const searchBar = await screen.findByTestId('search-query-builder');
+
+      expect(
+        within(searchBar).getByRole('row', {name: 'span.op:db'})
+      ).toBeInTheDocument();
+      expect(
+        within(searchBar).getByRole('row', {name: 'span.action:SELECT'})
+      ).toBeInTheDocument();
+
+      expect(
+        within(searchBar).queryByRole('row', {name: 'http.method:POST'})
+      ).not.toBeInTheDocument();
     });
   });
 });

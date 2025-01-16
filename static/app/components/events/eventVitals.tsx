@@ -2,20 +2,20 @@ import {Fragment} from 'react';
 import styled from '@emotion/styled';
 
 import {SectionHeading} from 'sentry/components/charts/styles';
-import {Panel} from 'sentry/components/panels';
-import Tooltip from 'sentry/components/tooltip';
+import Panel from 'sentry/components/panels/panel';
+import {Tooltip} from 'sentry/components/tooltip';
 import {IconFire, IconWarning} from 'sentry/icons';
 import {t} from 'sentry/locale';
-import space from 'sentry/styles/space';
-import {Event} from 'sentry/types/event';
+import {space} from 'sentry/styles/space';
+import type {Event} from 'sentry/types/event';
 import {defined} from 'sentry/utils';
 import {formattedValue} from 'sentry/utils/measurements/index';
 import {
   MOBILE_VITAL_DETAILS,
   WEB_VITAL_DETAILS,
 } from 'sentry/utils/performance/vitals/constants';
-import {Vital} from 'sentry/utils/performance/vitals/types';
-import {IconSize} from 'sentry/utils/theme';
+import type {Vital} from 'sentry/utils/performance/vitals/types';
+import type {IconSize} from 'sentry/utils/theme';
 
 function isOutdatedSdk(event: Event): boolean {
   if (!event.sdk?.version) {
@@ -113,13 +113,13 @@ function MobileVitals({event}: Props) {
   );
 }
 
-type EventVitalProps = Props & {
+interface EventVitalProps extends Props {
   name: string;
   vital?: Vital;
-};
+}
 
 function EventVital({event, name, vital}: EventVitalProps) {
-  const value = event.measurements?.[name].value ?? null;
+  const value = event.measurements?.[name]!.value ?? null;
   if (value === null || !vital) {
     return null;
   }
@@ -180,7 +180,7 @@ const WarningIconContainer = styled('span')<{size: IconSize | string}>`
   height: ${p => p.theme.iconSizes[p.size] ?? p.size};
   line-height: ${p => p.theme.iconSizes[p.size] ?? p.size};
   margin-left: ${space(0.5)};
-  color: ${p => p.theme.red300};
+  color: ${p => p.theme.errorText};
 `;
 
 const FireIconContainer = styled('span')<{size: IconSize | string}>`
@@ -188,12 +188,12 @@ const FireIconContainer = styled('span')<{size: IconSize | string}>`
   height: ${p => p.theme.iconSizes[p.size] ?? p.size};
   line-height: ${p => p.theme.iconSizes[p.size] ?? p.size};
   margin-right: ${space(0.5)};
-  color: ${p => p.theme.red300};
+  color: ${p => p.theme.errorText};
 `;
 
 const Value = styled('span')<{failedThreshold: boolean}>`
   font-size: ${p => p.theme.fontSizeExtraLarge};
-  ${p => p.failedThreshold && `color: ${p.theme.red300};`}
+  ${p => p.failedThreshold && `color: ${p.theme.errorText};`}
 `;
 
 export const EventVitalContainer = styled('div')``;

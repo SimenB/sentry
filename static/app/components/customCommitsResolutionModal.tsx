@@ -1,16 +1,17 @@
 import {useState} from 'react';
 
 import type {ModalRenderProps} from 'sentry/actionCreators/modal';
-import Button from 'sentry/components/button';
-import {SelectAsyncField} from 'sentry/components/deprecatedforms';
+import {Button} from 'sentry/components/button';
+import SelectAsyncField from 'sentry/components/deprecatedforms/selectAsyncField';
 import TimeSince from 'sentry/components/timeSince';
 import Version from 'sentry/components/version';
 import {t} from 'sentry/locale';
-import space from 'sentry/styles/space';
-import type {Commit, ResolutionStatusDetails} from 'sentry/types';
+import {space} from 'sentry/styles/space';
+import type {ResolvedStatusDetails} from 'sentry/types/group';
+import type {Commit} from 'sentry/types/integrations';
 
 interface CustomCommitsResolutionModalProps extends ModalRenderProps {
-  onSelected: (x: ResolutionStatusDetails) => void;
+  onSelected: (x: ResolvedStatusDetails) => void;
   orgSlug: string;
   projectSlug?: string;
 }
@@ -74,11 +75,11 @@ function CustomCommitsResolutionModal({
         />
       </Body>
       <Footer>
-        <Button type="button" css={{marginRight: space(1.5)}} onClick={closeModal}>
+        <Button css={{marginRight: space(1.5)}} onClick={closeModal}>
           {t('Cancel')}
         </Button>
         <Button type="submit" priority="primary">
-          {t('Save Changes')}
+          {t('Resolve')}
         </Button>
       </Footer>
     </form>

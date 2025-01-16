@@ -2,18 +2,19 @@ import {isValidElement} from 'react';
 import styled from '@emotion/styled';
 import * as Sentry from '@sentry/react';
 
-import FormModel, {FieldValue} from 'sentry/components/forms/model';
+import type {FieldValue} from 'sentry/components/forms/model';
+import type FormModel from 'sentry/components/forms/model';
 import {DEFAULT_TOAST_DURATION} from 'sentry/constants';
 import {t, tct} from 'sentry/locale';
 import IndicatorStore from 'sentry/stores/indicatorStore';
-import space from 'sentry/styles/space';
+import {space} from 'sentry/styles/space';
 
 type IndicatorType = 'loading' | 'error' | 'success' | 'undo' | '';
 
 type Options = {
   append?: boolean;
   disableDismiss?: boolean;
-  duration?: number;
+  duration?: number | null;
   modelArg?: {
     id: string;
     model: FormModel;
@@ -167,18 +168,17 @@ export function saveOnBlurUndoMessage(
   // Hide the change text when formatMessageValue is explicitly set to false
   const showChangeText = model.getDescriptor(fieldName, 'formatMessageValue') !== false;
 
+  const tctArgsSuccess = {
+    root: <MessageContainer />,
+    fieldName: <FieldName>{label}</FieldName>,
+    oldValue: <FormValue>{prettifyValue(change.old)}</FormValue>,
+    newValue: <FormValue>{prettifyValue(change.new)}</FormValue>,
+  };
+
   addSuccessMessage(
-    tct(
-      showChangeText
-        ? 'Changed [fieldName] from [oldValue] to [newValue]'
-        : 'Changed [fieldName]',
-      {
-        root: <MessageContainer />,
-        fieldName: <FieldName>{label}</FieldName>,
-        oldValue: <FormValue>{prettifyValue(change.old)}</FormValue>,
-        newValue: <FormValue>{prettifyValue(change.new)}</FormValue>,
-      }
-    ),
+    showChangeText
+      ? tct('Changed [fieldName] from [oldValue] to [newValue]', tctArgsSuccess)
+      : tct('Changed [fieldName]', tctArgsSuccess),
     {
       modelArg: {
         model,
@@ -202,36 +202,40 @@ export function saveOnBlurUndoMessage(
           // `saveField` can return null if it can't save
           const saveResult = model.saveField(fieldName, newValue);
 
+          const tctArgsFail = {
+            root: <MessageContainer />,
+            fieldName: <FieldName>{label}</FieldName>,
+            oldValue: <FormValue>{prettifyValue(oldValue)}</FormValue>,
+            newValue: <FormValue>{prettifyValue(newValue)}</FormValue>,
+          };
+
           if (!saveResult) {
             addErrorMessage(
-              tct(
-                showChangeText
-                  ? 'Unable to restore [fieldName] from [oldValue] to [newValue]'
-                  : 'Unable to restore [fieldName]',
-                {
-                  root: <MessageContainer />,
-                  fieldName: <FieldName>{label}</FieldName>,
-                  oldValue: <FormValue>{prettifyValue(oldValue)}</FormValue>,
-                  newValue: <FormValue>{prettifyValue(newValue)}</FormValue>,
-                }
-              )
+              showChangeText
+                ? tct(
+                    'Unable to restore [fieldName] from [oldValue] to [newValue]',
+                    tctArgsFail
+                  )
+                : tct('Unable to restore [fieldName]', tctArgsFail)
             );
             return;
           }
 
+          const tctArgsRestored = {
+            root: <MessageContainer />,
+            fieldName: <FieldName>{label}</FieldName>,
+            oldValue: <FormValue>{prettifyValue(oldValue)}</FormValue>,
+            newValue: <FormValue>{prettifyValue(newValue)}</FormValue>,
+          };
+
           saveResult.then(() => {
             addMessage(
-              tct(
-                showChangeText
-                  ? 'Restored [fieldName] from [oldValue] to [newValue]'
-                  : 'Restored [fieldName]',
-                {
-                  root: <MessageContainer />,
-                  fieldName: <FieldName>{label}</FieldName>,
-                  oldValue: <FormValue>{prettifyValue(oldValue)}</FormValue>,
-                  newValue: <FormValue>{prettifyValue(newValue)}</FormValue>,
-                }
-              ),
+              showChangeText
+                ? tct(
+                    'Restored [fieldName] from [oldValue] to [newValue]',
+                    tctArgsRestored
+                  )
+                : tct('Restored [fieldName]', tctArgsRestored),
               'undo',
               {
                 duration: DEFAULT_TOAST_DURATION,
@@ -249,7 +253,7 @@ const FormValue = styled('span')`
   margin: 0 ${space(0.5)};
 `;
 const FieldName = styled('span')`
-  font-weight: bold;
+  font-weight: ${p => p.theme.fontWeightBold};
   margin: 0 ${space(0.5)};
 `;
 const MessageContainer = styled('div')`

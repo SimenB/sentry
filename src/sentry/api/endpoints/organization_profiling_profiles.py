@@ -1,190 +1,164 @@
-from abc import ABC, abstractmethod
-from typing import Any, Dict, Optional, Sequence
-
-from django.http import StreamingHttpResponse
+from django.http import HttpResponse
+from rest_framework import serializers
 from rest_framework.exceptions import ParseError
 from rest_framework.request import Request
 from rest_framework.response import Response
+from snuba_sdk import Column, Condition, Limit, Op, Query
+from snuba_sdk import Request as SnqlRequest
+from snuba_sdk import Storage
 
 from sentry import features
+from sentry.api.api_owners import ApiOwner
+from sentry.api.api_publish_status import ApiPublishStatus
 from sentry.api.base import region_silo_endpoint
-
-# from sentry.api.bases.organization import OrganizationEndpoint
 from sentry.api.bases import NoProjects, OrganizationEventsV2EndpointBase
-from sentry.api.paginator import GenericOffsetPaginator
-from sentry.api.serializers.snuba import calculate_time_frame
-from sentry.api.utils import get_date_range_from_params
-from sentry.exceptions import InvalidSearchQuery
-from sentry.models import Organization
-from sentry.profiles.utils import (
-    get_from_profiling_service,
-    parse_profile_filters,
-    proxy_profiling_service,
-)
-from sentry.utils import json
-from sentry.utils.dates import get_interval_from_range, get_rollup_from_request, parse_stats_period
+from sentry.api.utils import handle_query_errors
+from sentry.models.organization import Organization
+from sentry.profiles.flamegraph import FlamegraphExecutor
+from sentry.profiles.profile_chunks import get_chunk_ids
+from sentry.profiles.utils import proxy_profiling_service
+from sentry.snuba.dataset import Dataset, StorageKey
+from sentry.snuba.referrer import Referrer
+from sentry.utils.snuba import raw_snql_query
 
 
-class OrganizationProfilingBaseEndpoint(OrganizationEventsV2EndpointBase):  # type: ignore
-    private = True
+class OrganizationProfilingBaseEndpoint(OrganizationEventsV2EndpointBase):
+    owner = ApiOwner.PROFILING
+    publish_status = {
+        "GET": ApiPublishStatus.PRIVATE,
+    }
 
-    def get_profiling_params(self, request: Request, organization: Organization) -> Dict[str, Any]:
-        try:
-            params: Dict[str, Any] = parse_profile_filters(request.query_params.get("query", ""))
-        except InvalidSearchQuery as err:
-            raise ParseError(detail=str(err))
 
-        params.update(self.get_filter_params(request, organization))
+class OrganizationProfilingFlamegraphSerializer(serializers.Serializer):
+    # fingerprint is an UInt32
+    fingerprint = serializers.IntegerField(min_value=0, max_value=(1 << 32) - 1, required=False)
+    dataSource = serializers.ChoiceField(["transactions", "profiles", "functions"], required=False)
+    query = serializers.CharField(required=False)
+    expand = serializers.ListField(child=serializers.ChoiceField(["metrics"]), required=False)
 
-        return params
+    def validate(self, attrs):
+        source = attrs.get("dataSource")
 
-    def get_granularity(self, request: Request, params: Dict[str, Any]) -> int:
-        try:
-            return get_rollup_from_request(
-                request,
-                params,
-                default_interval=None,
-                error=InvalidSearchQuery(),
+        if source is None:
+            if attrs.get("fingerprint") is not None:
+                attrs["dataSource"] = "functions"
+            else:
+                attrs["dataSource"] = "transactions"
+        elif source == "functions":
+            attrs["dataSource"] = "functions"
+        elif attrs.get("fingerprint") is not None:
+            raise ParseError(
+                detail='"fingerprint" is only permitted when using dataSource: "functions"'
             )
-        except InvalidSearchQuery:
-            date_range = params["end"] - params["start"]
-            stats_period = parse_stats_period(get_interval_from_range(date_range, False))
-            return int(stats_period.total_seconds()) if stats_period is not None else 3600
+        elif source == "profiles":
+            attrs["dataSource"] = "profiles"
+        else:
+            attrs["dataSource"] = "transactions"
 
-
-class OrganizationProfilingPaginatedBaseEndpoint(OrganizationProfilingBaseEndpoint, ABC):
-    profiling_feature = "organizations:profiling"
-
-    @abstractmethod
-    def get_data_fn(
-        self, request: Request, organization: Organization, kwargs: Dict[str, Any]
-    ) -> Any:
-        raise NotImplementedError
-
-    def get(self, request: Request, organization: Organization) -> Response:
-        if not features.has(self.profiling_feature, organization, actor=request.user):
-            return Response(status=404)
-
-        try:
-            params = self.get_profiling_params(request, organization)
-        except NoProjects:
-            return Response([])
-
-        kwargs = {"params": params}
-
-        return self.paginate(
-            request,
-            paginator=GenericOffsetPaginator(
-                data_fn=self.get_data_fn(request, organization, kwargs)
-            ),
-            default_per_page=50,
-            max_per_page=500,
-        )
+        return attrs
 
 
 @region_silo_endpoint
-class OrganizationProfilingTransactionsEndpoint(OrganizationProfilingPaginatedBaseEndpoint):
-    def get_data_fn(
-        self, request: Request, organization: Organization, kwargs: Dict[str, Any]
-    ) -> Any:
-        def data_fn(offset: int, limit: int) -> Any:
-            sort = request.query_params.get("sort", None)
-            if sort is None:
-                raise ParseError(detail="Invalid query: Missing value for sort")
-            kwargs["params"]["sort"] = sort
-
-            kwargs["params"]["offset"] = offset
-            kwargs["params"]["limit"] = limit
-
-            response = get_from_profiling_service(
-                "GET",
-                f"/organizations/{organization.id}/transactions",
-                **kwargs,
-            )
-            data = json.loads(response.data)
-
-            return data.get("transactions", [])
-
-        return data_fn
-
-
-@region_silo_endpoint
-class OrganizationProfilingProfilesEndpoint(OrganizationProfilingPaginatedBaseEndpoint):
-    def get_data_fn(
-        self, request: Request, organization: Organization, kwargs: Dict[str, Any]
-    ) -> Any:
-        def data_fn(offset: int, limit: int) -> Any:
-            kwargs["params"]["offset"] = offset
-            kwargs["params"]["limit"] = limit
-
-            response = get_from_profiling_service(
-                "GET",
-                f"/organizations/{organization.id}/profiles",
-                **kwargs,
-            )
-            data = json.loads(response.data)
-
-            return data.get("profiles", [])
-
-        return data_fn
-
-
-@region_silo_endpoint
-class OrganizationProfilingFiltersEndpoint(OrganizationProfilingBaseEndpoint):
-    def get(self, request: Request, organization: Organization) -> StreamingHttpResponse:
+class OrganizationProfilingFlamegraphEndpoint(OrganizationProfilingBaseEndpoint):
+    def get(self, request: Request, organization: Organization) -> HttpResponse:
         if not features.has("organizations:profiling", organization, actor=request.user):
             return Response(status=404)
 
         try:
-            params = self.get_profiling_params(request, organization)
+            snuba_params = self.get_snuba_params(request, organization)
         except NoProjects:
-            return Response([])
+            return Response(status=404)
 
-        kwargs = {"params": params}
+        serializer = OrganizationProfilingFlamegraphSerializer(data=request.GET)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=400)
+        serialized = serializer.validated_data
 
-        return proxy_profiling_service("GET", f"/organizations/{organization.id}/filters", **kwargs)
+        with handle_query_errors():
+            executor = FlamegraphExecutor(
+                snuba_params=snuba_params,
+                data_source=serialized["dataSource"],
+                query=serialized.get("query", ""),
+                fingerprint=serialized.get("fingerprint"),
+            )
+            profile_candidates = executor.get_profile_candidates()
+
+        expand = serialized.get("expand") or []
+        if expand:
+            if "metrics" in expand:
+                profile_candidates["generate_metrics"] = True
+
+        return proxy_profiling_service(
+            method="POST",
+            path=f"/organizations/{organization.id}/flamegraph",
+            json_data=profile_candidates,
+        )
 
 
 @region_silo_endpoint
-class OrganizationProfilingStatsEndpoint(OrganizationProfilingBaseEndpoint):
-    def get(self, request: Request, organization: Organization) -> StreamingHttpResponse:
+class OrganizationProfilingChunksEndpoint(OrganizationProfilingBaseEndpoint):
+    def get(self, request: Request, organization: Organization) -> HttpResponse:
+        if not features.has("organizations:continuous-profiling", organization, actor=request.user):
+            return Response(status=404)
+
+        # We disable the date quantizing here because we need the timestamps to be precise.
+        snuba_params = self.get_snuba_params(request, organization, quantize_date_params=False)
+
+        project_ids = snuba_params.project_ids
+        if project_ids is None or len(project_ids) != 1:
+            raise ParseError(detail="one project_id must be specified.")
+
+        profiler_id = request.query_params.get("profiler_id")
+        if profiler_id is None:
+            raise ParseError(detail="profiler_id must be specified.")
+
+        chunk_ids = get_chunk_ids(snuba_params, profiler_id, project_ids[0])
+
+        return proxy_profiling_service(
+            method="POST",
+            path=f"/organizations/{organization.id}/projects/{project_ids[0]}/chunks",
+            json_data={
+                "profiler_id": profiler_id,
+                "chunk_ids": chunk_ids,
+                "start": str(int(snuba_params.start_date.timestamp() * 1e9)),
+                "end": str(int(snuba_params.end_date.timestamp() * 1e9)),
+            },
+        )
+
+
+@region_silo_endpoint
+class OrganizationProfilingHasChunksEndpoint(OrganizationProfilingBaseEndpoint):
+    def get(self, request: Request, organization: Organization) -> HttpResponse:
         if not features.has("organizations:profiling", organization, actor=request.user):
             return Response(status=404)
 
-        try:
-            params = self.get_profiling_params(request, organization)
-        except NoProjects:
-            # even when there are no projects, we should at least return a response
-            # of the same shape
-            start, end = get_date_range_from_params(request.GET)
-            rollup = self.get_granularity(request, {"start": start, "end": end})
-            return Response(
-                {
-                    "data": [],
-                    "meta": {
-                        "dataset": "profiles",
-                        **calculate_time_frame(start, end, rollup),
-                    },
-                    "timestamps": [],
-                }
+        snuba_params = self.get_snuba_params(request, organization)
+
+        with handle_query_errors():
+            # We just need to query to see if any chunks exists in that time range.
+            query = Query(
+                match=Storage(StorageKey.ProfileChunks.value),
+                select=[Column("project_id")],
+                where=[
+                    Condition(Column("project_id"), Op.IN, snuba_params.project_ids),
+                    Condition(Column("end_timestamp"), Op.GTE, snuba_params.start),
+                    Condition(Column("start_timestamp"), Op.LT, snuba_params.end),
+                ],
+                limit=Limit(1),
             )
 
-        kwargs = {"params": params}
+            referrer = Referrer.API_PROFILING_PROFILE_HAS_CHUNKS.value
 
-        return proxy_profiling_service("GET", f"/organizations/{organization.id}/stats", **kwargs)
+            request = SnqlRequest(
+                dataset=Dataset.Profiles.value,
+                app_id="default",
+                query=query,
+                tenant_ids={
+                    "referrer": referrer,
+                    "organization_id": organization.id,
+                },
+            )
 
-    def get_filter_params(
-        self,
-        request: Request,
-        organization: Organization,
-        date_filter_optional: bool = False,
-        project_ids: Optional[Sequence[int]] = None,
-    ) -> Dict[str, Any]:
-        params = super().get_filter_params(
-            request,
-            organization,
-            date_filter_optional=date_filter_optional,
-            project_ids=project_ids,
-        )
-        params["granularity"] = self.get_granularity(request, params)
-        return params
+            data = raw_snql_query(request, referrer)["data"]
+
+        return Response({"hasChunks": len(data) > 0}, status=200)

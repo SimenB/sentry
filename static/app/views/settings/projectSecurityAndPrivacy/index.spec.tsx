@@ -1,55 +1,19 @@
-import {InjectedRouter} from 'react-router';
-import {Location} from 'history';
+import {ProjectFixture} from 'sentry-fixture/project';
 
 import {initializeOrg} from 'sentry-test/initializeOrg';
 import {render, screen} from 'sentry-test/reactTestingLibrary';
 
-import {Organization} from 'sentry/types';
-import {OrganizationContext} from 'sentry/views/organizationContext';
-import {RouteContext} from 'sentry/views/routeContext';
 import ProjectSecurityAndPrivacy from 'sentry/views/settings/projectSecurityAndPrivacy';
-
-function ComponentProviders({
-  router,
-  location,
-  organization,
-  children,
-}: {
-  children: React.ReactNode;
-  location: Location;
-  organization: Organization;
-  router: InjectedRouter;
-}) {
-  return (
-    <OrganizationContext.Provider value={organization}>
-      <RouteContext.Provider
-        value={{
-          router,
-          location,
-          params: {},
-          routes: [],
-        }}
-      >
-        {children}
-      </RouteContext.Provider>
-    </OrganizationContext.Provider>
-  );
-}
 
 describe('projectSecurityAndPrivacy', function () {
   it('renders form fields', function () {
-    const {organization, router} = initializeOrg();
-    const project = TestStubs.ProjectDetails();
+    const {organization} = initializeOrg();
+    const project = ProjectFixture({
+      sensitiveFields: ['creditcard', 'ssn'],
+      safeFields: ['business-email', 'company'],
+    });
 
-    render(
-      <ComponentProviders
-        organization={organization}
-        router={router}
-        location={router.location}
-      >
-        <ProjectSecurityAndPrivacy project={project} organization={organization} />
-      </ComponentProviders>
-    );
+    render(<ProjectSecurityAndPrivacy project={project} organization={organization} />);
 
     expect(
       screen.getByRole('checkbox', {
@@ -89,8 +53,8 @@ describe('projectSecurityAndPrivacy', function () {
   });
 
   it('disables field when equivalent org setting is true', function () {
-    const {organization, router} = initializeOrg();
-    const project = TestStubs.ProjectDetails();
+    const {organization} = initializeOrg();
+    const project = ProjectFixture();
 
     organization.dataScrubber = true;
     organization.scrubIPAddresses = false;
@@ -101,15 +65,7 @@ describe('projectSecurityAndPrivacy', function () {
       body: project,
     });
 
-    render(
-      <ComponentProviders
-        organization={organization}
-        router={router}
-        location={router.location}
-      >
-        <ProjectSecurityAndPrivacy project={project} organization={organization} />
-      </ComponentProviders>
-    );
+    render(<ProjectSecurityAndPrivacy project={project} organization={organization} />);
 
     expect(
       screen.getByRole('checkbox', {
@@ -130,5 +86,23 @@ describe('projectSecurityAndPrivacy', function () {
     expect(
       screen.getByRole('checkbox', {name: 'Enable server-side data scrubbing'})
     ).toBeChecked();
+  });
+
+  it('disables fields when missing project:write access', function () {
+    const {organization} = initializeOrg({
+      organization: {
+        access: [], // Remove all access
+      },
+    });
+    const project = ProjectFixture();
+
+    render(<ProjectSecurityAndPrivacy project={project} organization={organization} />);
+
+    // Check that the data scrubber toggle is disabled
+    expect(
+      screen.getByRole('checkbox', {
+        name: 'Enable server-side data scrubbing',
+      })
+    ).toBeDisabled();
   });
 });

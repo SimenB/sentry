@@ -1,10 +1,14 @@
 import {Component} from 'react';
-import {browserHistory} from 'react-router';
-import {Location} from 'history';
+import type {Location} from 'history';
 
 import DataZoomInside from 'sentry/components/charts/components/dataZoomInside';
 import ToolBox from 'sentry/components/charts/components/toolBox';
-import {EChartChartReadyHandler, EChartDataZoomHandler} from 'sentry/types/echarts';
+import type {
+  EChartChartReadyHandler,
+  EChartDataZoomHandler,
+  ECharts,
+} from 'sentry/types/echarts';
+import {browserHistory} from 'sentry/utils/browserHistory';
 
 type RenderProps = {
   dataZoom: ReturnType<typeof DataZoomInside>;
@@ -69,7 +73,7 @@ class BarChartZoom extends Component<Props> {
   /**
    * Enable zoom immediately instead of having to toggle to zoom
    */
-  handleChartReady = chart => {
+  handleChartReady = (chart: ECharts) => {
     this.props.onChartReady?.(chart);
   };
 
@@ -87,7 +91,7 @@ class BarChartZoom extends Component<Props> {
     }
 
     // This attempts to activate the area zoom toolbox feature
-    const zoom = chart._componentsViews?.find(c => c._features && c._features.dataZoom);
+    const zoom = chart._componentsViews?.find(c => c._features?.dataZoom);
     if (zoom && !zoom._features.dataZoom._isZoomActive) {
       // Calling dispatchAction will re-trigger handleChartFinished
       chart.dispatchAction({
@@ -108,8 +112,8 @@ class BarChartZoom extends Component<Props> {
     if (startValue !== null && endValue !== null) {
       const {buckets, location, paramStart, paramEnd, minZoomWidth, onHistoryPush} =
         this.props;
-      const {start} = buckets[startValue];
-      const {end} = buckets[endValue];
+      const {start} = buckets[startValue]!;
+      const {end} = buckets[endValue]!;
 
       if (minZoomWidth === undefined || end - start > minZoomWidth) {
         const target = {

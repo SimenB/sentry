@@ -1,7 +1,5 @@
 import {Fragment} from 'react';
-import {browserHistory, WithRouterProps} from 'react-router';
 import {useTheme} from '@emotion/react';
-import {Location} from 'history';
 
 import ChartZoom from 'sentry/components/charts/chartZoom';
 import ErrorPanel from 'sentry/components/charts/errorPanel';
@@ -16,26 +14,29 @@ import Placeholder from 'sentry/components/placeholder';
 import QuestionTooltip from 'sentry/components/questionTooltip';
 import {IconWarning} from 'sentry/icons';
 import {t} from 'sentry/locale';
-import {Organization} from 'sentry/types';
+import type {Organization} from 'sentry/types/organization';
 import {getUtcToLocalDateObject} from 'sentry/utils/dates';
 import {axisLabelFormatter, tooltipFormatter} from 'sentry/utils/discover/charts';
-import EventView from 'sentry/utils/discover/eventView';
+import type EventView from 'sentry/utils/discover/eventView';
 import getDynamicText from 'sentry/utils/getDynamicText';
-import {SpanSlug} from 'sentry/utils/performance/suspectSpans/types';
+import type {SpanSlug} from 'sentry/utils/performance/suspectSpans/types';
 import useApi from 'sentry/utils/useApi';
+import {useLocation} from 'sentry/utils/useLocation';
+import {useNavigate} from 'sentry/utils/useNavigate';
 
 import {getExclusiveTimeDisplayedValue} from '../utils';
 
-type Props = WithRouterProps & {
+type Props = {
   eventView: EventView;
-  location: Location;
   organization: Organization;
   spanSlug: SpanSlug;
   withoutZerofill: boolean;
 };
 
 export default function ExclusiveTimeTimeSeries(props: Props) {
-  const {location, router, organization, eventView, spanSlug, withoutZerofill} = props;
+  const navigate = useNavigate();
+  const location = useLocation();
+  const {organization, eventView, spanSlug, withoutZerofill} = props;
 
   const api = useApi();
   const theme = useTheme();
@@ -69,7 +70,7 @@ export default function ExclusiveTimeTimeSeries(props: Props) {
         unselectedSeries: unselected,
       },
     };
-    browserHistory.push(to);
+    navigate(to);
   };
 
   return (
@@ -84,13 +85,7 @@ export default function ExclusiveTimeTimeSeries(props: Props) {
           )}
         />
       </HeaderTitleLegend>
-      <ChartZoom
-        router={router}
-        period={period}
-        start={start}
-        end={end}
-        utc={utc === 'true'}
-      >
+      <ChartZoom period={period} start={start} end={end} utc={utc === 'true'}>
         {zoomRenderProps => (
           <EventsRequest
             api={api}

@@ -1,9 +1,16 @@
 import {escapeDoubleQuotes} from 'sentry/utils';
 
+export const ALLOWED_WILDCARD_FIELDS = [
+  'span.description',
+  'span.domain',
+  'span.status_code',
+];
+export const EMPTY_OPTION_VALUE = '(empty)' as const;
+
 export enum TokenType {
-  OPERATOR,
-  FILTER,
-  FREE_TEXT,
+  OPERATOR = 0,
+  FILTER = 1,
+  FREE_TEXT = 2,
 }
 
 export type Token = {
@@ -35,6 +42,39 @@ function isParen(token: Token, character: '(' | ')') {
 
 export class MutableSearch {
   tokens: Token[];
+
+  /**
+   * Creates a `MutableSearch` from a key-value mapping of field:value.
+   * This construct doesn't support conditions like `OR` and `AND` or
+   * parentheses, so it's only useful for simple queries.
+   * @param params
+   * @returns {MutableSearch}
+   */
+  static fromQueryObject(params: {
+    [key: string]: string[] | string | number | undefined;
+  }): MutableSearch {
+    const query = new MutableSearch('');
+
+    Object.entries(params).forEach(([key, value]) => {
+      if (!value) {
+        return;
+      }
+
+      if (value === EMPTY_OPTION_VALUE) {
+        query.addFilterValue('!has', key);
+      } else if (Array.isArray(value)) {
+        query.addFilterValues(key, value, !ALLOWED_WILDCARD_FIELDS.includes(key));
+      } else {
+        query.addFilterValue(
+          key,
+          value.toString(),
+          !ALLOWED_WILDCARD_FIELDS.includes(key)
+        );
+      }
+    });
+
+    return query;
+  }
 
   /**
    * Creates a MutableSearch from a string query
@@ -135,21 +175,60 @@ export class MutableSearch {
     return formattedTokens.join(' ').trim();
   }
 
+  /**
+   * Adds the filters from a string query to the current MutableSearch query.
+   * The string query may consist of multiple key:value pairs separated
+   * by spaces.
+   */
+  addStringMultiFilter(multiFilter: string, shouldEscape = true) {
+    Object.entries(new MutableSearch(multiFilter).filters).forEach(([key, values]) => {
+      this.addFilterValues(key, values, shouldEscape);
+    });
+  }
+
+  /**
+   * Adds a string filter to the current MutableSearch query. The filter should follow
+   * the format key:value.
+   */
   addStringFilter(filter: string, shouldEscape = true) {
     const [key, value] = parseFilter(filter);
-    this.addFilterValues(key, [value], shouldEscape);
+    this.addFilterValues(key!, [value!], shouldEscape);
     return this;
   }
 
   addFilterValues(key: string, values: string[], shouldEscape = true) {
     for (const value of values) {
-      // Filter values that we insert through the UI can contain special characters
-      // that need to escaped. User entered filters should not be escaped.
-      const escaped = shouldEscape ? escapeFilterValue(value) : value;
-      const token: Token = {type: TokenType.FILTER, key, value: escaped};
-      this.tokens.push(token);
+      this.addFilterValue(key, value, shouldEscape);
     }
     return this;
+  }
+
+  /**
+   * Adds the filter values separated by OR operators. This is in contrast to
+   * addFilterValues, which implicitly separates each filter value with an AND operator.
+   */
+  addDisjunctionFilterValues(key: string, values: string[], shouldEscape = true) {
+    if (values.length === 0) {
+      return this;
+    }
+
+    this.addOp('(');
+    for (let i = 0; i < values.length; i++) {
+      if (i > 0) {
+        this.addOp('OR');
+      }
+      this.addFilterValue(key, values[i]!, shouldEscape);
+    }
+    this.addOp(')');
+    return this;
+  }
+
+  addFilterValue(key: string, value: string, shouldEscape = true) {
+    // Filter values that we insert through the UI can contain special characters
+    // that need to escaped. User entered filters should not be escaped.
+    const escaped = shouldEscape ? escapeFilterValue(value) : value;
+    const token: Token = {type: TokenType.FILTER, key, value: escaped};
+    this.tokens.push(token);
   }
 
   setFilterValues(key: string, values: string[], shouldEscape = true) {
@@ -193,7 +272,7 @@ export class MutableSearch {
         }
 
         for (let i = 0; i < this.tokens.length; i++) {
-          const token = this.tokens[i];
+          const token = this.tokens[i]!;
           const prev = this.tokens[i - 1];
           const next = this.tokens[i + 1];
           if (isOp(token) && isBooleanOp(token.value)) {
@@ -234,14 +313,14 @@ export class MutableSearch {
       parensToDelete = [];
 
       for (let i = 0; i < this.tokens.length; i++) {
-        const token = this.tokens[i];
+        const token = this.tokens[i]!;
         if (!isOp(token) || token.value !== '(') {
           continue;
         }
 
         let alreadySeen = false;
         for (let j = i + 1; j < this.tokens.length; j++) {
-          const nextToken = this.tokens[j];
+          const nextToken = this.tokens[j]!;
           if (isOp(nextToken) && nextToken.value === '(') {
             // Continue down to the nested parens. We can skip i forward since we know
             // everything between i and j is NOT an open paren.
@@ -284,6 +363,7 @@ export class MutableSearch {
         values.filter(item => item !== value)
       );
     }
+    return this;
   }
 
   addFreeText(value: string) {
@@ -335,8 +415,8 @@ function splitSearchIntoTokens(query: string) {
   let quoteEnclosed = false;
 
   for (let idx = 0; idx < queryChars.length; idx++) {
-    const char = queryChars[idx];
-    const nextChar = queryChars.length - 1 > idx ? queryChars[idx + 1] : null;
+    const char = queryChars[idx]!;
+    const nextChar = queryChars.length - 1 > idx ? queryChars[idx + 1]! : null;
     token += char;
 
     if (nextChar !== null && !isSpace(char) && isSpace(nextChar)) {

@@ -2,7 +2,6 @@ import logging
 import re
 from gzip import GzipFile
 from io import BytesIO
-from urllib.parse import urljoin
 
 from django.conf import settings
 from django.urls import reverse
@@ -11,17 +10,21 @@ from rest_framework.request import Request
 from rest_framework.response import Response
 
 from sentry import options
-from sentry.api.base import pending_silo_endpoint
+from sentry.api.api_owners import ApiOwner
+from sentry.api.api_publish_status import ApiPublishStatus
+from sentry.api.base import region_silo_endpoint
 from sentry.api.bases.organization import OrganizationEndpoint, OrganizationReleasePermission
-from sentry.models import FileBlob
+from sentry.api.utils import generate_region_url
+from sentry.models.files.fileblob import FileBlob
 from sentry.ratelimits.config import RateLimitConfig
 from sentry.utils.files import get_max_file_size
+from sentry.utils.http import absolute_uri
 
 MAX_CHUNKS_PER_REQUEST = 64
 MAX_REQUEST_SIZE = 32 * 1024 * 1024
 MAX_CONCURRENCY = settings.DEBUG and 1 or 8
 HASH_ALGORITHM = "sha1"
-SENTRYCLI_SEMVER_RE = re.compile(r"^sentry-cli\/(?P<major>\d+)\.(?P<minor>\d+)\.(?P<patch>\d+).*$")
+SENTRYCLI_SEMVER_RE = re.compile(r"^sentry-cli\/(?P<major>\d+)\.(?P<minor>\d+)\.(?P<patch>\d+)")
 API_PREFIX = "/api/0"
 CHUNK_UPLOAD_ACCEPT = (
     "debug_files",  # DIF assemble
@@ -31,6 +34,9 @@ CHUNK_UPLOAD_ACCEPT = (
     "bcsymbolmaps",  # BCSymbolMaps and associated PLists/UuidMaps
     "il2cpp",  # Il2cpp LineMappingJson files
     "portablepdbs",  # Portable PDB debug file
+    "artifact_bundles",  # Artifact Bundles for JavaScript Source Maps
+    "artifact_bundles_v2",  # The `assemble` endpoint will check for missing chunks
+    "proguard",  # Chunk-uploaded proguard mappings
 )
 
 
@@ -42,8 +48,13 @@ class GzipChunk(BytesIO):
         super().__init__(data)
 
 
-@pending_silo_endpoint
+@region_silo_endpoint
 class ChunkUploadEndpoint(OrganizationEndpoint):
+    publish_status = {
+        "GET": ApiPublishStatus.PRIVATE,
+        "POST": ApiPublishStatus.PRIVATE,
+    }
+    owner = ApiOwner.OWNERS_INGEST
     permission_classes = (OrganizationReleasePermission,)
     rate_limits = RateLimitConfig(group="CLI")
 
@@ -60,11 +71,22 @@ class ChunkUploadEndpoint(OrganizationEndpoint):
         # User-Agent: sentry-cli/1.70.1
         user_agent = request.headers.get("User-Agent", "")
         sentrycli_version = SENTRYCLI_SEMVER_RE.search(user_agent)
+        sentrycli_version_split = None
+        if sentrycli_version is not None:
+            sentrycli_version_split = (
+                int(sentrycli_version.group("major")),
+                int(sentrycli_version.group("minor")),
+                int(sentrycli_version.group("patch")),
+            )
+
+        relative_urls_disabled = options.get("hybrid_cloud.disable_relative_upload_urls")
+        requires_region_url = sentrycli_version_split and sentrycli_version_split >= (2, 30, 0)
+
         supports_relative_url = (
-            (sentrycli_version is not None)
-            and (int(sentrycli_version.group("major")) >= 1)
-            and (int(sentrycli_version.group("minor")) >= 70)
-            and (int(sentrycli_version.group("patch")) >= 1)
+            not relative_urls_disabled
+            and not requires_region_url
+            and sentrycli_version_split
+            and sentrycli_version_split >= (1, 70, 1)
         )
 
         # If user do not overwritten upload url prefix
@@ -74,12 +96,20 @@ class ChunkUploadEndpoint(OrganizationEndpoint):
                 url = relative_url.lstrip(API_PREFIX)
             # Otherwise, if we do not support them, return an absolute, versioned endpoint with a default, system-wide prefix
             else:
-                endpoint = options.get("system.url-prefix")
-                url = urljoin(endpoint.rstrip("/") + "/", relative_url.lstrip("/"))
+                # We need to generate region specific upload URLs when possible to avoid hitting the API proxy
+                # which tends to cause timeouts and performance issues for uploads.
+                url = absolute_uri(relative_url, generate_region_url())
         else:
             # If user overridden upload url prefix, we want an absolute, versioned endpoint, with user-configured prefix
-            url = urljoin(endpoint.rstrip("/") + "/", relative_url.lstrip("/"))
+            url = absolute_uri(relative_url, endpoint)
 
+        accept = CHUNK_UPLOAD_ACCEPT
+
+        # Sentry CLI versions ≤2.39.1 require "chunkSize" to be a power of two, and will error otherwise,
+        # with no way for the user to work around the error. This restriction has been removed from
+        # newer Sentry CLI versions.
+        # Be aware that changing "chunkSize" to something that is not a power of two will break
+        # Sentry CLI ≤2.39.1.
         return Response(
             {
                 "url": url,
@@ -90,7 +120,7 @@ class ChunkUploadEndpoint(OrganizationEndpoint):
                 "concurrency": MAX_CONCURRENCY,
                 "hashAlgorithm": HASH_ALGORITHM,
                 "compression": ["gzip"],
-                "accept": CHUNK_UPLOAD_ACCEPT,
+                "accept": accept,
             }
         )
 
@@ -98,6 +128,10 @@ class ChunkUploadEndpoint(OrganizationEndpoint):
         """
         Upload chunks and store them as FileBlobs
         `````````````````````````````````````````
+
+        Requests to this endpoint should use the region-specific domain
+        eg. `us.sentry.io` or `de.sentry.io`
+
         :pparam file file: The filename should be sha1 hash of the content.
                             Also not you can add up to MAX_CHUNKS_PER_REQUEST files
                             in this request.
@@ -110,9 +144,9 @@ class ChunkUploadEndpoint(OrganizationEndpoint):
         logger.info("chunkupload.start")
 
         files = []
-        if request.data:
-            files = request.data.getlist("file")
-            files += [GzipChunk(chunk) for chunk in request.data.getlist("file_gzip")]
+        if request.FILES:
+            files = request.FILES.getlist("file")
+            files += [GzipChunk(chunk) for chunk in request.FILES.getlist("file_gzip")]
 
         if len(files) == 0:
             # No files uploaded is ok

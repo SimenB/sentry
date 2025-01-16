@@ -2,22 +2,24 @@ import styled from '@emotion/styled';
 
 import SentryAppAvatar from 'sentry/components/avatar/sentryAppAvatar';
 import ConfigStore from 'sentry/stores/configStore';
-import {SentryAppComponent} from 'sentry/types';
+import type {SentryAppComponent} from 'sentry/types/integrations';
 
 type Props = {
   sentryAppComponent: SentryAppComponent;
+  size?: number;
 };
 
 /**
  * Icon Renderer for SentryAppComponents with UI
  * (e.g. Issue Linking, Stacktrace Linking)
  */
-const SentryAppComponentIcon = ({sentryAppComponent}: Props) => {
+function SentryAppComponentIcon({sentryAppComponent, size = 20}: Props) {
   const selectedAvatar = sentryAppComponent.sentryApp?.avatars?.find(
     ({color}) => color === false
   );
   const isDefault = selectedAvatar?.avatarType !== 'upload';
-  const isDisabled = sentryAppComponent.error;
+  const isDisabled = sentryAppComponentIsDisabled(sentryAppComponent);
+
   return (
     <SentryAppAvatarWrapper
       isDark={ConfigStore.get('theme') === 'dark'}
@@ -26,11 +28,16 @@ const SentryAppComponentIcon = ({sentryAppComponent}: Props) => {
     >
       <SentryAppAvatar
         sentryApp={sentryAppComponent.sentryApp}
-        size={20}
+        size={size}
         isColor={false}
       />
     </SentryAppAvatarWrapper>
   );
+}
+
+// Patch for backwards compatibility as the change's truth table is inverse to the previous'
+export const sentryAppComponentIsDisabled = (component: SentryAppComponent) => {
+  return typeof component.error === 'boolean' ? component.error : !component.error;
 };
 
 export default SentryAppComponentIcon;

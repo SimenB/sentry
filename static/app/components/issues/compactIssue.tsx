@@ -3,34 +3,34 @@ import styled from '@emotion/styled';
 
 import {bulkUpdate} from 'sentry/actionCreators/group';
 import {addLoadingMessage, clearIndicators} from 'sentry/actionCreators/indicator';
-import {Client} from 'sentry/api';
+import type {Client} from 'sentry/api';
 import EventOrGroupTitle from 'sentry/components/eventOrGroupTitle';
 import ErrorLevel from 'sentry/components/events/errorLevel';
 import Link from 'sentry/components/links/link';
-import {PanelItem} from 'sentry/components/panels';
+import PanelItem from 'sentry/components/panels/panelItem';
 import {IconChat, IconMute, IconStar} from 'sentry/icons';
 import {t} from 'sentry/locale';
 import GroupStore from 'sentry/stores/groupStore';
-import space from 'sentry/styles/space';
-import {BaseGroup, Organization} from 'sentry/types';
+import {space} from 'sentry/styles/space';
+import type {BaseGroup} from 'sentry/types/group';
+import type {Organization} from 'sentry/types/organization';
 import {getMessage} from 'sentry/utils/events';
-import {Aliases} from 'sentry/utils/theme';
+import type {Aliases} from 'sentry/utils/theme';
 import withApi from 'sentry/utils/withApi';
 import withOrganization from 'sentry/utils/withOrganization';
 
 type HeaderProps = {
   data: BaseGroup;
   organization: Organization;
-  projectId: string;
   eventId?: string;
 };
 
-function CompactIssueHeader({data, organization, projectId, eventId}: HeaderProps) {
+function CompactIssueHeader({data, organization, eventId}: HeaderProps) {
   const basePath = `/organizations/${organization.slug}/issues/`;
 
   const issueLink = eventId
-    ? `/organizations/${organization.slug}/projects/${projectId}/events/${eventId}/`
-    : `${basePath}${data.id}/`;
+    ? `${basePath}${data.id}/events/${eventId}/?referrer=compact-issue`
+    : `${basePath}${data.id}/?referrer=compact-issue`;
 
   const commentColor: keyof Aliases =
     data.subscriptionDetails && data.subscriptionDetails.reason === 'mentioned'
@@ -40,7 +40,7 @@ function CompactIssueHeader({data, organization, projectId, eventId}: HeaderProp
   return (
     <Fragment>
       <IssueHeaderMetaWrapper>
-        <StyledErrorLevel size="12px" level={data.level} title={data.level} />
+        <StyledErrorLevel size="12px" level={data.level} />
         <h3 className="truncate">
           <IconLink to={issueLink || ''}>
             {data.status === 'ignored' && <IconMute size="xs" />}
@@ -82,6 +82,7 @@ type Props = {
   api: Client;
   id: string;
   organization: Organization;
+  children?: React.ReactNode;
   data?: BaseGroup;
   eventId?: string;
 };
@@ -95,7 +96,7 @@ class CompactIssue extends Component<Props, State> {
     issue: this.props.data || GroupStore.get(this.props.id),
   };
 
-  componentWillReceiveProps(nextProps: Props) {
+  UNSAFE_componentWillReceiveProps(nextProps: Props) {
     if (nextProps.id !== this.props.id) {
       this.setState({
         issue: GroupStore.get(this.props.id),
@@ -172,7 +173,6 @@ class CompactIssue extends Component<Props, State> {
         <CompactIssueHeader
           data={issue}
           organization={organization}
-          projectId={issue.project.slug}
           eventId={this.props.eventId}
         />
         {this.props.children}

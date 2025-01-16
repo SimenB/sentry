@@ -1,8 +1,8 @@
 import {Fragment} from 'react';
 
-import Alert from 'sentry/components/alert';
+import {Alert} from 'sentry/components/alert';
 import Confirm from 'sentry/components/confirm';
-import Field from 'sentry/components/forms/field';
+import FieldGroup from 'sentry/components/forms/fieldGroup';
 import Input from 'sentry/components/input';
 import {t} from 'sentry/locale';
 
@@ -14,31 +14,33 @@ interface Props
   confirmInput: string;
 }
 
-const ConfirmDelete = ({message, confirmInput, ...props}: Props) => (
-  <Confirm
-    {...props}
-    bypass={false}
-    disableConfirmButton
-    renderMessage={({disableConfirmButton}) => (
-      <Fragment>
-        <Alert type="error">{message}</Alert>
-        <Field
-          flexibleControlStateSize
-          inline={false}
-          label={t(
-            'Please enter %s to confirm the deletion',
-            <code>{confirmInput}</code>
-          )}
-        >
-          <Input
-            type="text"
-            placeholder={confirmInput}
-            onChange={e => disableConfirmButton(e.target.value !== confirmInput)}
-          />
-        </Field>
-      </Fragment>
-    )}
-  />
-);
+function ConfirmDelete({message, confirmInput, ...props}: Props) {
+  return (
+    <Confirm
+      {...props}
+      bypass={false}
+      disableConfirmButton
+      renderMessage={({disableConfirmButton}) => (
+        <Fragment>
+          <Alert type="error">{message}</Alert>
+          <FieldGroup
+            flexibleControlStateSize
+            inline={false}
+            label={t(
+              'Please enter %s to confirm the deletion',
+              <code>{confirmInput}</code>
+            )}
+          >
+            <Input
+              type="text"
+              placeholder={confirmInput}
+              onChange={e => disableConfirmButton(e.target.value !== confirmInput)}
+            />
+          </FieldGroup>
+        </Fragment>
+      )}
+    />
+  );
+}
 
 export default ConfirmDelete;

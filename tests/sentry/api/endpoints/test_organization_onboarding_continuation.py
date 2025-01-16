@@ -1,10 +1,8 @@
 from unittest import mock
 
-from sentry.testutils import APITestCase
-from sentry.testutils.silo import region_silo_test
+from sentry.testutils.cases import APITestCase
 
 
-@region_silo_test
 class OrganizationOnboardingContinuation(APITestCase):
     endpoint = "sentry-api-0-organization-onboarding-continuation-email"
     method = "post"
@@ -26,7 +24,10 @@ class OrganizationOnboardingContinuation(APITestCase):
             "type": "organization.onboarding-continuation-email",
             "context": {
                 "recipient_name": self.user.get_display_name(),
-                "onboarding_link": f"/onboarding/{self.organization.slug}/?referrer=onboarding_continuation-email",
+                "onboarding_link": self.organization.absolute_url(
+                    f"/onboarding/{self.organization.slug}/",
+                    query="referrer=onboarding_continuation-email",
+                ),
                 "organization_name": self.organization.name,
                 "num_platforms": 3,
                 "platforms": "javascript, python, and flutter",

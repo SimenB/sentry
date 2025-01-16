@@ -3,7 +3,7 @@ import {act, render, screen, within} from 'sentry-test/reactTestingLibrary';
 
 import ProjectsStore from 'sentry/stores/projectsStore';
 import EventView from 'sentry/utils/discover/eventView';
-import {DEFAULT_EVENT_VIEW} from 'sentry/views/eventsV2/data';
+import {DEFAULT_EVENT_VIEW} from 'sentry/views/discover/data';
 import TraceDetailsContent from 'sentry/views/performance/traceDetails/content';
 
 const SAMPLE_ERROR_DATA = {
@@ -18,7 +18,7 @@ const initializeData = () => {
     features: ['performance-view', 'trace-view'],
   });
 
-  act(() => ProjectsStore.loadInitialData(data.organization.projects));
+  act(() => ProjectsStore.loadInitialData(data.projects));
   return data;
 };
 
@@ -39,7 +39,13 @@ describe('TraceDetailsContent', () => {
     it('should render a list of errors when a trace contains only error events', async () => {
       const initialData = initializeData();
       const eventView = EventView.fromSavedQuery(DEFAULT_EVENT_VIEW);
-      const meta = {errors: 2, projects: 1, transactions: 0};
+      const meta = {
+        errors: 2,
+        projects: 1,
+        transactions: 0,
+        performance_issues: 1,
+        transactiontoSpanChildrenCount: {},
+      };
 
       render(
         <TraceDetailsContent
@@ -58,17 +64,17 @@ describe('TraceDetailsContent', () => {
 
       const errorList = await screen.findByTestId('trace-view-errors');
       expect(
-        await within(errorList).findByText(SAMPLE_ERROR_DATA.data[0].title)
+        await within(errorList).findByText(SAMPLE_ERROR_DATA.data[0]!.title)
       ).toBeInTheDocument();
       expect(
-        await within(errorList).findByText(SAMPLE_ERROR_DATA.data[1].title)
+        await within(errorList).findByText(SAMPLE_ERROR_DATA.data[1]!.title)
       ).toBeInTheDocument();
 
       expect(
-        await within(errorList).findByText(SAMPLE_ERROR_DATA.data[0].level)
+        await within(errorList).findByText(SAMPLE_ERROR_DATA.data[0]!.level)
       ).toBeInTheDocument();
       expect(
-        await within(errorList).findByText(SAMPLE_ERROR_DATA.data[1].level)
+        await within(errorList).findByText(SAMPLE_ERROR_DATA.data[1]!.level)
       ).toBeInTheDocument();
     });
 
@@ -81,7 +87,13 @@ describe('TraceDetailsContent', () => {
 
       const initialData = initializeData();
       const eventView = EventView.fromSavedQuery(DEFAULT_EVENT_VIEW);
-      const meta = {errors: 2, projects: 1, transactions: 0};
+      const meta = {
+        errors: 2,
+        projects: 1,
+        transactions: 0,
+        performance_issues: 0,
+        transactiontoSpanChildrenCount: {},
+      };
 
       render(
         <TraceDetailsContent
@@ -99,15 +111,11 @@ describe('TraceDetailsContent', () => {
       );
 
       const errorText = await screen.findByText(
-        'The trace cannot be shown when all events are errors. An error occurred when attempting to fetch these error events:'
+        'The trace cannot be shown when all events are errors. An error occurred when attempting to fetch these error events: This is a test error'
       );
 
       const errorContainer = errorText.parentElement;
-      expect(errorContainer).not.toBeNull();
-
-      expect(
-        within(errorContainer!).getByText('This is a test error')
-      ).toBeInTheDocument();
+      expect(errorContainer).toBeInTheDocument();
     });
   });
 });

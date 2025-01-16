@@ -4,10 +4,11 @@ import styled from '@emotion/styled';
 import TextField from 'sentry/components/forms/fields/textField';
 import TextOverflow from 'sentry/components/textOverflow';
 import {t} from 'sentry/locale';
-import space from 'sentry/styles/space';
+import {space} from 'sentry/styles/space';
 import {defined} from 'sentry/utils';
 
-import {SourceSuggestion, SourceSuggestionType} from '../../types';
+import type {SourceSuggestion} from '../../types';
+import {SourceSuggestionType} from '../../types';
 import {binarySuggestions, unarySuggestions} from '../../utils';
 
 import SourceSuggestionExamples from './sourceSuggestionExamples';
@@ -95,16 +96,16 @@ class SourceField extends Component<Props, State> {
       }
     }
 
-    const filteredSuggestions = valuesToBeFiltered.filter(
-      s => s.value.toLowerCase().indexOf(value.toLowerCase()) > -1
+    const filteredSuggestions = valuesToBeFiltered.filter(s =>
+      s.value.toLowerCase().includes(value.toLowerCase())
     );
 
     return filteredSuggestions;
   }
 
   getNewSuggestions(fieldValues: Array<SourceSuggestion | Array<SourceSuggestion>>) {
-    const lastFieldValue = fieldValues[fieldValues.length - 1];
-    const penultimateFieldValue = fieldValues[fieldValues.length - 2];
+    const lastFieldValue = fieldValues[fieldValues.length - 1]!;
+    const penultimateFieldValue = fieldValues[fieldValues.length - 2]!;
 
     if (Array.isArray(lastFieldValue)) {
       // recursion
@@ -171,8 +172,8 @@ class SourceField extends Component<Props, State> {
     const splittedValue = newValue.split(' ');
 
     for (const splittedValueIndex in splittedValue) {
-      const value = splittedValue[splittedValueIndex];
-      const lastFieldValue = fieldValues[fieldValues.length - 1];
+      const value = splittedValue[splittedValueIndex]!;
+      const lastFieldValue = fieldValues[fieldValues.length - 1]!;
 
       if (
         lastFieldValue &&
@@ -184,18 +185,18 @@ class SourceField extends Component<Props, State> {
       }
 
       if (value.includes('!') && !!value.split('!')[1]) {
-        const valueAfterUnaryOperator = value.split('!')[1];
+        const valueAfterUnaryOperator = value.split('!')[1]!;
         const selector = this.getAllSuggestions().find(
           s => s.value === valueAfterUnaryOperator
         );
         if (!selector) {
           fieldValues.push([
-            unarySuggestions[0],
+            unarySuggestions[0]!,
             {type: SourceSuggestionType.STRING, value: valueAfterUnaryOperator},
           ]);
           continue;
         }
-        fieldValues.push([unarySuggestions[0], selector]);
+        fieldValues.push([unarySuggestions[0]!, selector]);
         continue;
       }
 
@@ -220,7 +221,7 @@ class SourceField extends Component<Props, State> {
   scrollToSuggestion() {
     const {activeSuggestion, hideCaret} = this.state;
 
-    this.suggestionList?.current?.children[activeSuggestion].scrollIntoView({
+    this.suggestionList?.current?.children[activeSuggestion]!.scrollIntoView({
       behavior: 'smooth',
       block: 'nearest',
       inline: 'start',
@@ -239,7 +240,7 @@ class SourceField extends Component<Props, State> {
     const newValue: Array<string> = [];
 
     for (const index in fieldValues) {
-      const fieldValue = fieldValues[index];
+      const fieldValue = fieldValues[index]!;
       if (Array.isArray(fieldValue)) {
         if (fieldValue[0]?.value || fieldValue[1]?.value) {
           newValue.push(`${fieldValue[0]?.value ?? ''}${fieldValue[1]?.value ?? ''}`);
@@ -255,15 +256,15 @@ class SourceField extends Component<Props, State> {
   getNewFieldValues(
     suggestion: SourceSuggestion
   ): Array<SourceSuggestion | Array<SourceSuggestion>> {
-    const fieldValues = [...this.state.fieldValues];
-    const lastFieldValue = fieldValues[fieldValues.length - 1];
+    const fieldValues = [...this.state.fieldValues]!;
+    const lastFieldValue = fieldValues[fieldValues.length - 1]!;
 
     if (!defined(lastFieldValue)) {
       return [suggestion];
     }
 
     if (Array.isArray(lastFieldValue)) {
-      fieldValues[fieldValues.length - 1] = [lastFieldValue[0], suggestion];
+      fieldValues[fieldValues.length - 1] = [lastFieldValue[0]!, suggestion];
       return fieldValues;
     }
 
@@ -344,20 +345,20 @@ class SourceField extends Component<Props, State> {
   handleKeyDown = (_value: string, event: React.KeyboardEvent<HTMLInputElement>) => {
     event.persist();
 
-    const {keyCode} = event;
+    const {key} = event;
     const {activeSuggestion, suggestions} = this.state;
 
-    if (keyCode === 8 || keyCode === 32) {
+    if (key === 'Backspace' || key === ' ') {
       this.toggleSuggestions(true);
       return;
     }
 
-    if (keyCode === 13) {
-      this.handleClickSuggestionItem(suggestions[activeSuggestion]);
+    if (key === 'Enter') {
+      this.handleClickSuggestionItem(suggestions[activeSuggestion]!);
       return;
     }
 
-    if (keyCode === 38) {
+    if (key === 'ArrowUp') {
       if (activeSuggestion === 0) {
         return;
       }
@@ -367,7 +368,7 @@ class SourceField extends Component<Props, State> {
       return;
     }
 
-    if (keyCode === 40) {
+    if (key === 'ArrowDown') {
       if (activeSuggestion === suggestions.length - 1) {
         return;
       }

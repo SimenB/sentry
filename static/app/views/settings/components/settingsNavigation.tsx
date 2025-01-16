@@ -2,9 +2,9 @@ import {cloneElement, Component} from 'react';
 import styled from '@emotion/styled';
 import * as Sentry from '@sentry/react';
 
-import space from 'sentry/styles/space';
+import {space} from 'sentry/styles/space';
 import SettingsNavigationGroup from 'sentry/views/settings/components/settingsNavigationGroup';
-import {NavigationProps, NavigationSection} from 'sentry/views/settings/types';
+import type {NavigationProps, NavigationSection} from 'sentry/views/settings/types';
 
 type DefaultProps = {
   /**

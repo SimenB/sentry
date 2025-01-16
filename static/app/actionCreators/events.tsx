@@ -1,23 +1,43 @@
-import {LocationDescriptor} from 'history';
+import type {LocationDescriptor} from 'history';
 import pick from 'lodash/pick';
 
-import {Client, ResponseMeta} from 'sentry/api';
+import {addErrorMessage} from 'sentry/actionCreators/indicator';
+import type {ApiResult, Client, ResponseMeta} from 'sentry/api';
 import {canIncludePreviousPeriod} from 'sentry/components/charts/utils';
-import {
-  DateString,
+import {t} from 'sentry/locale';
+import type {DateString} from 'sentry/types/core';
+import type {IssueAttachment} from 'sentry/types/group';
+import type {
   EventsStats,
   MultiSeriesEventsStats,
   OrganizationSummary,
-} from 'sentry/types';
-import {LocationQuery} from 'sentry/utils/discover/eventView';
-import {getPeriod} from 'sentry/utils/getPeriod';
+} from 'sentry/types/organization';
+import type {LocationQuery} from 'sentry/utils/discover/eventView';
+import type {DiscoverDatasets} from 'sentry/utils/discover/types';
+import {getPeriod} from 'sentry/utils/duration/getPeriod';
 import {PERFORMANCE_URL_PARAM} from 'sentry/utils/performance/constants';
-import {QueryBatching} from 'sentry/utils/performance/contexts/genericQueryBatcher';
+import type {QueryBatching} from 'sentry/utils/performance/contexts/genericQueryBatcher';
+import type {
+  ApiQueryKey,
+  UseApiQueryOptions,
+  UseMutationOptions,
+} from 'sentry/utils/queryClient';
+import {
+  getApiQueryData,
+  setApiQueryData,
+  useApiQuery,
+  useMutation,
+  useQueryClient,
+} from 'sentry/utils/queryClient';
+import type RequestError from 'sentry/utils/requestError/requestError';
+import useApi from 'sentry/utils/useApi';
+import useOrganization from 'sentry/utils/useOrganization';
 
 type Options = {
   organization: OrganizationSummary;
   partial: boolean;
   comparisonDelta?: number;
+  dataset?: DiscoverDatasets;
   end?: DateString;
   environment?: Readonly<string[]>;
   excludeOther?: boolean;
@@ -31,14 +51,17 @@ type Options = {
   project?: Readonly<number[]>;
   query?: string;
   queryBatching?: QueryBatching;
-  queryExtras?: Record<string, string>;
+  queryExtras?: Record<string, string | boolean | number>;
   referrer?: string;
   start?: DateString;
   team?: Readonly<string | string[]>;
   topEvents?: number;
+  useRpc?: boolean;
   withoutZerofill?: boolean;
   yAxis?: string | string[];
 };
+
+export type EventsStatsOptions<T extends boolean> = {includeAllArgs?: T} & Options;
 
 /**
  * Make requests to `events-stats` endpoint
@@ -86,7 +109,9 @@ export const doEventsRequest = <IncludeAllArgsType extends boolean = false>(
     queryExtras,
     excludeOther,
     includeAllArgs,
-  }: {includeAllArgs?: IncludeAllArgsType} & Options
+    dataset,
+    useRpc,
+  }: EventsStatsOptions<IncludeAllArgsType>
 ): IncludeAllArgsType extends true
   ? Promise<
       [EventsStats | MultiSeriesEventsStats, string | undefined, ResponseMeta | undefined]
@@ -113,6 +138,8 @@ export const doEventsRequest = <IncludeAllArgsType extends boolean = false>(
       withoutZerofill: withoutZerofill ? '1' : undefined,
       referrer: referrer ? referrer : 'api.organization-event-stats',
       excludeOther: excludeOther ? '1' : undefined,
+      dataset,
+      useRpc: useRpc ? '1' : undefined,
     }).filter(([, value]) => typeof value !== 'undefined')
   );
 
@@ -140,6 +167,9 @@ export const doEventsRequest = <IncludeAllArgsType extends boolean = false>(
 export type EventQuery = {
   field: string[];
   query: string;
+  cursor?: string;
+  dataset?: DiscoverDatasets;
+  discoverSavedQueryId?: string;
   environment?: string[];
   equation?: string[];
   noPagination?: boolean;
@@ -148,6 +178,7 @@ export type EventQuery = {
   referrer?: string;
   sort?: string | string[];
   team?: string | string[];
+  useRpc?: '1';
 };
 
 export type TagSegment = {
@@ -171,13 +202,14 @@ export function fetchTagFacets(
   api: Client,
   orgSlug: string,
   query: EventQuery
-): Promise<Tag[]> {
-  const urlParams = pick(query, Object.values(PERFORMANCE_URL_PARAM));
+): Promise<ApiResult<Tag[]>> {
+  const urlParams = pick(query, [...Object.values(PERFORMANCE_URL_PARAM), 'cursor']);
 
   const queryOption = {...urlParams, query: query.query};
 
   return api.requestPromise(`/organizations/${orgSlug}/events-facets/`, {
     query: queryOption,
+    includeAllArgs: true,
   });
 }
 
@@ -203,3 +235,115 @@ export function fetchTotalCount(
     })
     .then((res: Response) => res.count);
 }
+
+type FetchEventAttachmentParameters = {
+  eventId: string;
+  orgSlug: string;
+  projectSlug: string | undefined;
+};
+
+type FetchEventAttachmentResponse = IssueAttachment[];
+
+export const makeFetchEventAttachmentsQueryKey = ({
+  orgSlug,
+  projectSlug,
+  eventId,
+}: FetchEventAttachmentParameters): ApiQueryKey => [
+  `/projects/${orgSlug}/${projectSlug}/events/${eventId}/attachments/`,
+];
+
+export const useFetchEventAttachments = (
+  params: FetchEventAttachmentParameters,
+  options: Partial<UseApiQueryOptions<FetchEventAttachmentResponse>> = {}
+) => {
+  const organization = useOrganization();
+  return useApiQuery<FetchEventAttachmentResponse>(
+    makeFetchEventAttachmentsQueryKey(params),
+    {
+      staleTime: Infinity,
+      ...options,
+      enabled:
+        (organization.features.includes('event-attachments') ?? false) &&
+        options.enabled !== false &&
+        params.projectSlug !== undefined,
+    }
+  );
+};
+
+type DeleteEventAttachmentVariables = {
+  attachmentId: string;
+  eventId: string;
+  orgSlug: string;
+  projectSlug: string;
+};
+
+type DeleteEventAttachmentResponse = unknown;
+
+type DeleteEventAttachmentContext = {
+  previous?: IssueAttachment[];
+};
+
+type DeleteEventAttachmentOptions = UseMutationOptions<
+  DeleteEventAttachmentResponse,
+  RequestError,
+  DeleteEventAttachmentVariables,
+  DeleteEventAttachmentContext
+>;
+
+export const useDeleteEventAttachmentOptimistic = (
+  incomingOptions: Partial<DeleteEventAttachmentOptions> = {}
+) => {
+  const api = useApi({persistInFlight: true});
+  const queryClient = useQueryClient();
+
+  const options: DeleteEventAttachmentOptions = {
+    ...incomingOptions,
+    mutationFn: ({orgSlug, projectSlug, eventId, attachmentId}) => {
+      return api.requestPromise(
+        `/projects/${orgSlug}/${projectSlug}/events/${eventId}/attachments/${attachmentId}/`,
+        {method: 'DELETE'}
+      );
+    },
+    onMutate: async variables => {
+      await queryClient.cancelQueries({
+        queryKey: makeFetchEventAttachmentsQueryKey(variables),
+      });
+
+      const previous = getApiQueryData<FetchEventAttachmentResponse>(
+        queryClient,
+        makeFetchEventAttachmentsQueryKey(variables)
+      );
+
+      setApiQueryData<FetchEventAttachmentResponse>(
+        queryClient,
+        makeFetchEventAttachmentsQueryKey(variables),
+        oldData => {
+          if (!Array.isArray(oldData)) {
+            return oldData;
+          }
+
+          return oldData.filter(attachment => attachment?.id !== variables.attachmentId);
+        }
+      );
+
+      incomingOptions.onMutate?.(variables);
+
+      return {previous};
+    },
+    onError: (error, variables, context) => {
+      addErrorMessage(t('An error occurred while deleting the attachment'));
+
+      if (context) {
+        setApiQueryData(
+          queryClient,
+          makeFetchEventAttachmentsQueryKey(variables),
+          context.previous
+        );
+      }
+
+      incomingOptions.onError?.(error, variables, context);
+    },
+  };
+
+  return useMutation(options);
+};

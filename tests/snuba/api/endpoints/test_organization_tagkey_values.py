@@ -1,13 +1,17 @@
-from datetime import timedelta
+import datetime
+import uuid
+from datetime import timedelta, timezone
+from functools import cached_property
 
 from django.urls import reverse
-from exam import fixture
 
+from sentry.replays.testutils import mock_replay
 from sentry.search.events.constants import RELEASE_ALIAS, SEMVER_ALIAS
-from sentry.testutils import APITestCase, SnubaTestCase
-from sentry.testutils.helpers.datetime import before_now, iso_format
-from sentry.testutils.silo import region_silo_test
+from sentry.snuba.dataset import Dataset
+from sentry.testutils.cases import APITestCase, ReplaysSnubaTestCase, SnubaTestCase
+from sentry.testutils.helpers.datetime import before_now
 from sentry.utils.samples import load_data
+from tests.sentry.issues.test_utils import OccurrenceTestMixin
 
 
 class OrganizationTagKeyTestCase(APITestCase, SnubaTestCase):
@@ -30,38 +34,33 @@ class OrganizationTagKeyTestCase(APITestCase, SnubaTestCase):
         response = self.get_success_response(key, **kwargs)
         assert [(val["value"], val["count"]) for val in response.data] == expected
 
-    @fixture
+    @cached_property
     def project(self):
         return self.create_project(organization=self.org, teams=[self.team])
 
-    @fixture
-    def group(self):
-        return self.create_group(project=self.project)
 
-
-@region_silo_test
 class OrganizationTagKeyValuesTest(OrganizationTagKeyTestCase):
     def test_simple(self):
         self.store_event(
-            data={"timestamp": iso_format(self.day_ago), "tags": {"fruit": "apple"}},
+            data={"timestamp": self.day_ago.isoformat(), "tags": {"fruit": "apple"}},
             project_id=self.project.id,
         )
         self.store_event(
-            data={"timestamp": iso_format(self.min_ago), "tags": {"fruit": "orange"}},
+            data={"timestamp": self.min_ago.isoformat(), "tags": {"fruit": "orange"}},
             project_id=self.project.id,
         )
         self.store_event(
-            data={"timestamp": iso_format(self.min_ago), "tags": {"some_tag": "some_value"}},
+            data={"timestamp": self.min_ago.isoformat(), "tags": {"some_tag": "some_value"}},
             project_id=self.project.id,
         )
         self.store_event(
-            data={"timestamp": iso_format(self.min_ago), "tags": {"fruit": "orange"}},
+            data={"timestamp": self.min_ago.isoformat(), "tags": {"fruit": "orange"}},
             project_id=self.project.id,
         )
 
         url = reverse(
             "sentry-api-0-organization-tagkey-values",
-            kwargs={"organization_slug": self.org.slug, "key": "fruit"},
+            kwargs={"organization_id_or_slug": self.org.slug, "key": "fruit"},
         )
         response = self.client.get(url, format="json")
         assert response.status_code == 200, response.content
@@ -70,12 +69,12 @@ class OrganizationTagKeyValuesTest(OrganizationTagKeyTestCase):
     def test_env(self):
         env2 = self.create_environment()
         self.store_event(
-            data={"timestamp": iso_format(self.day_ago), "tags": {"fruit": "apple"}},
+            data={"timestamp": self.day_ago.isoformat(), "tags": {"fruit": "apple"}},
             project_id=self.project.id,
         )
         self.store_event(
             data={
-                "timestamp": iso_format(self.day_ago),
+                "timestamp": self.day_ago.isoformat(),
                 "tags": {"fruit": "apple"},
                 "environment": self.environment.name,
             },
@@ -83,14 +82,14 @@ class OrganizationTagKeyValuesTest(OrganizationTagKeyTestCase):
         )
         self.store_event(
             data={
-                "timestamp": iso_format(self.day_ago),
+                "timestamp": self.day_ago.isoformat(),
                 "tags": {"fruit": "apple"},
                 "environment": env2.name,
             },
             project_id=self.project.id,
         )
         self.store_event(
-            data={"timestamp": iso_format(self.min_ago), "tags": {"fruit": "orange"}},
+            data={"timestamp": self.min_ago.isoformat(), "tags": {"fruit": "orange"}},
             project_id=self.project.id,
         )
         self.run_test(
@@ -104,7 +103,7 @@ class OrganizationTagKeyValuesTest(OrganizationTagKeyTestCase):
         for minute in range(1, 6):
             self.store_event(
                 data={
-                    "timestamp": iso_format(before_now(minutes=minute * 10)),
+                    "timestamp": before_now(minutes=minute * 10).isoformat(),
                     "tags": {"fruit": "apple"},
                     "environment": self.environment.name,
                 },
@@ -114,7 +113,7 @@ class OrganizationTagKeyValuesTest(OrganizationTagKeyTestCase):
         for minute in range(1, 5):
             self.store_event(
                 data={
-                    "timestamp": iso_format(self.min_ago),
+                    "timestamp": self.min_ago.isoformat(),
                     "tags": {"fruit": "orange"},
                     "environment": self.environment.name,
                 },
@@ -137,7 +136,7 @@ class OrganizationTagKeyValuesTest(OrganizationTagKeyTestCase):
 
     def test_invalid_sort_field(self):
         self.store_event(
-            data={"timestamp": iso_format(self.day_ago), "tags": {"fruit": "apple"}},
+            data={"timestamp": self.day_ago.isoformat(), "tags": {"fruit": "apple"}},
             project_id=self.project.id,
         )
         response = self.get_response("fruit", sort="invalid_field")
@@ -168,23 +167,23 @@ class OrganizationTagKeyValuesTest(OrganizationTagKeyTestCase):
 
     def test_snuba_column(self):
         self.store_event(
-            data={"timestamp": iso_format(self.day_ago), "user": {"email": "foo@example.com"}},
+            data={"timestamp": self.day_ago.isoformat(), "user": {"email": "foo@example.com"}},
             project_id=self.project.id,
         )
         self.store_event(
-            data={"timestamp": iso_format(self.min_ago), "user": {"email": "bar@example.com"}},
+            data={"timestamp": self.min_ago.isoformat(), "user": {"email": "bar@example.com"}},
             project_id=self.project.id,
         )
         self.store_event(
             data={
-                "timestamp": iso_format(before_now(seconds=10)),
+                "timestamp": before_now(seconds=10).isoformat(),
                 "user": {"email": "baz@example.com"},
             },
             project_id=self.project.id,
         )
         self.store_event(
             data={
-                "timestamp": iso_format(before_now(seconds=10)),
+                "timestamp": before_now(seconds=10).isoformat(),
                 "user": {"email": "baz@example.com"},
             },
             project_id=self.project.id,
@@ -196,20 +195,20 @@ class OrganizationTagKeyValuesTest(OrganizationTagKeyTestCase):
 
     def test_release(self):
         self.store_event(
-            data={"timestamp": iso_format(self.day_ago), "tags": {"sentry:release": "3.1.2"}},
+            data={"timestamp": self.day_ago.isoformat(), "tags": {"sentry:release": "3.1.2"}},
             project_id=self.project.id,
         )
         self.store_event(
-            data={"timestamp": iso_format(self.min_ago), "tags": {"sentry:release": "4.1.2"}},
+            data={"timestamp": self.min_ago.isoformat(), "tags": {"sentry:release": "4.1.2"}},
             project_id=self.project.id,
         )
         self.store_event(
-            data={"timestamp": iso_format(self.day_ago), "tags": {"sentry:release": "3.1.2"}},
+            data={"timestamp": self.day_ago.isoformat(), "tags": {"sentry:release": "3.1.2"}},
             project_id=self.project.id,
         )
         self.store_event(
             data={
-                "timestamp": iso_format(before_now(seconds=10)),
+                "timestamp": before_now(seconds=10).isoformat(),
                 "tags": {"sentry:release": "5.1.2"},
             },
             project_id=self.project.id,
@@ -218,19 +217,19 @@ class OrganizationTagKeyValuesTest(OrganizationTagKeyTestCase):
 
     def test_user_tag(self):
         self.store_event(
-            data={"tags": {"sentry:user": "1"}, "timestamp": iso_format(self.day_ago)},
+            data={"tags": {"sentry:user": "1"}, "timestamp": self.day_ago.isoformat()},
             project_id=self.project.id,
         )
         self.store_event(
-            data={"tags": {"sentry:user": "2"}, "timestamp": iso_format(self.min_ago)},
+            data={"tags": {"sentry:user": "2"}, "timestamp": self.min_ago.isoformat()},
             project_id=self.project.id,
         )
         self.store_event(
-            data={"tags": {"sentry:user": "1"}, "timestamp": iso_format(self.day_ago)},
+            data={"tags": {"sentry:user": "1"}, "timestamp": self.day_ago.isoformat()},
             project_id=self.project.id,
         )
         self.store_event(
-            data={"tags": {"sentry:user": "3"}, "timestamp": iso_format(before_now(seconds=10))},
+            data={"tags": {"sentry:user": "3"}, "timestamp": before_now(seconds=10).isoformat()},
             project_id=self.project.id,
         )
         self.run_test("user", expected=[("3", 1), ("2", 1), ("1", 2)])
@@ -238,17 +237,17 @@ class OrganizationTagKeyValuesTest(OrganizationTagKeyTestCase):
     def test_project_id(self):
         other_org = self.create_organization()
         other_project = self.create_project(organization=other_org)
-        self.store_event(data={"timestamp": iso_format(self.day_ago)}, project_id=self.project.id)
-        self.store_event(data={"timestamp": iso_format(self.min_ago)}, project_id=self.project.id)
-        self.store_event(data={"timestamp": iso_format(self.day_ago)}, project_id=other_project.id)
+        self.store_event(data={"timestamp": self.day_ago.isoformat()}, project_id=self.project.id)
+        self.store_event(data={"timestamp": self.min_ago.isoformat()}, project_id=self.project.id)
+        self.store_event(data={"timestamp": self.day_ago.isoformat()}, project_id=other_project.id)
         self.run_test("project.id", expected=[])
 
     def test_project_name(self):
         other_org = self.create_organization()
         other_project = self.create_project(organization=other_org)
-        self.store_event(data={"timestamp": iso_format(self.day_ago)}, project_id=self.project.id)
-        self.store_event(data={"timestamp": iso_format(self.min_ago)}, project_id=self.project.id)
-        self.store_event(data={"timestamp": iso_format(self.day_ago)}, project_id=other_project.id)
+        self.store_event(data={"timestamp": self.day_ago.isoformat()}, project_id=self.project.id)
+        self.store_event(data={"timestamp": self.min_ago.isoformat()}, project_id=self.project.id)
+        self.store_event(data={"timestamp": self.day_ago.isoformat()}, project_id=other_project.id)
 
         # without the includeTransactions flag, this will continue to search the Events Dataset for the
         # projects tag, which doesn't exist here
@@ -264,9 +263,9 @@ class OrganizationTagKeyValuesTest(OrganizationTagKeyTestCase):
         other_project = self.create_project(organization=self.org, name="test1")
         other_project2 = self.create_project(organization=self.org, name="test2")
         self.create_project(organization=self.org, name="test3")
-        self.store_event(data={"timestamp": iso_format(self.day_ago)}, project_id=other_project.id)
-        self.store_event(data={"timestamp": iso_format(self.min_ago)}, project_id=other_project.id)
-        self.store_event(data={"timestamp": iso_format(self.day_ago)}, project_id=other_project2.id)
+        self.store_event(data={"timestamp": self.day_ago.isoformat()}, project_id=other_project.id)
+        self.store_event(data={"timestamp": self.min_ago.isoformat()}, project_id=other_project.id)
+        self.store_event(data={"timestamp": self.day_ago.isoformat()}, project_id=other_project2.id)
 
         # without the includeTransactions flag, this will continue to search the Events Dataset for the
         # projects tag, which doesn't exist here
@@ -292,7 +291,7 @@ class OrganizationTagKeyValuesTest(OrganizationTagKeyTestCase):
     def test_array_column(self):
         for i in range(3):
             self.store_event(
-                data={"timestamp": iso_format(self.day_ago)}, project_id=self.project.id
+                data={"timestamp": self.day_ago.isoformat()}, project_id=self.project.id
             )
         self.run_test("error.type", expected=[])
 
@@ -301,7 +300,7 @@ class OrganizationTagKeyValuesTest(OrganizationTagKeyTestCase):
 
     def test_disabled_tag_keys(self):
         self.store_event(
-            data={"timestamp": iso_format(self.day_ago), "tags": {"fruit": "apple"}},
+            data={"timestamp": self.day_ago.isoformat(), "tags": {"fruit": "apple"}},
             project_id=self.project.id,
         )
         self.run_test("id", expected=[])
@@ -314,7 +313,7 @@ class OrganizationTagKeyValuesTest(OrganizationTagKeyTestCase):
     def test_group_id_tag(self):
         self.store_event(
             data={
-                "timestamp": iso_format(self.day_ago - timedelta(minutes=1)),
+                "timestamp": (self.day_ago - timedelta(minutes=1)).isoformat(),
                 "tags": {"group_id": "not-a-group-id-but-a-string"},
             },
             project_id=self.project.id,
@@ -324,21 +323,21 @@ class OrganizationTagKeyValuesTest(OrganizationTagKeyTestCase):
     def test_user_display(self):
         self.store_event(
             data={
-                "timestamp": iso_format(self.day_ago - timedelta(minutes=1)),
+                "timestamp": (self.day_ago - timedelta(minutes=1)).isoformat(),
                 "user": {"email": "foo@example.com", "ip_address": "127.0.0.1"},
             },
             project_id=self.project.id,
         )
         self.store_event(
             data={
-                "timestamp": iso_format(self.day_ago - timedelta(minutes=2)),
+                "timestamp": (self.day_ago - timedelta(minutes=2)).isoformat(),
                 "user": {"username": "bazz", "ip_address": "192.168.0.1"},
             },
             project_id=self.project.id,
         )
         self.store_event(
             data={
-                "timestamp": iso_format(self.day_ago - timedelta(minutes=3)),
+                "timestamp": (self.day_ago - timedelta(minutes=3)).isoformat(),
                 "user": {"ip_address": "127.0.0.1"},
             },
             project_id=self.project.id,
@@ -476,8 +475,8 @@ class TransactionTagKeyValues(OrganizationTagKeyTestCase):
         self.transaction.update(
             {
                 "transaction": "/city_by_code/",
-                "timestamp": iso_format(before_now(seconds=30)),
-                "start_timestamp": iso_format(before_now(seconds=35)),
+                "timestamp": before_now(seconds=30).isoformat(),
+                "start_timestamp": before_now(seconds=35).isoformat(),
             }
         )
         self.transaction["contexts"]["trace"].update(
@@ -551,7 +550,390 @@ class TransactionTagKeyValues(OrganizationTagKeyTestCase):
         self.run_test("trace.span", expected=[])
         self.run_test("trace", expected=[])
         self.run_test("event_id", expected=[])
+        self.run_test("profile_id", expected=[])
+        self.run_test("replay_id", expected=[])
 
     def test_boolean_fields(self):
         self.run_test("error.handled", expected=[("true", None), ("false", None)])
         self.run_test("error.unhandled", expected=[("true", None), ("false", None)])
+        self.run_test("error.main_thread", expected=[("true", None), ("false", None)])
+        self.run_test("stack.in_app", expected=[("true", None), ("false", None)])
+
+
+class ReplayOrganizationTagKeyValuesTest(OrganizationTagKeyTestCase, ReplaysSnubaTestCase):
+    def setUp(self):
+        super().setUp()
+        replay1_id = uuid.uuid4().hex
+        replay2_id = uuid.uuid4().hex
+        replay3_id = uuid.uuid4().hex
+        date_now = datetime.datetime.now(tz=timezone.utc).replace(
+            hour=0, minute=0, second=0, microsecond=0
+        )
+        self.r1_seq1_timestamp = date_now - datetime.timedelta(seconds=22)
+        self.r1_seq2_timestamp = date_now - datetime.timedelta(seconds=15)
+        self.r2_seq1_timestamp = date_now - datetime.timedelta(seconds=10)
+        self.r3_seq1_timestamp = date_now - datetime.timedelta(seconds=10)
+        self.r4_seq1_timestamp = date_now - datetime.timedelta(seconds=5)
+        self.store_replays(
+            mock_replay(
+                self.r1_seq1_timestamp,
+                self.project.id,
+                replay1_id,
+                urls=[
+                    "http://localhost:3000/",
+                    "http://localhost:3000/test123",
+                    "http://localhost:3000/test123",
+                ],
+                tags={"fruit": "orange"},
+                segment_id=0,
+            ),
+        )
+        self.store_replays(
+            mock_replay(
+                self.r1_seq2_timestamp,
+                self.project.id,
+                replay1_id,
+                urls=[
+                    "http://localhost:3000/",
+                    "http://localhost:3000/login",
+                    "http://localhost:3000/test456",
+                ],
+                tags={"fruit": "orange"},
+                segment_id=1,
+            ),
+        )
+        self.store_replays(
+            mock_replay(
+                self.r2_seq1_timestamp,
+                self.project.id,
+                replay2_id,
+                urls=[
+                    "http://localhost:3000/",
+                    "http://localhost:3000/otherpage",
+                ],
+                tags={"fruit": "orange"},
+            )
+        )
+        self.store_replays(
+            mock_replay(
+                self.r3_seq1_timestamp,
+                self.project.id,
+                replay3_id,
+                urls=[
+                    "http://localhost:3000/",
+                    "http://localhost:3000/login",
+                ],
+                tags={"fruit": "apple", "drink": "water"},
+            )
+        )
+        self.store_replays(
+            mock_replay(
+                self.r4_seq1_timestamp,
+                self.project.id,
+                uuid.uuid4().hex,
+                platform="python",
+                replay_type="error",
+                environment="development",
+                dist="def456",
+                release="1.0.0",
+                user_id="456",
+                user_name="test",
+                user_email="test@bacon.com",
+                ipv4="10.0.0.1",
+                browser_name="Firefox",
+                browser_version="99.0.0",
+                sdk_name="sentry.javascript.browser",
+                sdk_version="5.15.5",
+                os_name="SuseLinux",
+                os_version="1.0.0",
+                device_name="Microwave",
+                device_brand="Samsung",
+                device_model="123",
+                device_family="Sears",
+            )
+        )
+
+    def get_replays_response(self, key, kwargs):
+        qs_params = kwargs.get("qs_params", {})
+        qs_params["includeReplays"] = "1"
+        kwargs["qs_params"] = qs_params
+        response = self.get_success_response(key, **kwargs)
+        return sorted(response.data, key=lambda x: x["value"])
+
+    def run_test(self, key, expected, **kwargs):
+        # all tests here require that we search in replays so make that the default here
+
+        res = self.get_replays_response(key, kwargs)
+
+        assert [(val["value"], val["count"]) for val in res] == expected
+
+    def run_test_and_check_seen(self, key, expected, **kwargs):
+        res = self.get_replays_response(key, kwargs)
+        assert [
+            (val["value"], val["count"], val["firstSeen"], val["lastSeen"]) for val in res
+        ] == expected
+
+    def test_replays_tags_values(self):
+        # 3 orange values were mocked, but we only return 2 because two of them
+        # were in the same replay
+        self.run_test("fruit", expected=[("apple", 1), ("orange", 2)])
+        self.run_test("replay_type", expected=[("error", 1), ("session", 3)])
+        self.run_test("environment", expected=[("development", 1), ("production", 3)])
+        self.run_test("dist", expected=[("abc123", 3), ("def456", 1)])
+
+        self.run_test("platform", expected=[("javascript", 3), ("python", 1)])
+        self.run_test("release", expected=[("1.0.0", 1), ("version@1.3", 3)])
+        self.run_test("user.id", expected=[("123", 3), ("456", 1)])
+        self.run_test("user.username", expected=[("test", 1), ("username", 3)])
+        self.run_test("user.email", expected=[("test@bacon.com", 1), ("username@example.com", 3)])
+        self.run_test("user.ip", expected=[("10.0.0.1", 1), ("127.0.0.1", 3)])
+        self.run_test(
+            "sdk.name", expected=[("sentry.javascript.browser", 1), ("sentry.javascript.react", 3)]
+        )
+        self.run_test("sdk.version", expected=[("5.15.5", 1), ("6.18.1", 3)])
+        self.run_test("os.name", expected=[("SuseLinux", 1), ("iOS", 3)])
+        self.run_test("os.version", expected=[("1.0.0", 1), ("16.2", 3)])
+        self.run_test(
+            "browser.name",
+            expected=[("Chrome", 3), ("Firefox", 1)],
+        )
+        self.run_test("browser.version", expected=[("103.0.38", 3), ("99.0.0", 1)])
+        self.run_test("device.name", expected=[("Microwave", 1), ("iPhone 13 Pro", 3)])
+        self.run_test("device.brand", expected=[("Apple", 3), ("Samsung", 1)])
+        self.run_test("device.family", expected=[("Sears", 1), ("iPhone", 3)])
+
+        # check firstSeen/lastSeen for some of the tags
+        self.run_test_and_check_seen(
+            "device.model_id",
+            expected=[
+                ("123", 1, self.r4_seq1_timestamp, self.r4_seq1_timestamp),
+                ("13 Pro", 3, self.r1_seq1_timestamp, self.r3_seq1_timestamp),
+            ],
+        )
+
+        self.run_test_and_check_seen(
+            "url",
+            expected=[
+                ("http://localhost:3000/", 3, self.r1_seq1_timestamp, self.r3_seq1_timestamp),
+                ("http://localhost:3000/login", 2, self.r1_seq2_timestamp, self.r3_seq1_timestamp),
+                (
+                    "http://localhost:3000/otherpage",
+                    1,
+                    self.r2_seq1_timestamp,
+                    self.r2_seq1_timestamp,
+                ),
+                (
+                    "http://localhost:3000/test123",
+                    1,
+                    self.r1_seq1_timestamp,
+                    self.r1_seq1_timestamp,
+                ),
+                (
+                    "http://localhost:3000/test456",
+                    1,
+                    self.r1_seq2_timestamp,
+                    self.r1_seq2_timestamp,
+                ),
+            ],
+        )
+
+    def test_replays_tags_values_query(self):
+        # requests may pass in a "query" param to filter the return values with a substring
+
+        # custom tag
+        self.run_test("fruit", expected=[("orange", 2)], qs_params={"query": "ora"})
+        self.run_test("fruit", expected=[("apple", 1), ("orange", 2)], qs_params={"query": "e"})
+        self.run_test("fruit", expected=[], qs_params={"query": "zz"})
+
+        # column aliases
+        self.run_test("replay_type", expected=[("error", 1)], qs_params={"query": "err"})
+        self.run_test(
+            "environment",
+            expected=[("development", 1), ("production", 3)],
+            qs_params={"query": "d"},
+        )
+        self.run_test("dist", expected=[], qs_params={"query": "z"})
+
+        self.run_test("platform", expected=[("python", 1)], qs_params={"query": "o"})
+        self.run_test(
+            "release", expected=[("1.0.0", 1), ("version@1.3", 3)], qs_params={"query": "1."}
+        )
+        self.run_test("user.id", expected=[("123", 3)], qs_params={"query": "1"})
+        self.run_test("user.username", expected=[("username", 3)], qs_params={"query": "a"})
+        self.run_test(
+            "user.email",
+            expected=[("test@bacon.com", 1), ("username@example.com", 3)],
+            qs_params={"query": "@"},
+        )
+        self.run_test("user.ip", expected=[], qs_params={"query": "!^"})
+        self.run_test("sdk.name", expected=[], qs_params={"query": "sentry-javascript"})
+        self.run_test(
+            "sdk.version", expected=[("5.15.5", 1), ("6.18.1", 3)], qs_params={"query": ".1"}
+        )
+        self.run_test("os.name", expected=[("SuseLinux", 1)], qs_params={"query": "Linux"})
+        self.run_test("os.version", expected=[("1.0.0", 1)], qs_params={"query": "0.0"})
+        self.run_test("browser.name", expected=[("Chrome", 3)], qs_params={"query": "Chrome"})
+        self.run_test("browser.version", expected=[("99.0.0", 1)], qs_params={"query": "99"})
+        self.run_test(
+            "device.name",
+            expected=[("Microwave", 1), ("iPhone 13 Pro", 3)],
+            qs_params={"query": "i"},
+        )
+        self.run_test("device.brand", expected=[("Samsung", 1)], qs_params={"query": "S"})
+        self.run_test("device.family", expected=[], qs_params={"query": "$$$"})
+
+    def test_replays_tags_values_query_case_insensitive(self):
+        # custom tag
+        self.run_test("fruit", expected=[("orange", 2)], qs_params={"query": "OrA"})
+
+        # some column aliases
+        self.run_test("browser.name", expected=[("Chrome", 3)], qs_params={"query": "chrom"})
+        self.run_test(
+            "environment",
+            expected=[("development", 1), ("production", 3)],
+            qs_params={"query": "D"},
+        )
+
+    def test_schema(self):
+
+        res = self.get_replays_response("fruit", {})
+
+        assert sorted(res[0].keys()) == [
+            "count",
+            "firstSeen",
+            "key",
+            "lastSeen",
+            "name",
+            "value",
+        ]
+
+
+class DatasetParamOrganizationTagKeyValuesTest(OrganizationTagKeyTestCase, OccurrenceTestMixin):
+    def setUp(self):
+        super().setUp()
+
+    def run_dataset_test(self, key, expected, dataset: Dataset, **kwargs):
+        # all tests here require that we search in transactions so make that the default here
+        qs_params = kwargs.get("qs_params", {})
+        qs_params["dataset"] = dataset.value
+        kwargs["qs_params"] = qs_params
+        super().run_test(key, expected, **kwargs)
+
+    def test_dataset_events(self):
+        self.store_event(
+            data={
+                "event_id": "a" * 32,
+                "tags": {"berry": "raspberry"},
+                "timestamp": self.min_ago.isoformat(),
+            },
+            project_id=self.project.id,
+        )
+        self.store_event(
+            data={
+                "event_id": "b" * 32,
+                "tags": {"berry": "blueberry"},
+                "timestamp": self.min_ago.isoformat(),
+            },
+            project_id=self.project.id,
+        )
+        self.store_event(
+            data={
+                "event_id": "c" * 32,
+                "tags": {"berry": "banana"},
+                "timestamp": self.min_ago.isoformat(),
+            },
+            project_id=self.project.id,
+        )
+        self.store_event(
+            data={
+                "event_id": "d" * 32,
+                "tags": {"berry": "banana"},
+                "timestamp": self.min_ago.isoformat(),
+            },
+            project_id=self.project.id,
+        )
+        # Should appear in Events and Discover datasets, but not IssuePlatform
+        self.run_dataset_test(
+            "berry",
+            expected=[("raspberry", 1), ("blueberry", 1), ("banana", 2)],
+            dataset=Dataset.Events,
+        )
+        self.run_dataset_test(
+            "berry",
+            expected=[("raspberry", 1), ("blueberry", 1), ("banana", 2)],
+            dataset=Dataset.Discover,
+        )
+        self.run_dataset_test(
+            "berry",
+            expected=[],
+            dataset=Dataset.IssuePlatform,
+        )
+
+    def test_dataset_issue_platform(self):
+        self.store_event(
+            data={
+                "event_id": "a" * 32,
+                "tags": {"stone_fruit": "peach"},
+                "timestamp": self.min_ago.isoformat(),
+            },
+            project_id=self.project.id,
+        )
+        self.process_occurrence(
+            event_id=uuid.uuid4().hex,
+            project_id=self.project.id,
+            event_data={
+                "title": "some problem",
+                "platform": "python",
+                "tags": {"stone_fruit": "cherry"},
+                "timestamp": self.min_ago.isoformat(),
+                "received": self.min_ago.isoformat(),
+            },
+        )
+
+        # (stone_fruit: cherry) should appear in IssuePlatform dataset,
+        # but (sonte_fruit: peach) should not
+        self.run_dataset_test(
+            "stone_fruit",
+            expected=[("cherry", 1)],
+            dataset=Dataset.IssuePlatform,
+        )
+        self.run_dataset_test(
+            "stone_fruit",
+            expected=[("peach", 1)],
+            dataset=Dataset.Events,
+        )
+        self.run_dataset_test(
+            "stone_fruit",
+            expected=[("peach", 1)],
+            dataset=Dataset.Discover,
+        )
+
+    def test_dataset_discover(self):
+        event = load_data("transaction")
+        event["tags"].extend([["fake_fruit", "tomato"]])
+        event.update(
+            {
+                "transaction": "example_transaction",
+                "event_id": uuid.uuid4().hex,
+                "start_timestamp": self.min_ago.isoformat(),
+                "timestamp": self.min_ago.isoformat(),
+            }
+        )
+        event["measurements"]["lcp"]["value"] = 5000
+        self.store_event(data=event, project_id=self.project.id)
+
+        self.run_dataset_test(
+            "fake_fruit",
+            expected=[],
+            dataset=Dataset.IssuePlatform,
+        )
+        self.run_dataset_test(
+            "fake_fruit",
+            expected=[],
+            dataset=Dataset.Events,
+        )
+        self.run_dataset_test(
+            "fake_fruit",
+            expected=[("tomato", 1)],
+            dataset=Dataset.Discover,
+        )

@@ -1,14 +1,16 @@
+import {ProjectFixture} from 'sentry-fixture/project';
+import {ReplayListFixture} from 'sentry-fixture/replayList';
+
 import {initializeOrg} from 'sentry-test/initializeOrg';
-import {act, render, screen, userEvent, waitFor} from 'sentry-test/reactTestingLibrary';
+import {render, screen, waitFor} from 'sentry-test/reactTestingLibrary';
+import {resetMockDate, setMockDate} from 'sentry-test/utils';
 
 import ProjectsStore from 'sentry/stores/projectsStore';
 import {
   SPAN_OP_BREAKDOWN_FIELDS,
   SPAN_OP_RELATIVE_BREAKDOWN_FIELD,
 } from 'sentry/utils/discover/fields';
-import {OrganizationContext} from 'sentry/views/organizationContext';
 import TransactionReplays from 'sentry/views/performance/transactionSummary/transactionReplays';
-import {RouteContext} from 'sentry/views/routeContext';
 
 type InitializeOrgProps = {
   location?: {
@@ -25,23 +27,18 @@ jest.mock('sentry/utils/useMedia', () => ({
   default: jest.fn(() => true),
 }));
 
-const mockUrl = '/organizations/org-slug/replays/';
+const mockEventsUrl = '/organizations/org-slug/events/';
+const mockReplaysUrl = '/organizations/org-slug/replays/';
 
-let mockRouterContext: {
-  childContextTypes?: any;
-  context?: any;
-} = {};
-
-const getComponent = ({
+const renderComponent = ({
   location,
-  organizationProps = {features: ['performance-view', 'session-replay-ui']},
-}: InitializeOrgProps) => {
-  const {router, organization, routerContext} = initializeOrg({
+  organizationProps = {features: ['performance-view', 'session-replay']},
+}: InitializeOrgProps = {}) => {
+  const {organization, projects, router} = initializeOrg({
     organization: {
       ...organizationProps,
     },
-    project: TestStubs.Project(),
-    projects: [TestStubs.Project()],
+    projects: [ProjectFixture()],
     router: {
       routes: [
         {path: '/'},
@@ -50,38 +47,20 @@ const getComponent = ({
       ],
       location: {
         pathname: '/organizations/org-slug/replays/',
+        ...location,
         query: {
           project: '1',
-          transaction: 'transaction',
+          transaction: 'Settings Page',
+          ...location?.query,
         },
-        ...location,
       },
     },
   });
 
   ProjectsStore.init();
-  ProjectsStore.loadInitialData(organization.projects);
+  ProjectsStore.loadInitialData(projects);
 
-  mockRouterContext = routerContext;
-
-  return (
-    <OrganizationContext.Provider value={organization}>
-      <RouteContext.Provider
-        value={{
-          router,
-          location: router.location,
-          params: router.params,
-          routes: router.routes,
-        }}
-      >
-        <TransactionReplays location={router.location} organization={organization} />
-      </RouteContext.Provider>
-    </OrganizationContext.Provider>
-  );
-};
-
-const renderComponent = (componentProps: InitializeOrgProps = {}) => {
-  return render(getComponent(componentProps), {context: mockRouterContext});
+  return render(<TransactionReplays />, {router, organization});
 };
 
 describe('TransactionReplays', () => {
@@ -89,8 +68,20 @@ describe('TransactionReplays', () => {
   let replaysMockApi: jest.Mock<any, any>;
   beforeEach(() => {
     MockApiClient.addMockResponse({
+      method: 'GET',
+      url: `/organizations/org-slug/sdk-updates/`,
+      body: [],
+    });
+    MockApiClient.addMockResponse({
       url: '/organizations/org-slug/events-has-measurements/',
       body: {measurements: false},
+    });
+    MockApiClient.addMockResponse({
+      url: '/organizations/org-slug/replay-count/',
+      body: {
+        data: [],
+      },
+      statusCode: 200,
     });
     eventsMockApi = MockApiClient.addMockResponse({
       url: '/organizations/org-slug/events/',
@@ -110,31 +101,32 @@ describe('TransactionReplays', () => {
 
   afterEach(() => {
     MockApiClient.clearMockResponses();
+    resetMockDate();
   });
 
   it('should query the events endpoint for replayIds of a transaction', async () => {
     renderComponent();
 
     await waitFor(() => {
-      expect(eventsMockApi).toHaveBeenCalledTimes(1);
       expect(eventsMockApi).toHaveBeenCalledWith(
         '/organizations/org-slug/events/',
         expect.objectContaining({
           query: expect.objectContaining({
+            cursor: undefined,
             statsPeriod: '14d',
             project: ['1'],
             environment: [],
             field: expect.arrayContaining([
               'replayId',
               'count()',
-              ...SPAN_OP_BREAKDOWN_FIELDS,
-              SPAN_OP_RELATIVE_BREAKDOWN_FIELD,
               'transaction.duration',
               'trace',
               'timestamp',
+              ...SPAN_OP_BREAKDOWN_FIELDS,
+              SPAN_OP_RELATIVE_BREAKDOWN_FIELD,
             ]),
             per_page: 50,
-            query: 'transaction:transaction !replayId:""',
+            query: 'event.type:transaction transaction:"Settings Page" !replayId:""',
           }),
         })
       );
@@ -142,18 +134,18 @@ describe('TransactionReplays', () => {
   });
 
   it('should snapshot empty state', async () => {
-    MockApiClient.addMockResponse({
-      url: mockUrl,
+    const mockApi = MockApiClient.addMockResponse({
+      url: mockReplaysUrl,
       body: {
         data: [],
       },
       statusCode: 200,
     });
 
-    const {container} = renderComponent();
+    renderComponent();
 
     await waitFor(() => {
-      expect(container).toSnapshot();
+      expect(mockApi).toHaveBeenCalledTimes(1);
     });
   });
 
@@ -162,13 +154,13 @@ describe('TransactionReplays', () => {
 
     await waitFor(() => {
       expect(replaysMockApi).toHaveBeenCalledTimes(1);
-      expect(screen.getByText('There are no items to display')).toBeInTheDocument();
     });
+    expect(screen.getByText('There are no items to display')).toBeInTheDocument();
   });
 
   it('should show loading indicator when loading replays', async () => {
     const mockApi = MockApiClient.addMockResponse({
-      url: mockUrl,
+      url: mockEventsUrl,
       statusCode: 200,
       body: {
         data: [],
@@ -185,57 +177,47 @@ describe('TransactionReplays', () => {
 
   it('should show a list of replays and have the correct values', async () => {
     const mockApi = MockApiClient.addMockResponse({
-      url: mockUrl,
+      url: mockReplaysUrl,
       statusCode: 200,
       body: {
         data: [
           {
-            countErrors: 1,
+            ...ReplayListFixture()[0],
+            count_errors: 1,
             duration: 52346,
-            finishedAt: '2022-09-15T06:54:00+00:00',
+            finished_at: new Date('2022-09-15T06:54:00+00:00'),
             id: '346789a703f6454384f1de473b8b9fcc',
-            projectId: '2',
-            startedAt: '2022-09-15T06:50:03+00:00',
+            started_at: new Date('2022-09-15T06:50:00+00:00'),
             urls: [
               'https://dev.getsentry.net:7999/organizations/sentry-emerging-tech/replays/',
               '/organizations/sentry-emerging-tech/replays/?project=2',
             ],
-            user: {
-              id: '147086',
-              name: '',
-              email: '',
-              ip_address: '127.0.0.1',
-              displayName: 'testDisplayName',
-            },
           },
           {
-            countErrors: 4,
+            ...ReplayListFixture()[0],
+            count_errors: 4,
             duration: 400,
-            finishedAt: '2022-09-21T21:40:38+00:00',
+            finished_at: new Date('2022-09-21T21:40:38+00:00'),
             id: 'b05dae9b6be54d21a4d5ad9f8f02b780',
-            projectId: '2',
-            startedAt: '2022-09-21T21:30:44+00:00',
+            started_at: new Date('2022-09-21T21:30:44+00:00'),
             urls: [
               'https://dev.getsentry.net:7999/organizations/sentry-emerging-tech/replays/?project=2&statsPeriod=24h',
               '/organizations/sentry-emerging-tech/issues/',
               '/organizations/sentry-emerging-tech/issues/?project=2',
             ],
-            user: {
-              id: '147086',
-              name: '',
-              email: '',
-              ip_address: '127.0.0.1',
-              displayName: 'testDisplayName',
-            },
           },
-        ],
+        ].map(hydrated => ({
+          ...hydrated,
+          started_at: hydrated.started_at.toString(),
+          finished_at: hydrated.finished_at.toString(),
+        })),
       },
     });
 
     // Mock the system date to be 2022-09-28
-    jest.useFakeTimers().setSystemTime(new Date('Sep 28, 2022 11:29:13 PM UTC'));
+    setMockDate(new Date('Sep 28, 2022 11:29:13 PM UTC'));
 
-    renderComponent();
+    renderComponent({location: {query: {query: 'test'}}});
 
     await waitFor(() => {
       expect(mockApi).toHaveBeenCalledTimes(1);
@@ -244,23 +226,25 @@ describe('TransactionReplays', () => {
     // Expect the table to have 2 rows
     expect(screen.getAllByText('testDisplayName')).toHaveLength(2);
 
+    const expectedQuery =
+      'project=1&query=test&referrer=%2Forganizations%2F%3AorgId%2Fperformance%2Fsummary%2Freplays%2F&statsPeriod=14d&yAxis=count%28%29';
     // Expect the first row to have the correct href
     expect(screen.getAllByRole('link', {name: 'testDisplayName'})[0]).toHaveAttribute(
       'href',
-      '/organizations/org-slug/replays/project-slug:346789a703f6454384f1de473b8b9fcc/?referrer=%2Forganizations%2F%3AorgId%2Fperformance%2Fsummary%2Freplays%2F'
+      `/organizations/org-slug/replays/346789a703f6454384f1de473b8b9fcc/?${expectedQuery}`
     );
 
     // Expect the second row to have the correct href
     expect(screen.getAllByRole('link', {name: 'testDisplayName'})[1]).toHaveAttribute(
       'href',
-      '/organizations/org-slug/replays/project-slug:b05dae9b6be54d21a4d5ad9f8f02b780/?referrer=%2Forganizations%2F%3AorgId%2Fperformance%2Fsummary%2Freplays%2F'
+      `/organizations/org-slug/replays/b05dae9b6be54d21a4d5ad9f8f02b780/?${expectedQuery}`
     );
 
     // Expect the first row to have the correct duration
-    expect(screen.getByText('14hr 32min 26s')).toBeInTheDocument();
+    expect(screen.getByText('14:32:26')).toBeInTheDocument();
 
     // Expect the second row to have the correct duration
-    expect(screen.getByText('6min 40s')).toBeInTheDocument();
+    expect(screen.getByText('06:40')).toBeInTheDocument();
 
     // Expect the first row to have the correct errors
     expect(screen.getAllByTestId('replay-table-count-errors')[0]).toHaveTextContent('1');
@@ -273,184 +257,6 @@ describe('TransactionReplays', () => {
 
     // Expect the second row to have the correct date
     expect(screen.getByText('7 days ago')).toBeInTheDocument();
-  });
-
-  it('should be able to click the `Start Time` column and request data sorted by startedAt query', async () => {
-    const {rerender} = renderComponent();
-
-    await waitFor(() => {
-      expect(replaysMockApi).toHaveBeenCalledWith(
-        mockUrl,
-        expect.objectContaining({
-          query: expect.objectContaining({
-            sort: '-startedAt',
-          }),
-        })
-      );
-    });
-
-    // Click on the start time header and expect the sort to be startedAt
-    userEvent.click(screen.getByRole('columnheader', {name: 'Start Time'}));
-
-    expect(mockRouterContext.context.router.push).toHaveBeenCalledWith({
-      pathname: '/organizations/org-slug/replays/',
-      query: {
-        sort: 'startedAt',
-        project: '1',
-        transaction: 'transaction',
-      },
-    });
-
-    // Need to simulate a rerender to get the new sort
-    act(() => {
-      rerender(
-        getComponent({
-          location: {
-            query: {
-              sort: 'startedAt',
-              project: '1',
-              transaction: 'transaction',
-            },
-          },
-        })
-      );
-    });
-
-    await waitFor(() => {
-      expect(replaysMockApi).toHaveBeenCalledTimes(2);
-      expect(replaysMockApi).toHaveBeenCalledWith(
-        mockUrl,
-        expect.objectContaining({
-          query: expect.objectContaining({
-            sort: 'startedAt',
-          }),
-        })
-      );
-    });
-  });
-
-  it('should be able to click the `Duration` column and request data sorted by duration query', async () => {
-    const mockApi = MockApiClient.addMockResponse({
-      url: mockUrl,
-      body: {
-        data: [],
-      },
-      statusCode: 200,
-    });
-
-    const {rerender} = renderComponent();
-
-    await waitFor(() => {
-      expect(mockApi).toHaveBeenCalledWith(
-        mockUrl,
-        expect.objectContaining({
-          query: expect.objectContaining({
-            sort: '-startedAt',
-          }),
-        })
-      );
-    });
-
-    // Click on the duration header and expect the sort to be duration
-    userEvent.click(screen.getByRole('columnheader', {name: 'Duration'}));
-
-    expect(mockRouterContext.context.router.push).toHaveBeenCalledWith({
-      pathname: '/organizations/org-slug/replays/',
-      query: {
-        sort: 'duration',
-        project: '1',
-        transaction: 'transaction',
-      },
-    });
-
-    // Need to simulate a rerender to get the new sort
-    act(() => {
-      rerender(
-        getComponent({
-          location: {
-            query: {
-              sort: 'duration',
-              project: '1',
-              transaction: 'transaction',
-            },
-          },
-        })
-      );
-    });
-
-    await waitFor(() => {
-      expect(mockApi).toHaveBeenCalledTimes(2);
-      expect(mockApi).toHaveBeenCalledWith(
-        mockUrl,
-        expect.objectContaining({
-          query: expect.objectContaining({
-            sort: 'duration',
-          }),
-        })
-      );
-    });
-  });
-
-  it('should be able to click the `Errors` column and request data sorted by countErrors query', async () => {
-    const mockApi = MockApiClient.addMockResponse({
-      url: mockUrl,
-      body: {
-        data: [],
-      },
-      statusCode: 200,
-    });
-
-    const {rerender} = renderComponent();
-
-    await waitFor(() => {
-      expect(mockApi).toHaveBeenCalledWith(
-        mockUrl,
-        expect.objectContaining({
-          query: expect.objectContaining({
-            sort: '-startedAt',
-          }),
-        })
-      );
-    });
-
-    // Click on the errors header and expect the sort to be countErrors
-    userEvent.click(screen.getByRole('columnheader', {name: 'Errors'}));
-
-    expect(mockRouterContext.context.router.push).toHaveBeenCalledWith({
-      pathname: '/organizations/org-slug/replays/',
-      query: {
-        sort: 'countErrors',
-        project: '1',
-        transaction: 'transaction',
-      },
-    });
-
-    // Need to simulate a rerender to get the new sort
-    act(() => {
-      rerender(
-        getComponent({
-          location: {
-            query: {
-              sort: 'countErrors',
-              project: '1',
-              transaction: 'transaction',
-            },
-          },
-        })
-      );
-    });
-
-    await waitFor(() => {
-      expect(mockApi).toHaveBeenCalledTimes(2);
-      expect(mockApi).toHaveBeenCalledWith(
-        mockUrl,
-        expect.objectContaining({
-          query: expect.objectContaining({
-            sort: 'countErrors',
-          }),
-        })
-      );
-    });
   });
 
   it("should show a message when the organization doesn't have access to the replay feature", async () => {

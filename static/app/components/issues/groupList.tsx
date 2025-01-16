@@ -1,17 +1,17 @@
 import {Component, Fragment} from 'react';
-// eslint-disable-next-line no-restricted-imports
-import {browserHistory, withRouter, WithRouterProps} from 'react-router';
+import styled from '@emotion/styled';
 import isEqual from 'lodash/isEqual';
 import omit from 'lodash/omit';
 import * as qs from 'query-string';
 
 import {fetchOrgMembers, indexMembersByProject} from 'sentry/actionCreators/members';
-import {Client} from 'sentry/api';
+import type {Client} from 'sentry/api';
 import EmptyStateWarning from 'sentry/components/emptyStateWarning';
 import LoadingError from 'sentry/components/loadingError';
-import LoadingIndicator from 'sentry/components/loadingIndicator';
 import Pagination from 'sentry/components/pagination';
-import {Panel, PanelBody} from 'sentry/components/panels';
+import Panel from 'sentry/components/panels/panel';
+import PanelBody from 'sentry/components/panels/panelBody';
+import Placeholder from 'sentry/components/placeholder';
 import {parseSearch, Token} from 'sentry/components/searchSyntax/parser';
 import {treeResultLocator} from 'sentry/components/searchSyntax/utils';
 import StreamGroup, {
@@ -19,9 +19,13 @@ import StreamGroup, {
 } from 'sentry/components/stream/group';
 import {t} from 'sentry/locale';
 import GroupStore from 'sentry/stores/groupStore';
-import {Group} from 'sentry/types';
+import {space} from 'sentry/styles/space';
+import type {Group} from 'sentry/types/group';
+import type {WithRouterProps} from 'sentry/types/legacyReactRouter';
 import withApi from 'sentry/utils/withApi';
-import {TimePeriodType} from 'sentry/views/alerts/rules/metric/details/constants';
+// eslint-disable-next-line no-restricted-imports
+import withSentryRouter from 'sentry/utils/withSentryRouter';
+import type {TimePeriodType} from 'sentry/views/alerts/rules/metric/details/constants';
 import {RELATED_ISSUES_BOOLEAN_QUERY_ERROR} from 'sentry/views/alerts/rules/metric/details/relatedIssuesNotAvailable';
 
 import GroupListHeader from './groupListHeader';
@@ -33,14 +37,28 @@ const defaultProps = {
   useFilteredStats: true,
   useTintRow: true,
   narrowGroups: false,
+  withColumns: ['graph', 'event', 'users', 'assignee'] satisfies GroupListColumn[],
 };
+
+export type GroupListColumn =
+  | 'graph'
+  | 'event'
+  | 'users'
+  | 'priority'
+  | 'assignee'
+  | 'lastTriggered'
+  | 'lastSeen'
+  | 'firstSeen';
 
 type Props = WithRouterProps & {
   api: Client;
-  endpointPath: string;
-  orgId: string;
-  query: string;
+  orgSlug: string;
+  queryParams: Record<string, number | string | string[] | undefined | null>;
   customStatsPeriod?: TimePeriodType;
+  /**
+   * Defaults to `/organizations/${orgSlug}/issues/`
+   */
+  endpointPath?: string;
   onFetchSuccess?: (
     groupListState: State,
     onCursor: (
@@ -50,10 +68,16 @@ type Props = WithRouterProps & {
       pageDiff: number
     ) => void
   ) => void;
+  /**
+   * Use `query` within `queryParams` for passing the parameter to the endpoint
+   */
+  query?: string;
   queryFilterDescription?: string;
-  queryParams?: Record<string, number | string | string[] | undefined | null>;
   renderEmptyMessage?: () => React.ReactNode;
   renderErrorMessage?: (props: {detail: string}, retry: () => void) => React.ReactNode;
+  // where the group list is rendered
+  source?: string;
+  withColumns?: GroupListColumn[];
 } & Partial<typeof defaultProps>;
 
 type State = {
@@ -93,7 +117,7 @@ class GroupList extends Component<Props, State> {
     const ignoredQueryParams = ['end'];
 
     if (
-      prevProps.orgId !== this.props.orgId ||
+      prevProps.orgSlug !== this.props.orgSlug ||
       prevProps.endpointPath !== this.props.endpointPath ||
       prevProps.query !== this.props.query ||
       !isEqual(
@@ -114,24 +138,26 @@ class GroupList extends Component<Props, State> {
 
   fetchData = async () => {
     GroupStore.loadInitialData([]);
-    const {api, orgId, queryParams} = this.props;
+    const {api, orgSlug, queryParams} = this.props;
     api.clear();
 
     this.setState({loading: true, error: false, errorData: null});
 
-    fetchOrgMembers(api, orgId).then(members => {
+    fetchOrgMembers(api, orgSlug).then(members => {
       this.setState({memberList: indexMembersByProject(members)});
     });
 
     const endpoint = this.getGroupListEndpoint();
 
-    const parsedQuery = parseSearch((queryParams ?? this.getQueryParams()).query);
+    const parsedQuery = parseSearch(
+      (queryParams ?? this.getQueryParams()).query as string
+    );
     const hasLogicBoolean = parsedQuery
       ? treeResultLocator<boolean>({
           tree: parsedQuery,
           noResultValue: false,
           visitorTest: ({token, returnResult}) => {
-            return token.type === Token.LogicBoolean ? returnResult(true) : null;
+            return token.type === Token.LOGIC_BOOLEAN ? returnResult(true) : null;
           },
         })
       : false;
@@ -171,8 +197,8 @@ class GroupList extends Component<Props, State> {
   };
 
   getGroupListEndpoint() {
-    const {orgId, endpointPath, queryParams} = this.props;
-    const path = endpointPath ?? `/organizations/${orgId}/issues/`;
+    const {orgSlug, endpointPath, queryParams} = this.props;
+    const path = endpointPath ?? `/organizations/${orgSlug}/issues/`;
     const queryParameters = queryParams ?? this.getQueryParams();
 
     return `${path}?${qs.stringify(queryParameters)}`;
@@ -189,12 +215,12 @@ class GroupList extends Component<Props, State> {
     return queryParams;
   }
 
-  handleCursorChange(
+  handleCursorChange = (
     cursor: string | undefined,
     path: string,
     query: Record<string, any>,
     pageDiff: number
-  ) {
+  ) => {
     const queryPageInt = parseInt(query.page, 10);
     let nextPage: number | undefined = isNaN(queryPageInt)
       ? pageDiff
@@ -208,11 +234,11 @@ class GroupList extends Component<Props, State> {
       nextPage = undefined;
     }
 
-    browserHistory.push({
+    this.props.router.push({
       pathname: path,
       query: {...query, cursor, page: nextPage},
     });
-  }
+  };
 
   onGroupChange() {
     const groups = GroupStore.getAllItems() as Group[];
@@ -225,6 +251,7 @@ class GroupList extends Component<Props, State> {
     const {
       canSelectGroups,
       withChart,
+      withColumns,
       renderEmptyMessage,
       renderErrorMessage,
       withPagination,
@@ -234,12 +261,10 @@ class GroupList extends Component<Props, State> {
       queryParams,
       queryFilterDescription,
       narrowGroups,
+      source,
+      query,
     } = this.props;
     const {loading, error, errorData, groups, memberList, pageLinks} = this.state;
-
-    if (loading) {
-      return <LoadingIndicator />;
-    }
 
     if (error) {
       if (typeof renderErrorMessage === 'function' && errorData) {
@@ -249,7 +274,7 @@ class GroupList extends Component<Props, State> {
       return <LoadingError onRetry={this.fetchData} />;
     }
 
-    if (groups.length === 0) {
+    if (!loading && groups.length === 0) {
       if (typeof renderEmptyMessage === 'function') {
         return renderEmptyMessage();
       }
@@ -272,29 +297,46 @@ class GroupList extends Component<Props, State> {
     return (
       <Fragment>
         <Panel>
-          <GroupListHeader withChart={!!withChart} narrowGroups={narrowGroups} />
+          <GroupListHeader
+            withChart={!!withChart}
+            narrowGroups={narrowGroups}
+            withColumns={withColumns}
+          />
           <PanelBody>
-            {groups.map(({id, project}) => {
-              const members = memberList?.hasOwnProperty(project.slug)
-                ? memberList[project.slug]
-                : undefined;
+            {loading
+              ? [
+                  ...new Array(
+                    typeof queryParams?.limit === 'number' ? queryParams?.limit : 4
+                  ),
+                ].map((_, i) => (
+                  <GroupPlaceholder key={i}>
+                    <Placeholder height="3rem" />
+                  </GroupPlaceholder>
+                ))
+              : groups.map(({id, project}) => {
+                  const members = memberList?.hasOwnProperty(project.slug)
+                    ? memberList[project.slug]
+                    : undefined;
 
-              return (
-                <StreamGroup
-                  key={id}
-                  id={id}
-                  canSelect={canSelectGroups}
-                  withChart={withChart}
-                  memberList={members}
-                  useFilteredStats={useFilteredStats}
-                  useTintRow={useTintRow}
-                  customStatsPeriod={customStatsPeriod}
-                  statsPeriod={statsPeriod}
-                  queryFilterDescription={queryFilterDescription}
-                  narrowGroups={narrowGroups}
-                />
-              );
-            })}
+                  return (
+                    <StreamGroup
+                      key={id}
+                      id={id}
+                      canSelect={canSelectGroups}
+                      withChart={withChart}
+                      withColumns={withColumns}
+                      memberList={members}
+                      useFilteredStats={useFilteredStats}
+                      useTintRow={useTintRow}
+                      customStatsPeriod={customStatsPeriod}
+                      statsPeriod={statsPeriod}
+                      queryFilterDescription={queryFilterDescription}
+                      narrowGroups={narrowGroups}
+                      source={source}
+                      query={query}
+                    />
+                  );
+                })}
           </PanelBody>
         </Panel>
         {withPagination && (
@@ -307,4 +349,12 @@ class GroupList extends Component<Props, State> {
 
 export {GroupList};
 
-export default withApi(withRouter(GroupList));
+export default withApi(withSentryRouter(GroupList));
+
+const GroupPlaceholder = styled('div')`
+  padding: ${space(1)};
+
+  &:not(:last-child) {
+    border-bottom: solid 1px ${p => p.theme.innerBorder};
+  }
+`;

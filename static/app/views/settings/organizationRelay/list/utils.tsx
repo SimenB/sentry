@@ -1,4 +1,4 @@
-import {Relay, RelayActivity, RelaysByPublickey} from 'sentry/types';
+import type {Relay, RelayActivity, RelaysByPublickey} from 'sentry/types/relay';
 
 /**
  * Convert list of individual relay objects into a per-file summary grouped by publicKey
@@ -14,8 +14,8 @@ export function getRelaysByPublicKey(
       relaysByPublicKey[publicKey] = {name, description, created, activities: []};
     }
 
-    if (!relaysByPublicKey[publicKey].activities.length) {
-      relaysByPublicKey[publicKey].activities = relayActivities.filter(
+    if (!relaysByPublicKey[publicKey]!.activities.length) {
+      relaysByPublicKey[publicKey]!.activities = relayActivities.filter(
         activity => activity.publicKey === publicKey
       );
     }

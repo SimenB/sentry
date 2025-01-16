@@ -1,9 +1,9 @@
 import styled from '@emotion/styled';
 
-import {PageContent} from 'sentry/styles/organization';
-import space from 'sentry/styles/space';
+import * as Layout from 'sentry/components/layouts/thirds';
+import {space} from 'sentry/styles/space';
 
-const GettingStarted = styled(PageContent)`
+const GettingStarted = styled(Layout.Page)`
   background: ${p => p.theme.background};
   padding-top: ${space(3)};
 `;

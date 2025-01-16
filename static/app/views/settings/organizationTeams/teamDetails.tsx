@@ -1,30 +1,33 @@
 import {cloneElement, isValidElement, useState} from 'react';
-import type {RouteComponentProps} from 'react-router';
 import styled from '@emotion/styled';
 
 import {addErrorMessage, addSuccessMessage} from 'sentry/actionCreators/indicator';
 import {joinTeam} from 'sentry/actionCreators/teams';
-import Alert from 'sentry/components/alert';
-import Button from 'sentry/components/button';
+import {Alert} from 'sentry/components/alert';
+import {Button} from 'sentry/components/button';
 import IdBadge from 'sentry/components/idBadge';
 import ListLink from 'sentry/components/links/listLink';
 import LoadingIndicator from 'sentry/components/loadingIndicator';
 import NavTabs from 'sentry/components/navTabs';
 import SentryDocumentTitle from 'sentry/components/sentryDocumentTitle';
 import {t, tct} from 'sentry/locale';
-import recreateRoute from 'sentry/utils/recreateRoute';
+import type {RouteComponentProps} from 'sentry/types/legacyReactRouter';
 import useApi from 'sentry/utils/useApi';
-import useTeams from 'sentry/utils/useTeams';
+import useOrganization from 'sentry/utils/useOrganization';
+import {useParams} from 'sentry/utils/useParams';
+import {useTeamsById} from 'sentry/utils/useTeamsById';
 
 type Props = {
   children: React.ReactNode;
-} & RouteComponentProps<{orgId: string; teamId: string}, {}>;
+} & RouteComponentProps<{teamId: string}, {}>;
 
-function TeamDetails({children, ...props}: Props) {
+function TeamDetails({children}: Props) {
   const api = useApi();
+  const params = useParams();
+  const orgSlug = useOrganization().slug;
   const [requesting, setRequesting] = useState(false);
-  const {teams, initiallyLoaded} = useTeams({slugs: [props.params.teamId]});
-  const team = teams.find(({slug}) => slug === props.params.teamId);
+  const {teams, isLoading, isError} = useTeamsById({slugs: [params.teamId]});
+  const team = teams.find(({slug}) => slug === params.teamId);
 
   function handleRequestAccess(teamSlug: string) {
     setRequesting(true);
@@ -32,7 +35,7 @@ function TeamDetails({children, ...props}: Props) {
     joinTeam(
       api,
       {
-        orgId: props.params.orgId,
+        orgId: orgSlug,
         teamId: teamSlug,
       },
       {
@@ -56,13 +59,7 @@ function TeamDetails({children, ...props}: Props) {
     );
   }
 
-  // `/organizations/${orgId}/teams/${teamId}`;
-  const routePrefix = recreateRoute('', {
-    routes: props.routes,
-    params: props.params,
-    stepBack: -1,
-  });
-
+  const routePrefix = `/settings/${orgSlug}/teams/${params.teamId}/`;
   const navigationTabs = [
     <ListLink key={0} to={`${routePrefix}members/`}>
       {t('Members')}
@@ -78,25 +75,25 @@ function TeamDetails({children, ...props}: Props) {
     </ListLink>,
   ];
 
-  if (!initiallyLoaded) {
+  if (isLoading) {
     return <LoadingIndicator />;
   }
 
-  if (!team) {
+  if (!team || isError) {
     return (
       <Alert type="warning">
-        <div>{t('You do not have access to this team.')}</div>
+        <div>{t('This team does not exist, or you do not have access to it.')}</div>
       </Alert>
     );
   }
 
   return (
     <div>
-      <SentryDocumentTitle title={t('Team Details')} orgSlug={props.params.orgId} />
+      <SentryDocumentTitle title={t('Team Details')} orgSlug={orgSlug} />
       {team.hasAccess ? (
         <div>
           <h3>
-            <IdBadge hideAvatar team={team} avatarSize={36} />
+            <IdBadge hideAvatar hideOverflow={false} team={team} avatarSize={36} />
           </h3>
 
           <NavTabs underlined>{navigationTabs}</NavTabs>
@@ -106,9 +103,11 @@ function TeamDetails({children, ...props}: Props) {
       ) : (
         <Alert type="warning">
           <RequestAccessWrapper>
-            {tct('You do not have access to the [teamSlug] team.', {
-              teamSlug: <strong>{`#${team.slug}`}</strong>,
-            })}
+            <div>
+              {tct('You do not have access to the [teamSlug] team.', {
+                teamSlug: <strong>{`#${team.slug}`}</strong>,
+              })}
+            </div>
             <Button
               disabled={requesting || team.isPending}
               size="sm"

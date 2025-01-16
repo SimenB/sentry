@@ -1,11 +1,6 @@
-import {
-  render,
-  screen,
-  userEvent,
-  waitForElementToBeRemoved,
-} from 'sentry-test/reactTestingLibrary';
+import {render, screen, userEvent, waitFor} from 'sentry-test/reactTestingLibrary';
 
-import Tooltip from 'sentry/components/tooltip';
+import {Tooltip} from 'sentry/components/tooltip';
 
 describe('Tooltip', function () {
   function mockOverflow(width: number, containerWidth: number) {
@@ -30,13 +25,23 @@ describe('Tooltip', function () {
     jest.clearAllMocks();
   });
 
-  it('renders', function () {
-    const {container} = render(
+  it('renders', async function () {
+    render(
       <Tooltip delay={0} title="test">
         <span>My Button</span>
       </Tooltip>
     );
-    expect(container).toSnapshot();
+
+    await userEvent.hover(screen.getByText('My Button'));
+    expect(screen.getByText('test')).toBeInTheDocument();
+
+    // Check that the arrow svg is rendered
+    expect(document.querySelector('svg')).toBeInTheDocument();
+
+    await userEvent.unhover(screen.getByText('My Button'));
+    await waitFor(() => {
+      expect(screen.queryByText('test')).not.toBeInTheDocument();
+    });
   });
 
   it('updates title', async function () {
@@ -53,41 +58,69 @@ describe('Tooltip', function () {
       </Tooltip>
     );
 
-    userEvent.hover(screen.getByText('My Button'));
+    await userEvent.hover(screen.getByText('My Button'));
     expect(screen.getByText('bar')).toBeInTheDocument();
 
-    userEvent.unhover(screen.getByText('My Button'));
-    await waitForElementToBeRemoved(() => screen.queryByText('bar'));
+    await userEvent.unhover(screen.getByText('My Button'));
+    await waitFor(() => {
+      expect(screen.queryByText('bar')).not.toBeInTheDocument();
+    });
   });
 
-  it('disables and does not render', function () {
+  it('disables and does not render', async function () {
     render(
       <Tooltip delay={0} title="test" disabled>
         <span>My Button</span>
       </Tooltip>
     );
 
-    userEvent.hover(screen.getByText('My Button'));
+    await userEvent.hover(screen.getByText('My Button'));
 
     expect(screen.queryByText('test')).not.toBeInTheDocument();
 
-    userEvent.unhover(screen.getByText('My Button'));
+    await userEvent.unhover(screen.getByText('My Button'));
   });
 
-  it('does not render an empty tooltip', function () {
+  it('resets visibility when becoming disabled', async function () {
+    const {rerender} = render(
+      <Tooltip delay={0} title="test" disabled={false}>
+        <span>My Button</span>
+      </Tooltip>
+    );
+
+    await userEvent.hover(screen.getByText('My Button'));
+    expect(screen.getByText('test')).toBeInTheDocument();
+
+    rerender(
+      <Tooltip delay={0} title="test" disabled>
+        <span>My Button</span>
+      </Tooltip>
+    );
+    expect(screen.queryByText('test')).not.toBeInTheDocument();
+
+    // Becomes enabled again
+    rerender(
+      <Tooltip delay={0} title="test" disabled={false}>
+        <span>My Button</span>
+      </Tooltip>
+    );
+    expect(screen.queryByText('test')).not.toBeInTheDocument();
+  });
+
+  it('does not render an empty tooltip', async function () {
     render(
       <Tooltip delay={0} title="">
         <span>My Button</span>
       </Tooltip>
     );
-    userEvent.hover(screen.getByText('My Button'));
+    await userEvent.hover(screen.getByText('My Button'));
 
     expect(screen.getByText('My Button')).not.toHaveAttribute('aria-describedby');
 
-    userEvent.unhover(screen.getByText('My Button'));
+    await userEvent.unhover(screen.getByText('My Button'));
   });
 
-  it('displays a tooltip if the content overflows with showOnlyOnOverflow', function () {
+  it('displays a tooltip if the content overflows with showOnlyOnOverflow', async function () {
     // Mock this to return true because scrollWidth and clientWidth are 0 in JSDOM
     mockOverflow(100, 50);
 
@@ -97,14 +130,14 @@ describe('Tooltip', function () {
       </Tooltip>
     );
 
-    userEvent.hover(screen.getByText('This text overflows'));
+    await userEvent.hover(screen.getByText('This text overflows'));
 
     expect(screen.getByText('test')).toBeInTheDocument();
 
-    userEvent.unhover(screen.getByText('This text overflows'));
+    await userEvent.unhover(screen.getByText('This text overflows'));
   });
 
-  it('does not display a tooltip if the content does not overflow with showOnlyOnOverflow', function () {
+  it('does not display a tooltip if the content does not overflow with showOnlyOnOverflow', async function () {
     mockOverflow(50, 100);
 
     render(
@@ -113,7 +146,7 @@ describe('Tooltip', function () {
       </Tooltip>
     );
 
-    userEvent.hover(screen.getByText('This text does not overflow'));
+    await userEvent.hover(screen.getByText('This text does not overflow'));
 
     expect(screen.queryByText('test')).not.toBeInTheDocument();
   });

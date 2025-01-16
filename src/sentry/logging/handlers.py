@@ -1,23 +1,15 @@
+from __future__ import annotations
+
 import logging
+import random
 import re
+from typing import Any
 
 from django.utils.timezone import now
 from structlog import get_logger
 from structlog.processors import _json_fallback_handler
 
 from sentry.utils import json, metrics
-
-_default_encoder = json.JSONEncoder(
-    separators=(",", ":"),
-    ignore_nan=True,
-    skipkeys=False,
-    ensure_ascii=True,
-    check_circular=True,
-    allow_nan=True,
-    indent=None,
-    encoding="utf-8",
-    default=_json_fallback_handler,
-).encode
 
 # These are values that come default from logging.LogRecord.
 # They are defined here:
@@ -45,9 +37,35 @@ throwaways = frozenset(
 )
 
 
+def _json_encoder(*, skipkeys: bool = False) -> json.JSONEncoder:
+    return json.JSONEncoder(
+        separators=(",", ":"),
+        ignore_nan=True,
+        skipkeys=skipkeys,
+        ensure_ascii=True,
+        check_circular=True,
+        allow_nan=True,
+        indent=None,
+        encoding="utf-8",
+        default=_json_fallback_handler,
+    )
+
+
+_json_encoder_skipkeys = _json_encoder(skipkeys=True)
+_json_encoder_no_skipkeys = _json_encoder(skipkeys=False)
+
+
 class JSONRenderer:
     def __call__(self, logger, name, event_dict):
-        return _default_encoder(event_dict)
+        try:
+            return _json_encoder_no_skipkeys.encode(event_dict)
+        except Exception:
+            logging.warning("Failed to serialize event", exc_info=True)
+            # in Production, we want to skip non-serializable keys, rather than raise an exception
+            if logging.raiseExceptions:
+                raise
+            else:
+                return _json_encoder_skipkeys.encode(event_dict)
 
 
 class HumanRenderer:
@@ -65,7 +83,7 @@ class HumanRenderer:
 
 
 class StructLogHandler(logging.StreamHandler):
-    def get_log_kwargs(self, record, logger):
+    def get_log_kwargs(self, record: logging.LogRecord) -> dict[str, Any]:
         kwargs = {k: v for k, v in vars(record).items() if k not in throwaways and v is not None}
         kwargs.update({"level": record.levelno, "event": record.msg})
 
@@ -82,14 +100,30 @@ class StructLogHandler(logging.StreamHandler):
 
         return kwargs
 
-    def emit(self, record, logger=None):
+    def emit(self, record: logging.LogRecord, logger: logging.Logger | None = None) -> None:
         # If anyone wants to use the 'extra' kwarg to provide context within
         # structlog, we have to strip all of the default attributes from
         # a record because the RootLogger will take the 'extra' dictionary
         # and just turn them into attributes.
-        if logger is None:
-            logger = get_logger()
-        logger.log(**self.get_log_kwargs(record=record, logger=logger))
+        try:
+            if logger is None:
+                logger = get_logger()
+            logger.log(**self.get_log_kwargs(record=record))
+        except Exception:
+            if logging.raiseExceptions:
+                raise
+
+
+class GKEStructLogHandler(StructLogHandler):
+    def get_log_kwargs(self, record: logging.LogRecord) -> dict[str, Any]:
+        kwargs = super().get_log_kwargs(record)
+        kwargs.update(
+            {
+                "logging.googleapis.com/labels": {"name": kwargs.get("name", "root")},
+                "severity": record.levelname,
+            }
+        )
+        return kwargs
 
 
 class MessageContainsFilter(logging.Filter):
@@ -131,3 +165,23 @@ class MetricsLogHandler(logging.Handler):
         key = metrics_badchars_re.sub("", key)
         key = ".".join(key.split(".")[:3])
         metrics.incr(key, skip_internal=False)
+
+
+class SamplingFilter(logging.Filter):
+    """
+    A logging filter to sample logs with a fixed probability.
+
+    p      -- probability the log record is emitted. Float in range [0.0, 1.0].
+    level  -- sampling applies to log records with this level OR LOWER. Other records always pass through.
+    """
+
+    def __init__(self, p: float, level: int | None = None):
+        super().__init__()
+        assert 0.0 <= p <= 1.0
+        self.sample_rate = p
+        self.level = logging.INFO if level is None else level
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if record.levelno <= self.level:
+            return random.random() < self.sample_rate
+        return True

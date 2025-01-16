@@ -1,14 +1,14 @@
-// eslint-disable-next-line no-restricted-imports
-import {browserHistory, withRouter, WithRouterProps} from 'react-router';
 import styled from '@emotion/styled';
-import {Query} from 'history';
+import type {Query} from 'history';
 
-import Button from 'sentry/components/button';
+import {Button} from 'sentry/components/button';
 import ButtonBar from 'sentry/components/buttonBar';
 import {IconChevron} from 'sentry/icons';
 import {t} from 'sentry/locale';
-import space from 'sentry/styles/space';
+import {space} from 'sentry/styles/space';
+import {browserHistory} from 'sentry/utils/browserHistory';
 import parseLinkHeader from 'sentry/utils/parseLinkHeader';
+import {useLocation} from 'sentry/utils/useLocation';
 
 /**
  * @param cursor The string cursor value
@@ -24,14 +24,14 @@ export type CursorHandler = (
   delta: number
 ) => void;
 
-type Props = WithRouterProps & {
+type Props = {
   caption?: React.ReactNode;
   className?: string;
   disabled?: boolean;
   onCursor?: CursorHandler;
   pageLinks?: string | null;
   paginationAnalyticsEvent?: (direction: string) => void;
-  size?: 'zero' | 'xs' | 'sm';
+  size?: 'zero' | 'xs' | 'sm' | 'md';
   to?: string;
 };
 
@@ -41,9 +41,8 @@ const defaultOnCursor: CursorHandler = (cursor, path, query, _direction) =>
     query: {...query, cursor},
   });
 
-const Pagination = ({
+function Pagination({
   to,
-  location,
   className,
   onCursor = defaultOnCursor,
   paginationAnalyticsEvent,
@@ -51,7 +50,8 @@ const Pagination = ({
   size = 'sm',
   caption,
   disabled = false,
-}: Props) => {
+}: Props) {
+  const location = useLocation();
   if (!pageLinks) {
     return null;
   }
@@ -63,11 +63,11 @@ const Pagination = ({
   const nextDisabled = disabled || links.next?.results === false;
 
   return (
-    <Wrapper className={className}>
+    <Wrapper className={className} data-test-id="pagination">
       {caption && <PaginationCaption>{caption}</PaginationCaption>}
       <ButtonBar merged>
         <Button
-          icon={<IconChevron direction="left" size="sm" />}
+          icon={<IconChevron direction="left" />}
           aria-label={t('Previous')}
           size={size}
           disabled={previousDisabled}
@@ -77,7 +77,7 @@ const Pagination = ({
           }}
         />
         <Button
-          icon={<IconChevron direction="right" size="sm" />}
+          icon={<IconChevron direction="right" />}
           aria-label={t('Next')}
           size={size}
           disabled={nextDisabled}
@@ -89,7 +89,7 @@ const Pagination = ({
       </ButtonBar>
     </Wrapper>
   );
-};
+}
 
 const Wrapper = styled('div')`
   display: flex;
@@ -104,4 +104,4 @@ const PaginationCaption = styled('span')`
   margin-right: ${space(2)};
 `;
 
-export default withRouter(Pagination);
+export default Pagination;

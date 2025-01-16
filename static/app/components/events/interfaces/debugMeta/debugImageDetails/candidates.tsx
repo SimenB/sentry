@@ -4,14 +4,17 @@ import debounce from 'lodash/debounce';
 import isEqual from 'lodash/isEqual';
 import pick from 'lodash/pick';
 
-import Button from 'sentry/components/button';
+import {Button} from 'sentry/components/button';
+import type {SelectOption, SelectSection} from 'sentry/components/compactSelect';
 import ExternalLink from 'sentry/components/links/externalLink';
-import PanelTable from 'sentry/components/panels/panelTable';
+import {PanelTable} from 'sentry/components/panels/panelTable';
 import QuestionTooltip from 'sentry/components/questionTooltip';
 import {t, tct} from 'sentry/locale';
-import space from 'sentry/styles/space';
-import {Organization, Project} from 'sentry/types';
-import {CandidateDownloadStatus, Image, ImageStatus} from 'sentry/types/debugImage';
+import {space} from 'sentry/styles/space';
+import type {Image} from 'sentry/types/debugImage';
+import {CandidateDownloadStatus, ImageStatus} from 'sentry/types/debugImage';
+import type {Organization} from 'sentry/types/organization';
+import type {Project} from 'sentry/types/project';
 import {defined} from 'sentry/utils';
 
 import SearchBarAction from '../../searchBarAction';
@@ -25,11 +28,7 @@ const filterOptionCategories = {
   source: t('Source'),
 };
 
-type FilterOptions = NonNullable<
-  React.ComponentProps<typeof SearchBarAction>['filterOptions']
->;
-
-type ImageCandidates = Image['candidates'];
+type ImageCandidates = NonNullable<Image['candidates']>;
 
 type Props = {
   baseUrl: string;
@@ -44,8 +43,8 @@ type Props = {
 };
 
 type State = {
-  filterOptions: FilterOptions;
-  filterSelections: FilterOptions;
+  filterOptions: SelectSection<string>[];
+  filterSelections: SelectOption<string>[];
   filteredCandidatesByFilter: ImageCandidates;
   filteredCandidatesBySearch: ImageCandidates;
   searchTerm: string;
@@ -138,7 +137,7 @@ class Candidates extends Component<Props, State> {
     const filterOptions = this.getFilterOptions(candidates);
 
     const defaultFilterSelections = (
-      filterOptions.find(section => section.value === 'status')?.options ?? []
+      filterOptions.find(section => section.key === 'status')?.options ?? []
     ).filter(
       opt =>
         opt.value !== `status-${CandidateDownloadStatus.NOT_FOUND}` ||
@@ -157,7 +156,7 @@ class Candidates extends Component<Props, State> {
   }
 
   getFilterOptions(candidates: ImageCandidates) {
-    const filterOptions: FilterOptions = [];
+    const filterOptions: SelectSection<string>[] = [];
 
     const candidateStatus = [
       ...new Set(candidates.map(candidate => candidate.download.status)),
@@ -165,10 +164,11 @@ class Candidates extends Component<Props, State> {
 
     if (candidateStatus.length > 1) {
       filterOptions.push({
-        value: 'status',
+        key: 'status',
         label: filterOptionCategories.status,
         options: candidateStatus.map(status => ({
           value: `status-${status}`,
+          textValue: status,
           label: <Status status={status} />,
         })),
       });
@@ -180,7 +180,7 @@ class Candidates extends Component<Props, State> {
 
     if (candidateSources.length > 1) {
       filterOptions.push({
-        value: 'source',
+        key: 'source',
         label: filterOptionCategories.source,
         options: candidateSources.map(sourceName => ({
           value: `source-${sourceName}`,
@@ -189,12 +189,12 @@ class Candidates extends Component<Props, State> {
       });
     }
 
-    return filterOptions as FilterOptions;
+    return filterOptions;
   }
 
   getFilteredCandidatedByFilter(
     candidates: ImageCandidates,
-    filterOptions: FilterOptions
+    filterOptions: SelectOption<string>[]
   ) {
     const checkedStatusOptions = new Set(
       filterOptions
@@ -264,7 +264,7 @@ class Candidates extends Component<Props, State> {
     this.setState({searchTerm});
   };
 
-  handleChangeFilter = (filterSelections: FilterOptions) => {
+  handleChangeFilter = (filterSelections: SelectOption<string>[]) => {
     const {filteredCandidatesBySearch} = this.state;
     const filteredCandidatesByFilter = this.getFilteredCandidatedByFilter(
       filteredCandidatesBySearch,
@@ -391,7 +391,7 @@ const Title = styled('div')`
   gap: ${space(0.5)};
   grid-template-columns: repeat(2, max-content);
   align-items: center;
-  font-weight: 600;
+  font-weight: ${p => p.theme.fontWeightBold};
   color: ${p => p.theme.gray400};
   height: 32px;
   flex: 1;

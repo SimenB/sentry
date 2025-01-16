@@ -2,26 +2,27 @@ import {Fragment} from 'react';
 import styled from '@emotion/styled';
 
 import {addErrorMessage} from 'sentry/actionCreators/indicator';
-import {ModalRenderProps} from 'sentry/actionCreators/modal';
-import Alert from 'sentry/components/alert';
-import AsyncComponent from 'sentry/components/asyncComponent';
-import Button from 'sentry/components/button';
+import type {ModalRenderProps} from 'sentry/actionCreators/modal';
+import {Alert} from 'sentry/components/alert';
+import {Button, LinkButton} from 'sentry/components/button';
+import DeprecatedAsyncComponent from 'sentry/components/deprecatedAsyncComponent';
 import SelectField from 'sentry/components/forms/fields/selectField';
 import Form from 'sentry/components/forms/form';
 import Link from 'sentry/components/links/link';
 import LoadingIndicator from 'sentry/components/loadingIndicator';
-import {Panel, PanelBody} from 'sentry/components/panels';
+import Panel from 'sentry/components/panels/panel';
+import PanelBody from 'sentry/components/panels/panelBody';
 import {IconCheckmark, IconNot} from 'sentry/icons';
 import {t, tct} from 'sentry/locale';
-import space from 'sentry/styles/space';
-import {
+import {space} from 'sentry/styles/space';
+import type {
   CodeOwner,
   CodeownersFile,
   Integration,
-  Organization,
-  Project,
   RepositoryProjectPathConfig,
-} from 'sentry/types';
+} from 'sentry/types/integrations';
+import type {Organization} from 'sentry/types/organization';
+import type {Project} from 'sentry/types/project';
 import {getIntegrationIcon} from 'sentry/utils/integrationUtil';
 
 type Props = {
@@ -29,7 +30,7 @@ type Props = {
   project: Project;
   onSave?: (data: CodeOwner) => void;
 } & ModalRenderProps &
-  AsyncComponent['props'];
+  DeprecatedAsyncComponent['props'];
 
 type State = {
   codeMappingId: string | null;
@@ -39,9 +40,9 @@ type State = {
   errorJSON: {raw?: string} | null;
   integrations: Integration[];
   isLoading: boolean;
-} & AsyncComponent['state'];
+} & DeprecatedAsyncComponent['state'];
 
-class AddCodeOwnerModal extends AsyncComponent<Props, State> {
+class AddCodeOwnerModal extends DeprecatedAsyncComponent<Props, State> {
   getDefaultState() {
     return {
       ...super.getDefaultState(),
@@ -53,9 +54,9 @@ class AddCodeOwnerModal extends AsyncComponent<Props, State> {
     };
   }
 
-  getEndpoints(): ReturnType<AsyncComponent['getEndpoints']> {
+  getEndpoints(): ReturnType<DeprecatedAsyncComponent['getEndpoints']> {
     const {organization, project} = this.props;
-    const endpoints: ReturnType<AsyncComponent['getEndpoints']> = [
+    const endpoints: ReturnType<DeprecatedAsyncComponent['getEndpoints']> = [
       [
         'codeMappings',
         `/organizations/${organization.slug}/code-mappings/`,
@@ -113,22 +114,24 @@ class AddCodeOwnerModal extends AsyncComponent<Props, State> {
             data: postData,
           }
         );
+
         const codeMapping = codeMappings.find(
           mapping => mapping.id === codeMappingId?.toString()
         );
+
         this.handleAddedFile({...data, codeMapping});
       } catch (err) {
         if (err.responseJSON.raw) {
           this.setState({error: true, errorJSON: err.responseJSON, isLoading: false});
         } else {
-          addErrorMessage(t(Object.values(err.responseJSON).flat().join(' ')));
+          addErrorMessage(Object.values(err.responseJSON).flat().join(' '));
         }
       }
     }
   };
 
   handleAddedFile(data: CodeOwner) {
-    this.props.onSave && this.props.onSave(data);
+    this.props.onSave?.(data);
     this.props.closeModal();
   }
 
@@ -138,9 +141,9 @@ class AddCodeOwnerModal extends AsyncComponent<Props, State> {
         <SourceFileBody>
           <IconCheckmark size="md" isCircled color="green200" />
           {codeownersFile.filepath}
-          <Button size="sm" href={codeownersFile.html_url} external>
+          <LinkButton size="sm" href={codeownersFile.html_url} external>
             {t('Preview File')}
-          </Button>
+          </LinkButton>
         </SourceFileBody>
       </Panel>
     );
@@ -150,7 +153,9 @@ class AddCodeOwnerModal extends AsyncComponent<Props, State> {
     const {errorJSON, codeMappingId, codeMappings} = this.state;
     const codeMapping = codeMappings.find(mapping => mapping.id === codeMappingId);
     const {integrationId, provider} = codeMapping as RepositoryProjectPathConfig;
-    const errActors = errorJSON?.raw?.[0].split('\n').map((el, i) => <p key={i}>{el}</p>);
+    const errActors = errorJSON?.raw?.[0]!.split('\n').map((el, i) => (
+      <p key={i}>{el}</p>
+    ));
     return (
       <Alert type="error" showIcon>
         {errActors}
@@ -224,9 +229,9 @@ class AddCodeOwnerModal extends AsyncComponent<Props, State> {
                   {t('Install a GitHub or GitLab integration to use this feature.')}
                 </div>
                 <Container style={{paddingTop: space(2)}}>
-                  <Button type="button" priority="primary" size="sm" to={baseUrl}>
+                  <LinkButton priority="primary" size="sm" to={baseUrl}>
                     Setup Integration
-                  </Button>
+                  </LinkButton>
                 </Container>
               </Fragment>
             ) : (
@@ -238,14 +243,13 @@ class AddCodeOwnerModal extends AsyncComponent<Props, State> {
                 </div>
                 <IntegrationsList>
                   {integrations.map(integration => (
-                    <Button
+                    <LinkButton
                       key={integration.id}
-                      type="button"
                       to={`${baseUrl}/${integration.provider.key}/${integration.id}/?tab=codeMappings&referrer=add-codeowners`}
                     >
                       {getIntegrationIcon(integration.provider.key)}
                       <IntegrationName>{integration.name}</IntegrationName>
-                    </Button>
+                    </LinkButton>
                   ))}
                 </IntegrationsList>
               </Fragment>
@@ -263,7 +267,7 @@ class AddCodeOwnerModal extends AsyncComponent<Props, State> {
                 label={t('Apply an existing code mapping')}
                 options={codeMappings.map((cm: RepositoryProjectPathConfig) => ({
                   value: cm.id,
-                  label: cm.repoName,
+                  label: `Repo Name: ${cm.repoName}, Stack Trace Root: ${cm.stackRoot}, Source Code Root: ${cm.sourceRoot}`,
                 }))}
                 onChange={this.fetchFile}
                 required

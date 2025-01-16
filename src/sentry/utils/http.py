@@ -1,11 +1,10 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, NamedTuple
+from typing import TYPE_CHECKING, NamedTuple, TypeGuard, overload
 from urllib.parse import quote, urljoin, urlparse
 
 from django.conf import settings
 from django.http import HttpRequest
-from rest_framework.request import Request
 
 from sentry import options
 
@@ -30,14 +29,27 @@ def absolute_uri(url: str | None = None, url_prefix: str | None = None) -> str:
     return urljoin(url_prefix.rstrip("/") + "/", url.lstrip("/"))
 
 
-def create_redirect_url(request: Request, redirect_url: str) -> str:
+def query_string(request: HttpRequest) -> str:
     qs = request.META.get("QUERY_STRING") or ""
     if qs:
-        qs = "?" + qs
+        qs = f"?{qs}"
+    return qs
+
+
+def create_redirect_url(request: HttpRequest, redirect_url: str) -> str:
+    qs = query_string(request)
     return f"{redirect_url}{qs}"
 
 
-def origin_from_url(url: str) -> str:
+@overload
+def origin_from_url(url: str) -> str: ...
+
+
+@overload
+def origin_from_url(url: None) -> None: ...
+
+
+def origin_from_url(url: str | None) -> str | None:
     if not url:
         return url
     parsed = urlparse(url)
@@ -91,7 +103,7 @@ def parse_uri_match(value: str) -> ParsedUriMatch:
 
 
 def is_valid_origin(
-    origin: str, project: Project | None = None, allowed: frozenset[str] | None = None
+    origin: str | None, project: Project | None = None, allowed: frozenset[str] | None = None
 ) -> bool:
     """
     Given an ``origin`` which matches a base URI (e.g. http://example.com)
@@ -182,12 +194,12 @@ def is_valid_origin(
     return False
 
 
-def origin_from_request(request: HttpRequest) -> str:
+def origin_from_request(request: HttpRequest) -> str | None:
     """
     Returns either the Origin or Referer value from the request headers,
     ignoring "null" Origins.
     """
-    rv: str = request.META.get("HTTP_ORIGIN", "null")
+    rv: str | None = request.META.get("HTTP_ORIGIN", "null")
     # In some situation, an Origin header may be the literal value
     # "null". This means that the Origin header was stripped for
     # privacy reasons, but we should ignore this value entirely.
@@ -201,3 +213,13 @@ def origin_from_request(request: HttpRequest) -> str:
 def percent_encode(val: str) -> str:
     # see https://en.wikipedia.org/wiki/Percent-encoding
     return quote(val).replace("%7E", "~").replace("/", "%2F")
+
+
+class _HttpRequestWithSubdomain(HttpRequest):
+    """typing-only: to help with hinting for `.subdomain`"""
+
+    subdomain: str
+
+
+def is_using_customer_domain(request: HttpRequest) -> TypeGuard[_HttpRequestWithSubdomain]:
+    return bool(hasattr(request, "subdomain") and request.subdomain)

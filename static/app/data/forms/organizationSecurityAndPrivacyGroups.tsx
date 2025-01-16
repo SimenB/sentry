@@ -1,4 +1,4 @@
-import {JsonFormObject} from 'sentry/components/forms/types';
+import type {JsonFormObject} from 'sentry/components/forms/types';
 import {t} from 'sentry/locale';
 import {convertMultilineFieldValue, extractMultilineFields} from 'sentry/utils';
 import {
@@ -9,7 +9,7 @@ import {
 
 // Export route to make these forms searchable by label/help
 export const route = '/settings/:orgId/security-and-privacy/';
-export default [
+const formGroups: JsonFormObject[] = [
   {
     title: t('Security & Privacy'),
     fields: [
@@ -23,29 +23,10 @@ export default [
         ),
         confirm: {
           true: t(
-            'This will remove all members without two-factor authentication' +
-              ' from your organization. It will also send them an email to setup 2FA' +
-              ' and reinstate their access and settings. Do you want to continue?'
+            'This will remove all members without two-factor authentication from your organization. It will also send them an email to setup 2FA and reinstate their access and settings. Do you want to continue?'
           ),
           false: t(
             'Are you sure you want to allow users to access your organization without having two-factor authentication enabled?'
-          ),
-        },
-      },
-      {
-        name: 'requireEmailVerification',
-        type: 'boolean',
-        label: t('Require Email Verification'),
-        help: t('Require and enforce email address verification for all members'),
-        visible: ({features}) => features.has('required-email-verification'),
-        confirm: {
-          true: t(
-            'This will remove all members whose email addresses are not verified' +
-              ' from your organization. It will also send them an email to verify their address' +
-              ' and reinstate their access and settings. Do you want to continue?'
-          ),
-          false: t(
-            'Are you sure you want to allow users to access your organization without verifying their email address?'
           ),
         },
       },
@@ -87,16 +68,16 @@ export default [
       {
         name: 'storeCrashReports',
         type: 'select',
-        label: t('Store Native Crash Reports'),
+        label: t('Store Minidumps As Attachments'),
         help: t(
-          'Store native crash reports such as Minidumps for improved processing and download in issue details'
+          'Store minidumps as attachments for improved processing and download in issue details.'
         ),
         visible: ({features}) => features.has('event-attachments'),
         // HACK: some organization can have limit of stored crash reports a number that's not in the options (legacy reasons),
         // we therefore display it in a placeholder
         placeholder: ({value}) => formatStoreCrashReports(value),
         choices: () =>
-          getStoreCrashReportsValues(SettingScope.Organization).map(value => [
+          getStoreCrashReportsValues(SettingScope.ORGANIZATION).map(value => [
             value,
             formatStoreCrashReports(value),
           ]),
@@ -208,4 +189,6 @@ export default [
       },
     ],
   },
-] as JsonFormObject[];
+];
+
+export default formGroups;

@@ -1,38 +1,32 @@
-import {Component, Fragment} from 'react';
+import {Fragment, useState} from 'react';
 import styled from '@emotion/styled';
 
 import {addErrorMessage, addSuccessMessage} from 'sentry/actionCreators/indicator';
-import {
+import type {
   ModalRenderProps,
   TeamAccessRequestModalOptions,
 } from 'sentry/actionCreators/modal';
-import {Client} from 'sentry/api';
-import Button from 'sentry/components/button';
+import type {Client} from 'sentry/api';
+import {Button} from 'sentry/components/button';
 import {t, tct} from 'sentry/locale';
-import space from 'sentry/styles/space';
+import {space} from 'sentry/styles/space';
 import withApi from 'sentry/utils/withApi';
 
-type Props = ModalRenderProps &
-  TeamAccessRequestModalOptions & {
-    api: Client;
-    memberId: string;
-    orgId: string;
-    teamId: string;
-  };
+export interface CreateTeamAccessRequestModalProps
+  extends ModalRenderProps,
+    TeamAccessRequestModalOptions {
+  api: Client;
+  memberId: string;
+  orgId: string;
+  teamId: string;
+}
 
-type State = {
-  createBusy: boolean;
-};
+function CreateTeamAccessRequestModal(props: CreateTeamAccessRequestModalProps) {
+  const [createBusy, setCreateBusy] = useState<boolean>(false);
+  const {api, memberId, orgId, teamId, closeModal, Body, Footer} = props;
 
-class CreateTeamAccessRequest extends Component<Props, State> {
-  state: State = {
-    createBusy: false,
-  };
-
-  handleClick = async () => {
-    const {api, memberId, orgId, teamId, closeModal} = this.props;
-
-    this.setState({createBusy: true});
+  const handleClick = async () => {
+    setCreateBusy(true);
 
     try {
       await api.requestPromise(
@@ -45,37 +39,28 @@ class CreateTeamAccessRequest extends Component<Props, State> {
     } catch (err) {
       addErrorMessage(t('Unable to send team request'));
     }
-    this.setState({createBusy: false});
+    setCreateBusy(false);
     closeModal();
   };
 
-  render() {
-    const {Body, Footer, closeModal, teamId} = this.props;
-
-    return (
-      <Fragment>
-        <Body>
-          {tct(
-            'You do not have permission to add members to the #[team] team, but we will send a request to your organization admins for approval.',
-            {team: teamId}
-          )}
-        </Body>
-        <Footer>
-          <ButtonGroup>
-            <Button onClick={closeModal}>{t('Cancel')}</Button>
-            <Button
-              priority="primary"
-              onClick={this.handleClick}
-              busy={this.state.createBusy}
-              autoFocus
-            >
-              {t('Continue')}
-            </Button>
-          </ButtonGroup>
-        </Footer>
-      </Fragment>
-    );
-  }
+  return (
+    <Fragment>
+      <Body>
+        {tct(
+          'You do not have permission to add members to the #[team] team, but we will send a request to your organization admins for approval.',
+          {team: teamId}
+        )}
+      </Body>
+      <Footer>
+        <ButtonGroup>
+          <Button onClick={closeModal}>{t('Cancel')}</Button>
+          <Button priority="primary" onClick={handleClick} busy={createBusy} autoFocus>
+            {t('Continue')}
+          </Button>
+        </ButtonGroup>
+      </Footer>
+    </Fragment>
+  );
 }
 
 const ButtonGroup = styled('div')`
@@ -84,4 +69,4 @@ const ButtonGroup = styled('div')`
   gap: ${space(1)};
 `;
 
-export default withApi(CreateTeamAccessRequest);
+export default withApi(CreateTeamAccessRequestModal);

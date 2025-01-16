@@ -1,66 +1,45 @@
-import {useCallback, useEffect} from 'react';
-
-import {getCommitters} from 'sentry/actionCreators/committers';
-import {Client} from 'sentry/api';
-import CommitterStore, {getCommitterStoreKey} from 'sentry/stores/committerStore';
-import {useLegacyStore} from 'sentry/stores/useLegacyStore';
-import type {Committer, Organization, ReleaseCommitter} from 'sentry/types';
-import useApi from 'sentry/utils/useApi';
+import type {Group} from 'sentry/types/group';
+import type {Committer} from 'sentry/types/integrations';
+import type {ApiQueryKey, UseApiQueryOptions} from 'sentry/utils/queryClient';
+import {useApiQuery} from 'sentry/utils/queryClient';
+import usePrevious from 'sentry/utils/usePrevious';
 
 import useOrganization from './useOrganization';
 
-interface Props {
+interface UseCommittersProps {
   eventId: string;
   projectSlug: string;
+  group?: Group;
 }
 
-interface Result {
+interface CommittersResponse {
   committers: Committer[];
-  fetching: boolean;
-  // TODO(scttcper): Not optional on GA of release-committer-assignees flag
-  releaseCommitters?: ReleaseCommitter[];
 }
 
-async function fetchCommitters(
-  api: Client,
-  organization: Organization,
+const makeCommittersQueryKey = (
+  orgSlug: string,
   projectSlug: string,
   eventId: string
+): ApiQueryKey => [`/projects/${orgSlug}/${projectSlug}/events/${eventId}/committers/`];
+
+function useCommitters(
+  {eventId, projectSlug, group}: UseCommittersProps,
+  options: Partial<UseApiQueryOptions<CommittersResponse>> = {}
 ) {
-  const repoData = CommitterStore.get(organization.slug, projectSlug, eventId);
-
-  if ((!repoData.committers && !repoData.committersLoading) || repoData.committersError) {
-    await getCommitters(api, {
-      orgSlug: organization.slug,
-      projectSlug,
-      eventId,
-    });
-  }
-}
-
-function useCommitters({eventId, projectSlug}: Props): Result {
-  const api = useApi();
-  const organization = useOrganization();
-  const store = useLegacyStore(CommitterStore);
-
-  const loadCommitters = useCallback(async () => {
-    await fetchCommitters(api, organization!, projectSlug, eventId);
-  }, [api, organization, projectSlug, eventId]);
-
-  useEffect(() => {
-    if (!organization) {
-      return;
+  const org = useOrganization();
+  const previousGroupId = usePrevious(group?.id);
+  return useApiQuery<CommittersResponse>(
+    makeCommittersQueryKey(org.slug, projectSlug, eventId),
+    {
+      staleTime: Infinity,
+      retry: false,
+      enabled: !!eventId,
+      placeholderData: previousData => {
+        return group?.id === previousGroupId ? previousData : undefined;
+      },
+      ...options,
     }
-
-    loadCommitters();
-  }, [eventId, loadCommitters, organization]);
-
-  const key = getCommitterStoreKey(organization?.slug ?? '', projectSlug, eventId);
-  return {
-    committers: store[key]?.committers ?? [],
-    releaseCommitters: store[key]?.releaseCommitters ?? [],
-    fetching: store[key]?.committersLoading ?? false,
-  };
+  );
 }
 
 export default useCommitters;
