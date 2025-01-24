@@ -1,11 +1,12 @@
 import styled from '@emotion/styled';
 import * as Sentry from '@sentry/react';
 
-import Button from 'sentry/components/button';
+import {getLastEventId} from 'sentry/bootstrap/initializeSdk';
+import {Button, LinkButton} from 'sentry/components/button';
 import ButtonBar from 'sentry/components/buttonBar';
 import {IconFlag} from 'sentry/icons';
 import {t} from 'sentry/locale';
-import space from 'sentry/styles/space';
+import {space} from 'sentry/styles/space';
 
 type Props = {
   /**
@@ -27,19 +28,14 @@ type Props = {
   onRetry?: (e: React.MouseEvent) => void;
 };
 
-function openFeedback(e: React.MouseEvent) {
-  e.preventDefault();
-  Sentry.showReportDialog();
-}
-
 function DetailedError({className, heading, message, onRetry, hideSupportLinks}: Props) {
   const showFooter = !!onRetry || !hideSupportLinks;
-  const hasLastEvent = !!Sentry.lastEventId();
+  const lastEventId = getLastEventId();
 
   return (
     <Wrapper className={className}>
       <ErrorHeading>
-        <IconFlag size="md" color="red300" />
+        <IconFlag size="md" color="errorText" />
         {heading}
       </ErrorHeading>
 
@@ -51,17 +47,23 @@ function DetailedError({className, heading, message, onRetry, hideSupportLinks}:
 
           {!hideSupportLinks && (
             <ButtonBar gap={1.5}>
-              {hasLastEvent && (
-                <Button priority="link" onClick={openFeedback}>
+              {lastEventId && (
+                <Button
+                  priority="link"
+                  onClick={e => {
+                    e.preventDefault();
+                    Sentry.showReportDialog({eventId: lastEventId});
+                  }}
+                >
                   {t('Fill out a report')}
                 </Button>
               )}
-              <Button priority="link" external href="https://status.sentry.io/">
+              <LinkButton priority="link" external href="https://status.sentry.io/">
                 {t('Service status')}
-              </Button>
-              <Button priority="link" external href="https://sentry.io/support/">
+              </LinkButton>
+              <LinkButton priority="link" external href="https://sentry.io/support/">
                 {t('Contact support')}
-              </Button>
+              </LinkButton>
             </ButtonBar>
           )}
         </ErrorFooter>

@@ -1,7 +1,9 @@
-import {ActiveFilter, noFilter} from 'sentry/components/events/interfaces/spans/filter';
-import {EnhancedProcessedSpanType} from 'sentry/components/events/interfaces/spans/types';
+import type {ActiveFilter} from 'sentry/components/events/interfaces/spans/filter';
+import {noFilter} from 'sentry/components/events/interfaces/spans/filter';
+import type {EnhancedProcessedSpanType} from 'sentry/components/events/interfaces/spans/types';
 import WaterfallModel from 'sentry/components/events/interfaces/spans/waterfallModel';
-import {EntryType, EventTransaction} from 'sentry/types/event';
+import type {EventTransaction} from 'sentry/types/event';
+import {EntryType} from 'sentry/types/event';
 import {assert} from 'sentry/types/utils';
 
 describe('WaterfallModel', () => {
@@ -37,7 +39,7 @@ describe('WaterfallModel', () => {
               'http.status_code': '200',
             },
             data: {
-              method: 'GET',
+              'http.method': 'GET',
               type: 'fetch',
               url: '/api/0/organizations/?member=1',
             },
@@ -55,7 +57,7 @@ describe('WaterfallModel', () => {
               'http.status_code': '200',
             },
             data: {
-              method: 'GET',
+              'http.method': 'GET',
               type: 'fetch',
               url: '/api/0/internal/health/',
             },
@@ -69,9 +71,9 @@ describe('WaterfallModel', () => {
             parent_span_id: 'a453cc713e5baf9c',
             trace_id: '8cbbc19c0f54447ab702f00263262726',
             data: {
-              'Decoded Body Size': 159248,
-              'Encoded Body Size': 159248,
-              'Transfer Size': 275,
+              'http.decoded_response_content_length': 159248,
+              'http.response_content_length': 159248,
+              'http.response_transfer_size': 275,
             },
           },
           {
@@ -83,9 +85,9 @@ describe('WaterfallModel', () => {
             parent_span_id: 'a23f26b939d1a735',
             trace_id: '8cbbc19c0f54447ab702f00263262726',
             data: {
-              'Decoded Body Size': 159248,
-              'Encoded Body Size': 159248,
-              'Transfer Size': 275,
+              'http.decoded_response_content_length': 159248,
+              'http.response_content_length': 159248,
+              'http.response_transfer_size': 275,
             },
           },
           {
@@ -97,9 +99,9 @@ describe('WaterfallModel', () => {
             parent_span_id: 'a0e89ce4e0900ad5',
             trace_id: '8cbbc19c0f54447ab702f00263262726',
             data: {
-              'Decoded Body Size': 159248,
-              'Encoded Body Size': 159248,
-              'Transfer Size': 275,
+              'http.decoded_response_content_length': 159248,
+              'http.response_content_length': 159248,
+              'http.response_transfer_size': 275,
             },
           },
           {
@@ -111,9 +113,9 @@ describe('WaterfallModel', () => {
             parent_span_id: 'a0e89ce4e0900ad5',
             trace_id: '8cbbc19c0f54447ab702f00263262726',
             data: {
-              'Decoded Body Size': 159248,
-              'Encoded Body Size': 159248,
-              'Transfer Size': 275,
+              'http.decoded_response_content_length': 159248,
+              'http.response_content_length': 159248,
+              'http.response_transfer_size': 275,
             },
           },
           {
@@ -125,9 +127,9 @@ describe('WaterfallModel', () => {
             parent_span_id: 'a934857184bdf5a6',
             trace_id: '8cbbc19c0f54447ab702f00263262726',
             data: {
-              'Decoded Body Size': 159248,
-              'Encoded Body Size': 159248,
-              'Transfer Size': 275,
+              'http.decoded_response_content_length': 159248,
+              'http.response_content_length': 159248,
+              'http.response_transfer_size': 275,
             },
           },
           {
@@ -139,9 +141,9 @@ describe('WaterfallModel', () => {
             parent_span_id: 'b5795cf4ba68bbb4',
             trace_id: '8cbbc19c0f54447ab702f00263262726',
             data: {
-              'Decoded Body Size': 159248,
-              'Encoded Body Size': 159248,
-              'Transfer Size': 275,
+              'http.decoded_response_content_length': 159248,
+              'http.response_content_length': 159248,
+              'http.response_transfer_size': 275,
             },
           },
           {
@@ -153,9 +155,9 @@ describe('WaterfallModel', () => {
             parent_span_id: 'b5795cf4ba68bbb5',
             trace_id: '8cbbc19c0f54447ab702f00263262726',
             data: {
-              'Decoded Body Size': 159248,
-              'Encoded Body Size': 159248,
-              'Transfer Size': 275,
+              'http.decoded_response_content_length': 159248,
+              'http.response_content_length': 159248,
+              'http.response_transfer_size': 275,
             },
           },
           {
@@ -167,16 +169,16 @@ describe('WaterfallModel', () => {
             parent_span_id: 'b5795cf4ba68bbb6',
             trace_id: '8cbbc19c0f54447ab702f00263262726',
             data: {
-              'Decoded Body Size': 159248,
-              'Encoded Body Size': 159248,
-              'Transfer Size': 275,
+              'http.decoded_response_content_length': 159248,
+              'http.response_content_length': 159248,
+              'http.response_transfer_size': 275,
             },
           },
         ],
         type: EntryType.SPANS,
       },
     ],
-  } as EventTransaction;
+  } as unknown as EventTransaction;
 
   const fullWaterfall: EnhancedProcessedSpanType[] = [
     {
@@ -197,7 +199,7 @@ describe('WaterfallModel', () => {
       isLastSibling: true,
       continuingTreeDepths: [],
       showEmbeddedChildren: false,
-      toggleEmbeddedChildren: expect.any(Function),
+      toggleEmbeddedChildren: expect.anything(),
       fetchEmbeddedChildrenState: 'idle',
       isEmbeddedTransactionTimeAdjusted: false,
     },
@@ -213,14 +215,18 @@ describe('WaterfallModel', () => {
         trace_id: '8cbbc19c0f54447ab702f00263262726',
         status: 'ok',
         tags: {'http.status_code': '200'},
-        data: {method: 'GET', type: 'fetch', url: '/api/0/organizations/?member=1'},
+        data: {
+          'http.method': 'GET',
+          type: 'fetch',
+          url: '/api/0/organizations/?member=1',
+        },
       },
       numOfSpanChildren: 0,
       treeDepth: 1,
       isLastSibling: false,
       continuingTreeDepths: [],
       showEmbeddedChildren: false,
-      toggleEmbeddedChildren: expect.any(Function),
+      toggleEmbeddedChildren: expect.anything(),
       fetchEmbeddedChildrenState: 'idle',
       toggleNestedSpanGroup: undefined,
       toggleSiblingSpanGroup: undefined,
@@ -232,7 +238,7 @@ describe('WaterfallModel', () => {
         type: 'gap',
         start_timestamp: 1622079937.227645,
         timestamp: 1622079937.907515,
-        description: 'Missing instrumentation',
+        description: 'Missing span instrumentation',
         isOrphan: false,
       },
       numOfSpanChildren: 0,
@@ -256,14 +262,14 @@ describe('WaterfallModel', () => {
         trace_id: '8cbbc19c0f54447ab702f00263262726',
         status: 'ok',
         tags: {'http.status_code': '200'},
-        data: {method: 'GET', type: 'fetch', url: '/api/0/internal/health/'},
+        data: {'http.method': 'GET', type: 'fetch', url: '/api/0/internal/health/'},
       },
       numOfSpanChildren: 1,
       treeDepth: 1,
       isLastSibling: false,
       continuingTreeDepths: [],
       showEmbeddedChildren: false,
-      toggleEmbeddedChildren: expect.any(Function),
+      toggleEmbeddedChildren: expect.anything(),
       fetchEmbeddedChildrenState: 'idle',
       toggleNestedSpanGroup: undefined,
       toggleSiblingSpanGroup: undefined,
@@ -280,9 +286,9 @@ describe('WaterfallModel', () => {
         parent_span_id: 'a453cc713e5baf9c',
         trace_id: '8cbbc19c0f54447ab702f00263262726',
         data: {
-          'Decoded Body Size': 159248,
-          'Encoded Body Size': 159248,
-          'Transfer Size': 275,
+          'http.decoded_response_content_length': 159248,
+          'http.response_content_length': 159248,
+          'http.response_transfer_size': 275,
         },
       },
       numOfSpanChildren: 1,
@@ -290,7 +296,7 @@ describe('WaterfallModel', () => {
       isLastSibling: true,
       continuingTreeDepths: [1],
       showEmbeddedChildren: false,
-      toggleEmbeddedChildren: expect.any(Function),
+      toggleEmbeddedChildren: expect.anything(),
       fetchEmbeddedChildrenState: 'idle',
       toggleNestedSpanGroup: undefined,
       toggleSiblingSpanGroup: undefined,
@@ -307,9 +313,9 @@ describe('WaterfallModel', () => {
         parent_span_id: 'a23f26b939d1a735',
         trace_id: '8cbbc19c0f54447ab702f00263262726',
         data: {
-          'Decoded Body Size': 159248,
-          'Encoded Body Size': 159248,
-          'Transfer Size': 275,
+          'http.decoded_response_content_length': 159248,
+          'http.response_content_length': 159248,
+          'http.response_transfer_size': 275,
         },
       },
       numOfSpanChildren: 2,
@@ -317,7 +323,7 @@ describe('WaterfallModel', () => {
       isLastSibling: true,
       continuingTreeDepths: [1],
       showEmbeddedChildren: false,
-      toggleEmbeddedChildren: expect.any(Function),
+      toggleEmbeddedChildren: expect.anything(),
       fetchEmbeddedChildrenState: 'idle',
       toggleNestedSpanGroup: undefined,
       toggleSiblingSpanGroup: undefined,
@@ -334,9 +340,9 @@ describe('WaterfallModel', () => {
         parent_span_id: 'a0e89ce4e0900ad5',
         trace_id: '8cbbc19c0f54447ab702f00263262726',
         data: {
-          'Decoded Body Size': 159248,
-          'Encoded Body Size': 159248,
-          'Transfer Size': 275,
+          'http.decoded_response_content_length': 159248,
+          'http.response_content_length': 159248,
+          'http.response_transfer_size': 275,
         },
       },
       numOfSpanChildren: 0,
@@ -344,7 +350,7 @@ describe('WaterfallModel', () => {
       isLastSibling: false,
       continuingTreeDepths: [1],
       showEmbeddedChildren: false,
-      toggleEmbeddedChildren: expect.any(Function),
+      toggleEmbeddedChildren: expect.anything(),
       fetchEmbeddedChildrenState: 'idle',
       toggleNestedSpanGroup: undefined,
       toggleSiblingSpanGroup: undefined,
@@ -361,9 +367,9 @@ describe('WaterfallModel', () => {
         parent_span_id: 'a0e89ce4e0900ad5',
         trace_id: '8cbbc19c0f54447ab702f00263262726',
         data: {
-          'Decoded Body Size': 159248,
-          'Encoded Body Size': 159248,
-          'Transfer Size': 275,
+          'http.decoded_response_content_length': 159248,
+          'http.response_content_length': 159248,
+          'http.response_transfer_size': 275,
         },
       },
       numOfSpanChildren: 0,
@@ -371,7 +377,7 @@ describe('WaterfallModel', () => {
       isLastSibling: true,
       continuingTreeDepths: [1],
       showEmbeddedChildren: false,
-      toggleEmbeddedChildren: expect.any(Function),
+      toggleEmbeddedChildren: expect.anything(),
       fetchEmbeddedChildrenState: 'idle',
       toggleNestedSpanGroup: undefined,
       toggleSiblingSpanGroup: undefined,
@@ -383,7 +389,7 @@ describe('WaterfallModel', () => {
         type: 'gap',
         start_timestamp: 1622079938.20331,
         timestamp: 1622079938.31431,
-        description: 'Missing instrumentation',
+        description: 'Missing span instrumentation',
         isOrphan: false,
       },
       numOfSpanChildren: 0,
@@ -406,9 +412,9 @@ describe('WaterfallModel', () => {
         parent_span_id: 'a934857184bdf5a6',
         trace_id: '8cbbc19c0f54447ab702f00263262726',
         data: {
-          'Decoded Body Size': 159248,
-          'Encoded Body Size': 159248,
-          'Transfer Size': 275,
+          'http.decoded_response_content_length': 159248,
+          'http.response_content_length': 159248,
+          'http.response_transfer_size': 275,
         },
       },
       numOfSpanChildren: 1,
@@ -416,7 +422,7 @@ describe('WaterfallModel', () => {
       isLastSibling: true,
       continuingTreeDepths: [],
       showEmbeddedChildren: false,
-      toggleEmbeddedChildren: expect.any(Function),
+      toggleEmbeddedChildren: expect.anything(),
       fetchEmbeddedChildrenState: 'idle',
       toggleNestedSpanGroup: undefined,
       toggleSiblingSpanGroup: undefined,
@@ -433,9 +439,9 @@ describe('WaterfallModel', () => {
         parent_span_id: 'b5795cf4ba68bbb6',
         trace_id: '8cbbc19c0f54447ab702f00263262726',
         data: {
-          'Decoded Body Size': 159248,
-          'Encoded Body Size': 159248,
-          'Transfer Size': 275,
+          'http.decoded_response_content_length': 159248,
+          'http.response_content_length': 159248,
+          'http.response_transfer_size': 275,
         },
       },
       treeDepth: 2,
@@ -452,9 +458,9 @@ describe('WaterfallModel', () => {
             parent_span_id: 'b5795cf4ba68bbb4',
             trace_id: '8cbbc19c0f54447ab702f00263262726',
             data: {
-              'Decoded Body Size': 159248,
-              'Encoded Body Size': 159248,
-              'Transfer Size': 275,
+              'http.decoded_response_content_length': 159248,
+              'http.response_content_length': 159248,
+              'http.response_transfer_size': 275,
             },
           },
           numOfSpanChildren: 1,
@@ -462,7 +468,7 @@ describe('WaterfallModel', () => {
           isLastSibling: true,
           continuingTreeDepths: [],
           showEmbeddedChildren: false,
-          toggleEmbeddedChildren: expect.any(Function),
+          toggleEmbeddedChildren: expect.anything(),
           fetchEmbeddedChildrenState: 'idle',
           toggleNestedSpanGroup: undefined,
           toggleSiblingSpanGroup: undefined,
@@ -479,9 +485,9 @@ describe('WaterfallModel', () => {
             parent_span_id: 'b5795cf4ba68bbb5',
             trace_id: '8cbbc19c0f54447ab702f00263262726',
             data: {
-              'Decoded Body Size': 159248,
-              'Encoded Body Size': 159248,
-              'Transfer Size': 275,
+              'http.decoded_response_content_length': 159248,
+              'http.response_content_length': 159248,
+              'http.response_transfer_size': 275,
             },
           },
           numOfSpanChildren: 1,
@@ -489,7 +495,7 @@ describe('WaterfallModel', () => {
           isLastSibling: true,
           continuingTreeDepths: [],
           showEmbeddedChildren: false,
-          toggleEmbeddedChildren: expect.any(Function),
+          toggleEmbeddedChildren: expect.anything(),
           fetchEmbeddedChildrenState: 'idle',
           toggleNestedSpanGroup: undefined,
           toggleSiblingSpanGroup: undefined,
@@ -497,7 +503,7 @@ describe('WaterfallModel', () => {
         },
       ],
       isNestedSpanGroupExpanded: false,
-      toggleNestedSpanGroup: expect.any(Function),
+      toggleNestedSpanGroup: expect.anything(),
       toggleSiblingSpanGroup: undefined,
     },
     {
@@ -511,9 +517,9 @@ describe('WaterfallModel', () => {
         parent_span_id: 'b5795cf4ba68bbb6',
         trace_id: '8cbbc19c0f54447ab702f00263262726',
         data: {
-          'Decoded Body Size': 159248,
-          'Encoded Body Size': 159248,
-          'Transfer Size': 275,
+          'http.decoded_response_content_length': 159248,
+          'http.response_content_length': 159248,
+          'http.response_transfer_size': 275,
         },
       },
       numOfSpanChildren: 0,
@@ -521,7 +527,7 @@ describe('WaterfallModel', () => {
       isLastSibling: true,
       continuingTreeDepths: [],
       showEmbeddedChildren: false,
-      toggleEmbeddedChildren: expect.any(Function),
+      toggleEmbeddedChildren: expect.anything(),
       fetchEmbeddedChildrenState: 'idle',
       toggleNestedSpanGroup: undefined,
       toggleSiblingSpanGroup: undefined,
@@ -620,16 +626,16 @@ describe('WaterfallModel', () => {
 
   it('querySpanSearch', async () => {
     const waterfallModel = new WaterfallModel(event);
-    expect(waterfallModel.fuse).toBe(undefined);
+    expect(waterfallModel.fuse).toBeUndefined();
 
     // Fuzzy search needs to be loaded asynchronously
     await tick();
 
     // expect fuse index to be created
-    expect(waterfallModel.fuse).not.toBe(undefined);
+    expect(waterfallModel.fuse).toBeDefined();
 
-    expect(waterfallModel.filterSpans).toBe(undefined);
-    expect(waterfallModel.searchQuery).toBe(undefined);
+    expect(waterfallModel.filterSpans).toBeUndefined();
+    expect(waterfallModel.searchQuery).toBeUndefined();
 
     waterfallModel.querySpanSearch('GET /api/0/organizations/?member=1');
 
@@ -662,12 +668,12 @@ describe('WaterfallModel', () => {
 
     expected[1] = {
       type: 'out_of_view',
-      span: fullWaterfall[1].span,
+      span: fullWaterfall[1]!.span,
     } as EnhancedProcessedSpanType;
 
     expected[4] = {
       type: 'out_of_view',
-      span: fullWaterfall[4].span,
+      span: fullWaterfall[4]!.span,
     } as EnhancedProcessedSpanType;
 
     expect(spans).toEqual(expected);
@@ -680,51 +686,51 @@ describe('WaterfallModel', () => {
     });
 
     assert(
-      fullWaterfall[10].type === 'span_group_chain' &&
-        fullWaterfall[10].spanNestedGrouping
+      fullWaterfall[10]!.type === 'span_group_chain' &&
+        fullWaterfall[10]!.spanNestedGrouping
     );
     expected = [
       {
         type: 'filtered_out',
-        span: fullWaterfall[0].span,
+        span: fullWaterfall[0]!.span,
       },
       {
         type: 'out_of_view',
-        span: fullWaterfall[1].span,
+        span: fullWaterfall[1]!.span,
       },
       fullWaterfall[2],
       fullWaterfall[3],
       {
         type: 'filtered_out',
-        span: fullWaterfall[4].span,
+        span: fullWaterfall[4]!.span,
       },
       {
         type: 'filtered_out',
-        span: fullWaterfall[5].span,
+        span: fullWaterfall[5]!.span,
       },
       {
         type: 'filtered_out',
-        span: fullWaterfall[6].span,
+        span: fullWaterfall[6]!.span,
       },
       {
         type: 'filtered_out',
-        span: fullWaterfall[7].span,
+        span: fullWaterfall[7]!.span,
       },
       {
         type: 'filtered_out',
-        span: fullWaterfall[9].span,
+        span: fullWaterfall[9]!.span,
       },
       {
         type: 'filtered_out',
-        span: fullWaterfall[10].spanNestedGrouping[0].span,
+        span: fullWaterfall[10]!.spanNestedGrouping![0]!.span,
       },
       {
         type: 'filtered_out',
-        span: fullWaterfall[10].spanNestedGrouping[1].span,
+        span: fullWaterfall[10]!.spanNestedGrouping![1]!.span,
       },
       {
         type: 'filtered_out',
-        span: fullWaterfall[11].span,
+        span: fullWaterfall[11]!.span,
       },
     ] as EnhancedProcessedSpanType[];
 
@@ -740,7 +746,7 @@ describe('WaterfallModel', () => {
       viewEnd: 0.65,
     });
 
-    expected[1].type = 'filtered_out';
+    expected[1]!.type = 'filtered_out';
 
     expect(spans).toEqual(expected);
   });
@@ -808,7 +814,7 @@ describe('WaterfallModel', () => {
       ...event,
       entries: [
         {
-          data: [event.entries[0].data[0]],
+          data: [(event.entries[0] as any).data[0]],
           type: EntryType.SPANS,
         },
       ],
@@ -828,7 +834,7 @@ describe('WaterfallModel', () => {
         toggleNestedSpanGroup: undefined,
       },
       {
-        ...fullWaterfall[1],
+        ...fullWaterfall[1]!,
         isLastSibling: true,
         numOfSpanChildren: 0,
         toggleNestedSpanGroup: undefined,
@@ -842,10 +848,10 @@ describe('WaterfallModel', () => {
       entries: [
         {
           data: [
-            event.entries[0].data[0],
+            (event.entries[0] as any).data[0],
             {
-              ...event.entries[0].data[0],
-              parent_span_id: event.entries[0].data[0].span_id,
+              ...(event.entries[0] as any).data[0],
+              parent_span_id: (event.entries[0] as any).data[0].span_id,
               span_id: 'foo',
             },
           ],
@@ -869,17 +875,17 @@ describe('WaterfallModel', () => {
         toggleNestedSpanGroup: undefined,
       },
       {
-        ...fullWaterfall[1],
+        ...fullWaterfall[1]!,
         treeDepth: 1,
         isLastSibling: true,
         numOfSpanChildren: 1,
         toggleNestedSpanGroup: undefined,
       },
       {
-        ...fullWaterfall[1],
+        ...fullWaterfall[1]!,
         span: {
-          ...fullWaterfall[1].span,
-          parent_span_id: event.entries[0].data[0].span_id,
+          ...fullWaterfall[1]!.span,
+          parent_span_id: (event.entries[0] as any).data[0]!.span_id,
           span_id: 'foo',
         },
         treeDepth: 2,
@@ -896,14 +902,14 @@ describe('WaterfallModel', () => {
       entries: [
         {
           data: [
-            event.entries[0].data[0],
+            (event.entries[0] as any).data[0],
             {
-              ...event.entries[0].data[0],
-              parent_span_id: event.entries[0].data[0].span_id,
+              ...(event.entries[0] as any).data[0],
+              parent_span_id: (event.entries[0] as any).data[0]!.span_id,
               span_id: 'foo',
             },
             {
-              ...event.entries[0].data[0],
+              ...(event.entries[0] as any).data[0],
               parent_span_id: 'foo',
               span_id: 'bar',
             },
@@ -922,7 +928,7 @@ describe('WaterfallModel', () => {
     // expect 1 or more spans are grouped
     expect(spans).toHaveLength(3);
 
-    assert(fullWaterfall[1].type === 'span');
+    assert(fullWaterfall[1]!.type === 'span');
     const collapsedWaterfallExpected = [
       {
         ...fullWaterfall[0],
@@ -932,24 +938,24 @@ describe('WaterfallModel', () => {
       {
         type: 'span_group_chain',
         treeDepth: 1,
-        continuingTreeDepths: fullWaterfall[1].continuingTreeDepths,
+        continuingTreeDepths: fullWaterfall[1]!.continuingTreeDepths,
         span: {
-          ...fullWaterfall[1].span,
+          ...fullWaterfall[1]!.span,
           parent_span_id: 'foo',
           span_id: 'bar',
         },
         spanNestedGrouping: [
           {
-            ...fullWaterfall[1],
+            ...fullWaterfall[1]!,
             isLastSibling: true,
             numOfSpanChildren: 1,
             toggleNestedSpanGroup: undefined,
           },
           {
-            ...fullWaterfall[1],
+            ...fullWaterfall[1]!,
             span: {
-              ...fullWaterfall[1].span,
-              parent_span_id: event.entries[0].data[0].span_id,
+              ...fullWaterfall[1]!.span,
+              parent_span_id: (event.entries[0] as any).data[0].span_id,
               span_id: 'foo',
             },
             isLastSibling: true,
@@ -958,12 +964,12 @@ describe('WaterfallModel', () => {
           },
         ],
         isNestedSpanGroupExpanded: false,
-        toggleNestedSpanGroup: expect.any(Function),
+        toggleNestedSpanGroup: expect.anything(),
       },
       {
-        ...fullWaterfall[1],
+        ...fullWaterfall[1]!,
         span: {
-          ...fullWaterfall[1].span,
+          ...fullWaterfall[1]!.span,
           parent_span_id: 'foo',
           span_id: 'bar',
         },
@@ -977,8 +983,8 @@ describe('WaterfallModel', () => {
     expect(spans).toEqual(collapsedWaterfallExpected);
 
     // Expand span group
-    assert(spans[1].type === 'span' && spans[1].toggleNestedSpanGroup);
-    spans[1].toggleNestedSpanGroup();
+    assert(spans[1]!.type === 'span' && spans[1]!.toggleNestedSpanGroup);
+    spans[1]!.toggleNestedSpanGroup();
 
     spans = waterfallModel.getWaterfall({
       viewStart: 0,
@@ -996,17 +1002,17 @@ describe('WaterfallModel', () => {
         toggleNestedSpanGroup: undefined,
       },
       {
-        ...fullWaterfall[1],
+        ...fullWaterfall[1]!,
         isLastSibling: true,
         numOfSpanChildren: 1,
         treeDepth: 1,
-        toggleNestedSpanGroup: expect.any(Function),
+        toggleNestedSpanGroup: expect.anything(),
       },
       {
-        ...fullWaterfall[1],
+        ...fullWaterfall[1]!,
         span: {
-          ...fullWaterfall[1].span,
-          parent_span_id: event.entries[0].data[0].span_id,
+          ...fullWaterfall[1]!.span,
+          parent_span_id: (event.entries[0] as any).data[0].span_id,
           span_id: 'foo',
         },
         isLastSibling: true,
@@ -1015,9 +1021,9 @@ describe('WaterfallModel', () => {
         toggleNestedSpanGroup: undefined,
       },
       {
-        ...fullWaterfall[1],
+        ...fullWaterfall[1]!,
         span: {
-          ...fullWaterfall[1].span,
+          ...fullWaterfall[1]!.span,
           parent_span_id: 'foo',
           span_id: 'bar',
         },
@@ -1029,8 +1035,8 @@ describe('WaterfallModel', () => {
     ]);
 
     // Collapse span group
-    assert(spans[1].type === 'span' && spans[1].toggleNestedSpanGroup);
-    spans[1].toggleNestedSpanGroup();
+    assert(spans[1]!.type === 'span' && spans[1]!.toggleNestedSpanGroup);
+    spans[1]!.toggleNestedSpanGroup();
 
     spans = waterfallModel.getWaterfall({
       viewStart: 0,

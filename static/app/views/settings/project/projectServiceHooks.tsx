@@ -1,23 +1,35 @@
 import {Fragment} from 'react';
-import {RouteComponentProps} from 'react-router';
 
 import {
   addErrorMessage,
   addLoadingMessage,
   clearIndicators,
 } from 'sentry/actionCreators/indicator';
-import Button from 'sentry/components/button';
+import {LinkButton} from 'sentry/components/button';
 import EmptyMessage from 'sentry/components/emptyMessage';
-import Field from 'sentry/components/forms/field';
+import FieldGroup from 'sentry/components/forms/fieldGroup';
 import Link from 'sentry/components/links/link';
-import {Panel, PanelAlert, PanelBody, PanelHeader} from 'sentry/components/panels';
+import LoadingError from 'sentry/components/loadingError';
+import LoadingIndicator from 'sentry/components/loadingIndicator';
+import Panel from 'sentry/components/panels/panel';
+import PanelAlert from 'sentry/components/panels/panelAlert';
+import PanelBody from 'sentry/components/panels/panelBody';
+import PanelHeader from 'sentry/components/panels/panelHeader';
 import Switch from 'sentry/components/switchButton';
 import Truncate from 'sentry/components/truncate';
 import {IconAdd} from 'sentry/icons';
 import {t} from 'sentry/locale';
-import {Organization, ServiceHook} from 'sentry/types';
+import type {ServiceHook} from 'sentry/types/integrations';
+import {
+  setApiQueryData,
+  useApiQuery,
+  useMutation,
+  useQueryClient,
+} from 'sentry/utils/queryClient';
+import useApi from 'sentry/utils/useApi';
+import useOrganization from 'sentry/utils/useOrganization';
+import {useParams} from 'sentry/utils/useParams';
 import withOrganization from 'sentry/utils/withOrganization';
-import AsyncView from 'sentry/views/asyncView';
 import SettingsPageHeader from 'sentry/views/settings/components/settingsPageHeader';
 
 type RowProps = {
@@ -29,7 +41,7 @@ type RowProps = {
 
 function ServiceHookRow({orgId, projectId, hook, onToggleActive}: RowProps) {
   return (
-    <Field
+    <FieldGroup
       label={
         <Link
           data-test-id="project-service-hook"
@@ -49,42 +61,47 @@ function ServiceHookRow({orgId, projectId, hook, onToggleActive}: RowProps) {
       }
     >
       <Switch isActive={hook.status === 'active'} size="lg" toggle={onToggleActive} />
-    </Field>
+    </FieldGroup>
   );
 }
 
-type Props = RouteComponentProps<{orgId: string; projectId: string}, {}> & {
-  organization: Organization;
-};
+function ProjectServiceHooks() {
+  const organization = useOrganization();
+  const {projectId} = useParams<{projectId: string}>();
+  const api = useApi({persistInFlight: true});
+  const queryClient = useQueryClient();
 
-type State = {
-  hookList: null | ServiceHook[];
-} & AsyncView['state'];
+  const {
+    data: hookList,
+    isPending,
+    isError,
+    refetch,
+  } = useApiQuery<ServiceHook[]>([`/projects/${organization.slug}/${projectId}/hooks/`], {
+    staleTime: 0,
+  });
 
-class ProjectServiceHooks extends AsyncView<Props, State> {
-  getEndpoints(): ReturnType<AsyncView['getEndpoints']> {
-    const {orgId, projectId} = this.props.params;
-    return [['hookList', `/projects/${orgId}/${projectId}/hooks/`]];
-  }
-
-  onToggleActive = (hook: ServiceHook) => {
-    const {orgId, projectId} = this.props.params;
-    const {hookList} = this.state;
-    if (!hookList) {
-      return;
-    }
-
-    addLoadingMessage(t('Saving changes\u2026'));
-
-    this.api.request(`/projects/${orgId}/${projectId}/hooks/${hook.id}/`, {
-      method: 'PUT',
-      data: {
-        isActive: hook.status !== 'active',
-      },
-      success: data => {
-        clearIndicators();
-        this.setState({
-          hookList: hookList.map(h => {
+  const onToggleActiveMutation = useMutation({
+    mutationFn: ({hook}: {hook: ServiceHook}) => {
+      return api.requestPromise(
+        `/projects/${organization.slug}/${projectId}/hooks/${hook.id}/`,
+        {
+          method: 'PUT',
+          data: {
+            isActive: hook.status !== 'active',
+          },
+        }
+      );
+    },
+    onMutate: () => {
+      addLoadingMessage(t('Saving changes\u2026'));
+    },
+    onSuccess: data => {
+      clearIndicators();
+      setApiQueryData<ServiceHook[]>(
+        queryClient,
+        [`/projects/${organization.slug}/${projectId}/hooks/`],
+        oldHookList => {
+          return oldHookList.map(h => {
             if (h.id === data.id) {
               return {
                 ...h,
@@ -92,26 +109,32 @@ class ProjectServiceHooks extends AsyncView<Props, State> {
               };
             }
             return h;
-          }),
-        });
-      },
-      error: () => {
-        addErrorMessage(t('Unable to remove application. Please try again.'));
-      },
-    });
-  };
+          });
+        }
+      );
+    },
+    onError: () => {
+      addErrorMessage(t('Unable to remove application. Please try again.'));
+    },
+  });
 
-  renderEmpty() {
+  if (isPending) {
+    return <LoadingIndicator />;
+  }
+
+  if (isError) {
+    return <LoadingError onRetry={refetch} />;
+  }
+
+  const renderEmpty = () => {
     return (
       <EmptyMessage>
         {t('There are no service hooks associated with this project.')}
       </EmptyMessage>
     );
-  }
+  };
 
-  renderResults() {
-    const {orgId, projectId} = this.props.params;
-
+  const renderResults = () => {
     return (
       <Fragment>
         <PanelHeader key="header">{t('Service Hook')}</PanelHeader>
@@ -121,49 +144,43 @@ class ProjectServiceHooks extends AsyncView<Props, State> {
               'Service Hooks are an early adopter preview feature and will change in the future.'
             )}
           </PanelAlert>
-          {this.state.hookList?.map(hook => (
+          {hookList?.map(hook => (
             <ServiceHookRow
               key={hook.id}
-              orgId={orgId}
+              orgId={organization.slug}
               projectId={projectId}
               hook={hook}
-              onToggleActive={this.onToggleActive.bind(this, hook)}
+              onToggleActive={() => onToggleActiveMutation.mutate({hook})}
             />
           ))}
         </PanelBody>
       </Fragment>
     );
-  }
+  };
 
-  renderBody() {
-    const {hookList} = this.state;
-    const body =
-      hookList && hookList.length > 0 ? this.renderResults() : this.renderEmpty();
+  const body = hookList && hookList.length > 0 ? renderResults() : renderEmpty();
 
-    const {orgId, projectId} = this.props.params;
-    const access = new Set(this.props.organization.access);
-
-    return (
-      <Fragment>
-        <SettingsPageHeader
-          title={t('Service Hooks')}
-          action={
-            access.has('project:write') ? (
-              <Button
-                data-test-id="new-service-hook"
-                to={`/settings/${orgId}/projects/${projectId}/hooks/new/`}
-                size="sm"
-                priority="primary"
-                icon={<IconAdd size="xs" isCircled />}
-              >
-                {t('Create New Hook')}
-              </Button>
-            ) : null
-          }
-        />
-        <Panel>{body}</Panel>
-      </Fragment>
-    );
-  }
+  return (
+    <Fragment>
+      <SettingsPageHeader
+        title={t('Service Hooks')}
+        action={
+          organization.access.includes('project:write') ? (
+            <LinkButton
+              data-test-id="new-service-hook"
+              to={`/settings/${organization.slug}/projects/${projectId}/hooks/new/`}
+              size="sm"
+              priority="primary"
+              icon={<IconAdd isCircled />}
+            >
+              {t('Create New Hook')}
+            </LinkButton>
+          ) : null
+        }
+      />
+      <Panel>{body}</Panel>
+    </Fragment>
+  );
 }
+
 export default withOrganization(ProjectServiceHooks);

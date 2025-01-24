@@ -1,37 +1,42 @@
-import {browserHistory, Router, RouterContext} from 'react-router';
-import {QueryClient, QueryClientProvider} from '@tanstack/react-query';
+import {useState} from 'react';
+import {createBrowserRouter, RouterProvider} from 'react-router-dom';
+import {wrapCreateBrowserRouter} from '@sentry/react';
+import {ReactQueryDevtools} from '@tanstack/react-query-devtools';
 
 import DemoHeader from 'sentry/components/demo/demoHeader';
-import ThemeAndStyleProvider from 'sentry/components/themeAndStyleProvider';
+import {OnboardingContextProvider} from 'sentry/components/onboarding/onboardingContext';
+import {ThemeAndStyleProvider} from 'sentry/components/themeAndStyleProvider';
 import {routes} from 'sentry/routes';
-import ConfigStore from 'sentry/stores/configStore';
-import {PersistedStoreProvider} from 'sentry/stores/persistedStore';
-import {RouteContext} from 'sentry/views/routeContext';
+import {DANGEROUS_SET_REACT_ROUTER_6_HISTORY} from 'sentry/utils/browserHistory';
+import {
+  DEFAULT_QUERY_CLIENT_CONFIG,
+  QueryClient,
+  QueryClientProvider,
+} from 'sentry/utils/queryClient';
 
-/**
- * Renders our compatability RouteContext.Provider. This will go away with
- * react-router v6.
- */
-function renderRouter(props: any) {
-  return (
-    <RouteContext.Provider value={props}>
-      <RouterContext {...props} />
-    </RouteContext.Provider>
-  );
+import {buildReactRouter6Routes} from './utils/reactRouter6Compat/router';
+
+const queryClient = new QueryClient(DEFAULT_QUERY_CLIENT_CONFIG);
+
+function buildRouter() {
+  const sentryCreateBrowserRouter = wrapCreateBrowserRouter(createBrowserRouter);
+  const router = sentryCreateBrowserRouter(buildReactRouter6Routes(routes()));
+  DANGEROUS_SET_REACT_ROUTER_6_HISTORY(router);
+
+  return router;
 }
 
-const queryClient = new QueryClient();
-
 function Main() {
+  const [router] = useState(buildRouter);
+
   return (
     <ThemeAndStyleProvider>
       <QueryClientProvider client={queryClient}>
-        <PersistedStoreProvider>
-          {ConfigStore.get('demoMode') && <DemoHeader />}
-          <Router history={browserHistory} render={renderRouter}>
-            {routes()}
-          </Router>
-        </PersistedStoreProvider>
+        <OnboardingContextProvider>
+          <DemoHeader />
+          <RouterProvider router={router} />
+        </OnboardingContextProvider>
+        <ReactQueryDevtools initialIsOpen={false} buttonPosition="bottom-left" />
       </QueryClientProvider>
     </ThemeAndStyleProvider>
   );

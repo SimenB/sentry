@@ -1,157 +1,182 @@
-import {Fragment} from 'react';
-import {RouteComponentProps} from 'react-router';
-import {Location} from 'history';
+import {Fragment, useContext} from 'react';
+import styled from '@emotion/styled';
 
-import {CommitRow} from 'sentry/components/commitRow';
-import {Body, Main} from 'sentry/components/layouts/thirds';
+import * as Layout from 'sentry/components/layouts/thirds';
+import LoadingError from 'sentry/components/loadingError';
 import LoadingIndicator from 'sentry/components/loadingIndicator';
 import Pagination from 'sentry/components/pagination';
-import {Panel, PanelBody, PanelHeader} from 'sentry/components/panels';
+import Panel from 'sentry/components/panels/panel';
+import PanelBody from 'sentry/components/panels/panelBody';
+import PanelHeader from 'sentry/components/panels/panelHeader';
+import SentryDocumentTitle from 'sentry/components/sentryDocumentTitle';
 import {t} from 'sentry/locale';
-import {Commit, Organization, Project, Repository} from 'sentry/types';
-import {formatVersion} from 'sentry/utils/formatters';
+import {space} from 'sentry/styles/space';
+import type {Commit, Repository} from 'sentry/types/integrations';
+import type {Organization} from 'sentry/types/organization';
+import type {Project} from 'sentry/types/project';
+import {useApiQuery} from 'sentry/utils/queryClient';
 import routeTitleGen from 'sentry/utils/routeTitle';
-import AsyncView from 'sentry/views/asyncView';
+import {useLocation} from 'sentry/utils/useLocation';
+import useOrganization from 'sentry/utils/useOrganization';
+import {useParams} from 'sentry/utils/useParams';
+import {useReleaseRepositories} from 'sentry/utils/useReleaseRepositories';
+import {useRepositories} from 'sentry/utils/useRepositories';
+import {formatVersion} from 'sentry/utils/versions/formatVersion';
+import {ReleaseContext} from 'sentry/views/releases/detail';
+import {ReleaseCommit} from 'sentry/views/releases/detail/commitsAndFiles/releaseCommit';
 
 import {getCommitsByRepository, getQuery, getReposToRender} from '../utils';
 
-import EmptyState from './emptyState';
+import {EmptyState, NoReleaseRepos, NoRepositories} from './emptyState';
 import RepositorySwitcher from './repositorySwitcher';
-import withReleaseRepos from './withReleaseRepos';
 
-type Props = RouteComponentProps<{orgId: string; release: string}, {}> & {
-  location: Location;
-  orgSlug: Organization['slug'];
+interface CommitsProps {
+  organization: Organization;
   projectSlug: Project['slug'];
-  release: string;
   releaseRepos: Repository[];
-  activeReleaseRepo?: Repository;
-} & AsyncView['props'];
-
-type State = {
-  commits: Commit[];
-} & AsyncView['state'];
-
-class Commits extends AsyncView<Props, State> {
-  getTitle() {
-    const {params, projectSlug} = this.props;
-    const {orgId} = params;
-
-    return routeTitleGen(
-      t('Commits - Release %s', formatVersion(params.release)),
-      orgId,
-      false,
-      projectSlug
-    );
-  }
-
-  getDefaultState(): State {
-    return {
-      ...super.getDefaultState(),
-      commits: [],
-    };
-  }
-
-  componentDidUpdate(prevProps: Props, prevState: State) {
-    if (prevProps.activeReleaseRepo?.name !== this.props.activeReleaseRepo?.name) {
-      this.remountComponent();
-      return;
-    }
-    super.componentDidUpdate(prevProps, prevState);
-  }
-
-  getEndpoints(): ReturnType<AsyncView['getEndpoints']> {
-    const {
-      projectSlug,
-      activeReleaseRepo: activeRepository,
-      location,
-      orgSlug,
-      release,
-    } = this.props;
-
-    const query = getQuery({location, activeRepository});
-
-    return [
-      [
-        'commits',
-        `/projects/${orgSlug}/${projectSlug}/releases/${encodeURIComponent(
-          release
-        )}/commits/`,
-        {query},
-      ],
-    ];
-  }
-
-  renderLoading() {
-    return this.renderBody();
-  }
-
-  renderContent() {
-    const {commits, commitsPageLinks, loading} = this.state;
-    const {activeReleaseRepo} = this.props;
-
-    if (loading) {
-      return <LoadingIndicator />;
-    }
-
-    if (!commits.length) {
-      return (
-        <EmptyState>
-          {!activeReleaseRepo
-            ? t('There are no commits associated with this release.')
-            : t(
-                'There are no commits associated with this release in the %s repository.',
-                activeReleaseRepo.name
-              )}
-        </EmptyState>
-      );
-    }
-
-    const commitsByRepository = getCommitsByRepository(commits);
-    const reposToRender = getReposToRender(Object.keys(commitsByRepository));
-
-    return (
-      <Fragment>
-        {reposToRender.map(repoName => (
-          <Panel key={repoName}>
-            <PanelHeader>{repoName}</PanelHeader>
-            <PanelBody>
-              {commitsByRepository[repoName]?.map(commit => (
-                <CommitRow key={commit.id} commit={commit} />
-              ))}
-            </PanelBody>
-          </Panel>
-        ))}
-        <Pagination pageLinks={commitsPageLinks} />
-      </Fragment>
-    );
-  }
-
-  renderBody() {
-    const {location, router, activeReleaseRepo, releaseRepos} = this.props;
-
-    return (
-      <Fragment>
-        {releaseRepos.length > 1 && (
-          <RepositorySwitcher
-            repositories={releaseRepos}
-            activeRepository={activeReleaseRepo}
-            location={location}
-            router={router}
-          />
-        )}
-        {this.renderContent()}
-      </Fragment>
-    );
-  }
-
-  renderComponent() {
-    return (
-      <Body>
-        <Main fullWidth>{super.renderComponent()}</Main>
-      </Body>
-    );
-  }
 }
 
-export default withReleaseRepos(Commits);
+function CommitsList({organization, releaseRepos, projectSlug}: CommitsProps) {
+  const location = useLocation();
+  const params = useParams<{release: string}>();
+  const activeReleaseRepo =
+    releaseRepos.find(repo => repo.name === location.query.activeRepo) ?? releaseRepos[0];
+
+  const query = getQuery({location, activeRepository: activeReleaseRepo});
+  const {
+    data: commitList = [],
+    isPending: isLoadingCommitList,
+    error: commitListError,
+    refetch,
+    getResponseHeader,
+  } = useApiQuery<Commit[]>(
+    [
+      `/projects/${organization.slug}/${projectSlug}/releases/${encodeURIComponent(
+        params.release
+      )}/commits/`,
+      {query},
+    ],
+    {
+      staleTime: Infinity,
+    }
+  );
+  const commitsByRepository = getCommitsByRepository(commitList);
+  const reposToRender = getReposToRender(Object.keys(commitsByRepository));
+  const activeRepoName: string | undefined = activeReleaseRepo
+    ? activeReleaseRepo.name
+    : reposToRender[0];
+
+  return (
+    <Layout.Body>
+      <Layout.Main fullWidth>
+        <SentryDocumentTitle
+          title={routeTitleGen(
+            t('Commits - Release %s', formatVersion(params.release)),
+            organization.slug,
+            false,
+            projectSlug
+          )}
+        />
+        {releaseRepos.length > 1 && (
+          <Actions>
+            <RepositorySwitcher
+              repositories={releaseRepos}
+              activeRepository={activeReleaseRepo}
+            />
+          </Actions>
+        )}
+        {commitListError && <LoadingError onRetry={refetch} />}
+        {isLoadingCommitList ? (
+          <LoadingIndicator />
+        ) : commitList.length && activeRepoName ? (
+          <Fragment>
+            <Panel>
+              <PanelHeader>{activeRepoName}</PanelHeader>
+              <PanelBody>
+                {commitsByRepository[activeRepoName]?.map(commit => (
+                  <ReleaseCommit key={commit.id} commit={commit} />
+                ))}
+              </PanelBody>
+            </Panel>
+            <Pagination pageLinks={getResponseHeader?.('Link')} />
+          </Fragment>
+        ) : (
+          <EmptyState>
+            {activeReleaseRepo
+              ? t(
+                  'There are no commits associated with this release in the %s repository.',
+                  activeReleaseRepo.name
+                )
+              : t('There are no commits associated with this release.')}
+          </EmptyState>
+        )}
+      </Layout.Main>
+    </Layout.Body>
+  );
+}
+
+function Commits() {
+  const organization = useOrganization();
+  const params = useParams<{release: string}>();
+  const releaseContext = useContext(ReleaseContext);
+  const {
+    data: repositories,
+    isLoading: isLoadingRepositories,
+    isError: isRepositoriesError,
+    refetch: refetchRepositories,
+  } = useRepositories({
+    orgSlug: organization.slug,
+  });
+  const {
+    data: releaseRepos,
+    isLoading: isLoadingReleaseRepos,
+    isError: isReleaseReposError,
+    refetch: refetchReleaseRepos,
+  } = useReleaseRepositories({
+    orgSlug: organization.slug,
+    projectSlug: releaseContext.project.slug,
+    release: params.release,
+    options: {
+      enabled: !!releaseContext.project.slug,
+    },
+  });
+
+  if (isLoadingReleaseRepos || isLoadingRepositories) {
+    return <LoadingIndicator />;
+  }
+
+  if (isRepositoriesError || isReleaseReposError) {
+    return (
+      <LoadingError
+        onRetry={() => {
+          refetchRepositories();
+          refetchReleaseRepos();
+        }}
+      />
+    );
+  }
+
+  const noReleaseReposFound = !releaseRepos?.length;
+  if (noReleaseReposFound) {
+    return <NoReleaseRepos />;
+  }
+
+  const noRepositoryOrgRelatedFound = !repositories?.length;
+  if (noRepositoryOrgRelatedFound) {
+    return <NoRepositories orgSlug={organization.slug} />;
+  }
+
+  return (
+    <CommitsList
+      releaseRepos={releaseRepos}
+      organization={organization}
+      projectSlug={releaseContext.project.slug}
+    />
+  );
+}
+
+const Actions = styled('div')`
+  margin-bottom: ${space(2)};
+`;
+
+export default Commits;

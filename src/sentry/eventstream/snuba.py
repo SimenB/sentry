@@ -1,26 +1,18 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime
-from typing import (
-    TYPE_CHECKING,
-    Any,
-    Collection,
-    Mapping,
-    MutableMapping,
-    Optional,
-    Sequence,
-    Tuple,
-    Union,
-)
+from collections.abc import Collection, Mapping, MutableMapping, Sequence
+from datetime import datetime, timezone
+from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
-import pytz
 import urllib3
 
 from sentry import quotas
+from sentry.conf.types.kafka_definition import Topic, get_topic_codec
 from sentry.eventstore.models import GroupEvent
 from sentry.eventstream.base import EventStream, GroupStates
+from sentry.eventstream.types import EventStreamEventType
 from sentry.utils import json, snuba
 from sentry.utils.safe import get_path
 from sentry.utils.sdk import set_current_event_project
@@ -81,7 +73,6 @@ if TYPE_CHECKING:
 
 
 class SnubaProtocolEventStream(EventStream):
-
     # Beware! Changing this protocol (introducing a new version, or the message
     # format/fields themselves) requires consideration of all downstream
     # consumers. This includes the post-processing forwarder code!
@@ -94,42 +85,42 @@ class SnubaProtocolEventStream(EventStream):
 
     def _get_headers_for_insert(
         self,
-        event: Event,
+        event: Event | GroupEvent,
         is_new: bool,
         is_regression: bool,
         is_new_group_environment: bool,
-        primary_hash: Optional[str],
-        received_timestamp: float,
+        primary_hash: str | None,
+        received_timestamp: float | datetime,
         skip_consume: bool,
-        group_states: Optional[GroupStates] = None,
-    ) -> Mapping[str, str]:
-        return {"Received-Timestamp": str(received_timestamp)}
-
-    @staticmethod
-    def _is_transaction_event(event: Event) -> bool:
-        return event.get_event_type() == "transaction"  # type: ignore
+        group_states: GroupStates | None = None,
+    ) -> MutableMapping[str, str]:
+        return {
+            "Received-Timestamp": str(received_timestamp),
+            "queue": self._get_queue_for_post_process(event),
+        }
 
     def insert(
         self,
-        event: Event,
+        event: Event | GroupEvent,
         is_new: bool,
         is_regression: bool,
         is_new_group_environment: bool,
-        primary_hash: Optional[str],
-        received_timestamp: float,
+        primary_hash: str | None,
+        received_timestamp: float | datetime,
         skip_consume: bool = False,
-        group_states: Optional[GroupStates] = None,
+        group_states: GroupStates | None = None,
+        eventstream_type: str | None = None,
         **kwargs: Any,
     ) -> None:
-        if isinstance(event, GroupEvent):
+        if isinstance(event, GroupEvent) and not event.occurrence:
             logger.error(
-                "`GroupEvent` passed to `EventStream.insert`. Only `Event` is allowed here.",
-                exc_info=True,
+                "`GroupEvent` passed to `EventStream.insert`. `GroupEvent` may only be passed when "
+                "associated with an `IssueOccurrence`",
             )
             return
         project = event.project
         set_current_event_project(project.id)
-        retention_days = quotas.get_event_retention(organization=project.organization)
+        retention_days = quotas.backend.get_event_retention(organization=project.organization)
 
         event_data = event.get_raw_data(for_stream=True)
 
@@ -158,7 +149,23 @@ class SnubaProtocolEventStream(EventStream):
             else False
         )
 
-        is_transaction_event = self._is_transaction_event(event)
+        event_type = self._get_event_type(event)
+        occurrence_data = self._get_occurrence_data(event)
+
+        # instead of normalizing and doing custom 'contexts' processing in snuba, we elect to do it here instead to
+        # avoid having to clutter up snuba code with business logic
+        if event_type == EventStreamEventType.Generic:
+            event_data = dict(event_data)
+            contexts = event_data.setdefault("contexts", {})
+
+            # add user.geo to contexts if it exists
+            user_dict = event_data.get("user") or {}
+            geo = user_dict.get("geo", {})
+            if "geo" not in contexts and isinstance(geo, dict):
+                contexts["geo"] = geo
+
+            # transactions processing has a configurable 'skipped contexts' to skip writing specific contexts maps
+            # to the row. for now, we're ignoring that until we have a need for it
 
         self._send(
             project.id,
@@ -166,7 +173,7 @@ class SnubaProtocolEventStream(EventStream):
             extra_data=(
                 {
                     "group_id": event.group_id,
-                    "group_ids": [group.id for group in event.groups],
+                    "group_ids": [group.id for group in getattr(event, "groups", [])],
                     "event_id": event.event_id,
                     "organization_id": project.organization_id,
                     "project_id": event.project_id,
@@ -174,35 +181,37 @@ class SnubaProtocolEventStream(EventStream):
                     # message but this is what snuba needs at the moment.
                     "message": event.search_message,
                     "platform": event.platform,
-                    "datetime": event.datetime,
+                    "datetime": json.datetime_to_str(event.datetime),
                     "data": event_data,
                     "primary_hash": primary_hash,
                     "retention_days": retention_days,
+                    "occurrence_id": occurrence_data.get("id"),
+                    "occurrence_data": occurrence_data,
                 },
                 {
                     "is_new": is_new,
                     "is_regression": is_regression,
                     "is_new_group_environment": is_new_group_environment,
+                    "queue": headers["queue"],
                     "skip_consume": skip_consume,
                     "group_states": group_states,
                 },
             ),
             headers=headers,
+            asynchronous=kwargs.get("asynchronous", True),
             skip_semantic_partitioning=skip_semantic_partitioning,
-            is_transaction_event=is_transaction_event,
+            event_type=event_type,
         )
 
-    def start_delete_groups(
-        self, project_id: int, group_ids: Sequence[int]
-    ) -> Optional[Mapping[str, Any]]:
+    def start_delete_groups(self, project_id: int, group_ids: Sequence[int]) -> Mapping[str, Any]:
         if not group_ids:
-            return None
+            raise ValueError("expected groups to delete!")
 
         state = {
             "transaction_id": uuid4().hex,
             "project_id": project_id,
             "group_ids": list(group_ids),
-            "datetime": datetime.now(tz=pytz.utc),
+            "datetime": datetime.now(tz=timezone.utc),
         }
 
         self._send(project_id, "start_delete_groups", extra_data=(state,), asynchronous=False)
@@ -211,7 +220,7 @@ class SnubaProtocolEventStream(EventStream):
 
     def end_delete_groups(self, state: Mapping[str, Any]) -> None:
         state_copy: MutableMapping[str, Any] = {**state}
-        state_copy["datetime"] = datetime.now(tz=pytz.utc)
+        state_copy["datetime"] = json.datetime_to_str(datetime.now(tz=timezone.utc))
         self._send(
             state_copy["project_id"],
             "end_delete_groups",
@@ -221,16 +230,16 @@ class SnubaProtocolEventStream(EventStream):
 
     def start_merge(
         self, project_id: int, previous_group_ids: Sequence[int], new_group_id: int
-    ) -> Optional[Mapping[str, Any]]:
+    ) -> dict[str, Any]:
         if not previous_group_ids:
-            return None
+            raise ValueError("expected groups to merge!")
 
         state = {
             "transaction_id": uuid4().hex,
             "project_id": project_id,
             "previous_group_ids": list(previous_group_ids),
             "new_group_id": new_group_id,
-            "datetime": datetime.now(tz=pytz.utc),
+            "datetime": json.datetime_to_str(datetime.now(tz=timezone.utc)),
         }
 
         self._send(project_id, "start_merge", extra_data=(state,), asynchronous=False)
@@ -239,14 +248,14 @@ class SnubaProtocolEventStream(EventStream):
 
     def end_merge(self, state: Mapping[str, Any]) -> None:
         state_copy: MutableMapping[str, Any] = {**state}
-        state_copy["datetime"] = datetime.now(tz=pytz.utc)
+        state_copy["datetime"] = datetime.now(tz=timezone.utc)
         self._send(
             state_copy["project_id"], "end_merge", extra_data=(state_copy,), asynchronous=False
         )
 
     def start_unmerge(
         self, project_id: int, hashes: Collection[str], previous_group_id: int, new_group_id: int
-    ) -> Optional[Mapping[str, Any]]:
+    ) -> Mapping[str, Any] | None:
         if not hashes:
             return None
 
@@ -256,7 +265,7 @@ class SnubaProtocolEventStream(EventStream):
             "previous_group_id": previous_group_id,
             "new_group_id": new_group_id,
             "hashes": list(hashes),
-            "datetime": datetime.now(tz=pytz.utc),
+            "datetime": json.datetime_to_str(datetime.now(tz=timezone.utc)),
         }
 
         self._send(project_id, "start_unmerge", extra_data=(state,), asynchronous=False)
@@ -265,20 +274,20 @@ class SnubaProtocolEventStream(EventStream):
 
     def end_unmerge(self, state: Mapping[str, Any]) -> None:
         state_copy: MutableMapping[str, Any] = {**state}
-        state_copy["datetime"] = datetime.now(tz=pytz.utc)
+        state_copy["datetime"] = json.datetime_to_str(datetime.now(tz=timezone.utc))
         self._send(
             state_copy["project_id"], "end_unmerge", extra_data=(state_copy,), asynchronous=False
         )
 
-    def start_delete_tag(self, project_id: int, tag: str) -> Optional[Mapping[str, Any]]:
+    def start_delete_tag(self, project_id: int, tag: str) -> Mapping[str, Any]:
         if not tag:
-            return None
+            raise ValueError("expected tag")
 
         state = {
             "transaction_id": uuid4().hex,
             "project_id": project_id,
             "tag": tag,
-            "datetime": datetime.now(tz=pytz.utc),
+            "datetime": json.datetime_to_str(datetime.now(tz=timezone.utc)),
         }
 
         self._send(project_id, "start_delete_tag", extra_data=(state,), asynchronous=False)
@@ -287,7 +296,7 @@ class SnubaProtocolEventStream(EventStream):
 
     def end_delete_tag(self, state: Mapping[str, Any]) -> None:
         state_copy: MutableMapping[str, Any] = {**state}
-        state_copy["datetime"] = datetime.now(tz=pytz.utc)
+        state_copy["datetime"] = json.datetime_to_str(datetime.now(tz=timezone.utc))
         self._send(
             state_copy["project_id"], "end_delete_tag", extra_data=(state_copy,), asynchronous=False
         )
@@ -296,11 +305,10 @@ class SnubaProtocolEventStream(EventStream):
         self,
         project_id: int,
         event_ids: Sequence[str],
-        old_primary_hash: Union[str, bool] = False,
-        from_timestamp: Optional[datetime] = None,
-        to_timestamp: Optional[datetime] = None,
+        old_primary_hash: str | None = None,
+        from_timestamp: datetime | None = None,
+        to_timestamp: datetime | None = None,
     ) -> None:
-
         """
         Tell Snuba to eventually delete these events.
 
@@ -337,10 +345,9 @@ class SnubaProtocolEventStream(EventStream):
         project_id: int,
         event_ids: Sequence[str],
         new_group_id: int,
-        from_timestamp: Optional[datetime] = None,
-        to_timestamp: Optional[datetime] = None,
+        from_timestamp: datetime | None = None,
+        to_timestamp: datetime | None = None,
     ) -> None:
-        pass
         """
         Tell Snuba to move events into a new group ID
 
@@ -371,11 +378,11 @@ class SnubaProtocolEventStream(EventStream):
         self,
         project_id: int,
         _type: str,
-        extra_data: Tuple[Any, ...] = (),
+        extra_data: tuple[Any, ...] = (),
         asynchronous: bool = True,
-        headers: Optional[Mapping[str, str]] = None,
+        headers: MutableMapping[str, str] | None = None,
         skip_semantic_partitioning: bool = False,
-        is_transaction_event: bool = False,
+        event_type: EventStreamEventType = EventStreamEventType.Error,
     ) -> None:
         raise NotImplementedError
 
@@ -385,11 +392,11 @@ class SnubaEventStream(SnubaProtocolEventStream):
         self,
         project_id: int,
         _type: str,
-        extra_data: Tuple[Any, ...] = (),
+        extra_data: tuple[Any, ...] = (),
         asynchronous: bool = True,
-        headers: Optional[Mapping[str, str]] = None,
+        headers: MutableMapping[str, str] | None = None,
         skip_semantic_partitioning: bool = False,
-        is_transaction_event: bool = False,
+        event_type: EventStreamEventType = EventStreamEventType.Error,
     ) -> None:
         if headers is None:
             headers = {}
@@ -397,17 +404,33 @@ class SnubaEventStream(SnubaProtocolEventStream):
         data = (self.EVENT_PROTOCOL_VERSION, _type) + extra_data
 
         entity = "events"
-        if is_transaction_event:
+        if event_type == EventStreamEventType.Transaction:
             entity = "transactions"
+        if event_type == EventStreamEventType.Generic:
+            entity = "search_issues"
+
+        serialized_data = json.dumps(data)
+
+        topic_mapping: Mapping[str, Topic] = {
+            "events": Topic.EVENTS,
+            "transactions": Topic.TRANSACTIONS,
+            "search_issues": Topic.EVENTSTREAM_GENERIC,
+        }
+
+        codec = get_topic_codec(topic_mapping[entity])
+        codec.decode(serialized_data.encode("utf-8"), validate=True)
+
         try:
             resp = snuba._snuba_pool.urlopen(
                 "POST",
                 f"/tests/{entity}/eventstream",
-                body=json.dumps(data),
+                body=serialized_data,
                 headers={f"X-Sentry-{k}": v for k, v in headers.items()},
             )
             if resp.status != 200:
-                raise snuba.SnubaError("HTTP %s response from Snuba!" % resp.status)
+                raise snuba.SnubaError(
+                    f"HTTP {resp.status} response from Snuba! {json.loads(resp.data)}"
+                )
             return None
         except urllib3.exceptions.HTTPError as err:
             raise snuba.SnubaError(err)
@@ -417,14 +440,15 @@ class SnubaEventStream(SnubaProtocolEventStream):
 
     def insert(
         self,
-        event: Event,
+        event: Event | GroupEvent,
         is_new: bool,
         is_regression: bool,
         is_new_group_environment: bool,
-        primary_hash: Optional[str],
-        received_timestamp: float,
+        primary_hash: str | None,
+        received_timestamp: float | datetime,
         skip_consume: bool = False,
-        group_states: Optional[GroupStates] = None,
+        group_states: GroupStates | None = None,
+        eventstream_type: str | None = None,
         **kwargs: Any,
     ) -> None:
         super().insert(
@@ -446,6 +470,9 @@ class SnubaEventStream(SnubaProtocolEventStream):
             is_regression,
             is_new_group_environment,
             primary_hash,
+            self._get_queue_for_post_process(event),
             skip_consume,
             group_states,
+            occurrence_id=event.occurrence_id if isinstance(event, GroupEvent) else None,
+            eventstream_type=eventstream_type,
         )

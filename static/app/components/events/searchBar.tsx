@@ -1,107 +1,157 @@
-import {useEffect} from 'react';
-import assign from 'lodash/assign';
-import flatten from 'lodash/flatten';
+import {useEffect, useMemo} from 'react';
 import memoize from 'lodash/memoize';
 import omit from 'lodash/omit';
 
-import {fetchTagValues} from 'sentry/actionCreators/tags';
-import SmartSearchBar from 'sentry/components/smartSearchBar';
-import {NEGATION_OPERATOR, SEARCH_WILDCARD} from 'sentry/constants';
-import {Organization, SavedSearchType, TagCollection} from 'sentry/types';
+import {fetchSpanFieldValues, fetchTagValues} from 'sentry/actionCreators/tags';
+import SmartSearchBar from 'sentry/components/deprecatedSmartSearchBar';
+import type {SearchConfig} from 'sentry/components/searchSyntax/parser';
+import {defaultConfig} from 'sentry/components/searchSyntax/parser';
+import type {TagCollection} from 'sentry/types/group';
+import {SavedSearchType} from 'sentry/types/group';
+import type {Organization} from 'sentry/types/organization';
 import {defined} from 'sentry/utils';
-import {CustomMeasurementCollection} from 'sentry/utils/customMeasurements/customMeasurements';
+import type {CustomMeasurementCollection} from 'sentry/utils/customMeasurements/customMeasurements';
+import type {Field} from 'sentry/utils/discover/fields';
+import {isAggregateField, isEquation, isMeasurement} from 'sentry/utils/discover/fields';
 import {
-  Field,
-  FIELD_TAGS,
-  isAggregateField,
-  isEquation,
-  isMeasurement,
-  SEMVER_TAGS,
-  SPAN_OP_BREAKDOWN_FIELDS,
-  TRACING_FIELDS,
-} from 'sentry/utils/discover/fields';
-import {FieldKey, FieldKind} from 'sentry/utils/fields';
+  DiscoverDatasets,
+  DiscoverDatasetsToDatasetMap,
+} from 'sentry/utils/discover/types';
+import {
+  DEVICE_CLASS_TAG_VALUES,
+  FieldKey,
+  FieldKind,
+  isDeviceClass,
+} from 'sentry/utils/fields';
 import Measurements from 'sentry/utils/measurements/measurements';
 import useApi from 'sentry/utils/useApi';
 import withTags from 'sentry/utils/withTags';
-import {isCustomMeasurement} from 'sentry/views/dashboardsV2/utils';
+import {isCustomMeasurement} from 'sentry/views/dashboards/utils';
 
-const SEARCH_SPECIAL_CHARS_REGEXP = new RegExp(
-  `^${NEGATION_OPERATOR}|\\${SEARCH_WILDCARD}`,
-  'g'
-);
+import {
+  SEARCH_SPECIAL_CHARS_REGEXP,
+  STATIC_FIELD_TAGS,
+  STATIC_FIELD_TAGS_SET,
+  STATIC_FIELD_TAGS_WITHOUT_ERROR_FIELDS,
+  STATIC_FIELD_TAGS_WITHOUT_TRACING,
+  STATIC_FIELD_TAGS_WITHOUT_TRANSACTION_FIELDS,
+  STATIC_SEMVER_TAGS,
+  STATIC_SPAN_TAGS,
+} from './searchBarFieldConstants';
 
-const getFunctionTags = (fields: Readonly<Field[]>) =>
-  Object.fromEntries(
-    fields
-      .filter(
-        item =>
-          !Object.keys(FIELD_TAGS).includes(item.field) &&
-          !isEquation(item.field) &&
-          !isCustomMeasurement(item.field)
-      )
-      .map(item => [
-        item.field,
-        {key: item.field, name: item.field, kind: FieldKind.FUNCTION},
-      ])
-  );
+const getFunctionTags = (fields: readonly Field[] | undefined) => {
+  if (!fields?.length) {
+    return [];
+  }
+  return fields.reduce((acc, item) => {
+    if (
+      !STATIC_FIELD_TAGS_SET.has(item.field) &&
+      !isEquation(item.field) &&
+      !isCustomMeasurement(item.field)
+    ) {
+      // @ts-expect-error TS(7053): Element implicitly has an 'any' type because expre... Remove this comment to see the full error message
+      acc[item.field] = {key: item.field, name: item.field, kind: FieldKind.FUNCTION};
+    }
 
-const getFieldTags = () =>
-  Object.fromEntries(
-    Object.keys(FIELD_TAGS).map(key => [
-      key,
-      {
-        ...FIELD_TAGS[key],
-        kind: FieldKind.FIELD,
-      },
-    ])
-  );
+    return acc;
+  }, {});
+};
 
 const getMeasurementTags = (
   measurements: Parameters<
     React.ComponentProps<typeof Measurements>['children']
-  >[0]['measurements']
-) =>
-  Object.fromEntries(
-    Object.keys(measurements).map(key => [
-      key,
-      {
-        ...measurements[key],
-        kind: FieldKind.MEASUREMENT,
-      },
-    ])
-  );
+  >[0]['measurements'],
+  customMeasurements:
+    | Parameters<React.ComponentProps<typeof Measurements>['children']>[0]['measurements']
+    | undefined
+) => {
+  const measurementsWithKind = Object.keys(measurements).reduce((tags, key) => {
+    // @ts-expect-error TS(7053): Element implicitly has an 'any' type because expre... Remove this comment to see the full error message
+    tags[key] = {
+      ...measurements[key],
+      kind: FieldKind.MEASUREMENT,
+    };
+    return tags;
+  }, {});
 
-const getSpanTags = () => {
-  return Object.fromEntries(
-    SPAN_OP_BREAKDOWN_FIELDS.map(key => [key, {key, name: key, kind: FieldKind.METRICS}])
-  );
+  if (!customMeasurements) {
+    return measurementsWithKind;
+  }
+
+  return Object.keys(customMeasurements).reduce((tags, key) => {
+    // @ts-expect-error TS(7053): Element implicitly has an 'any' type because expre... Remove this comment to see the full error message
+    tags[key] = {
+      ...customMeasurements[key],
+      kind: FieldKind.MEASUREMENT,
+    };
+    return tags;
+  }, measurementsWithKind);
 };
 
-const getSemverTags = () =>
-  Object.fromEntries(
-    Object.keys(SEMVER_TAGS).map(key => [
-      key,
-      {
-        ...SEMVER_TAGS[key],
-        kind: FieldKind.FIELD,
-      },
-    ])
-  );
+const getSearchConfigFromCustomPerformanceMetrics = (
+  customPerformanceMetrics?: CustomMeasurementCollection
+): Partial<SearchConfig> => {
+  if (!customPerformanceMetrics) {
+    return {};
+  }
+  const searchConfigMap: Record<string, string[]> = {
+    sizeKeys: [...defaultConfig.sizeKeys],
+    durationKeys: [...defaultConfig.durationKeys],
+    percentageKeys: [...defaultConfig.percentageKeys],
+    numericKeys: [...defaultConfig.numericKeys],
+  };
+  Object.keys(customPerformanceMetrics).forEach(metricName => {
+    const {fieldType} = customPerformanceMetrics[metricName]!;
+    switch (fieldType) {
+      case 'size':
+        searchConfigMap.sizeKeys!.push(metricName);
+        break;
+      case 'duration':
+        searchConfigMap.durationKeys!.push(metricName);
+        break;
+      case 'percentage':
+        searchConfigMap.percentageKeys!.push(metricName);
+        break;
+      default:
+        searchConfigMap.numericKeys!.push(metricName);
+    }
+  });
+  const searchConfig = {
+    sizeKeys: new Set(searchConfigMap.sizeKeys),
+    durationKeys: new Set(searchConfigMap.durationKeys),
+    percentageKeys: new Set(searchConfigMap.percentageKeys),
+    numericKeys: new Set(searchConfigMap.numericKeys),
+  };
+  return searchConfig;
+};
+
+export const getHasTag = (tags: TagCollection) => ({
+  key: FieldKey.HAS,
+  name: 'Has property',
+  values: Object.keys(tags).sort((a, b) => {
+    return a.toLowerCase().localeCompare(b.toLowerCase());
+  }),
+  predefined: true,
+  kind: FieldKind.FIELD,
+});
 
 export type SearchBarProps = Omit<React.ComponentProps<typeof SmartSearchBar>, 'tags'> & {
   organization: Organization;
   tags: TagCollection;
   customMeasurements?: CustomMeasurementCollection;
-  fields?: Readonly<Field[]>;
+  dataset?: DiscoverDatasets;
+  fields?: readonly Field[];
   includeSessionTagsValues?: boolean;
+  includeTransactions?: boolean;
   /**
    * Used to define the max height of the menu in px.
    */
   maxMenuHeight?: number;
   maxSearchItems?: React.ComponentProps<typeof SmartSearchBar>['maxSearchItems'];
   omitTags?: string[];
-  projectIds?: number[] | Readonly<number[]>;
+  projectIds?: number[] | readonly number[];
+  savedSearchType?: SavedSearchType;
+  supportedTags?: TagCollection | undefined;
 };
 
 function SearchBar(props: SearchBarProps) {
@@ -115,9 +165,24 @@ function SearchBar(props: SearchBarProps) {
     includeSessionTagsValues,
     maxMenuHeight,
     customMeasurements,
+    dataset,
+    savedSearchType = SavedSearchType.EVENT,
+    includeTransactions = true,
   } = props;
 
   const api = useApi();
+
+  const functionTags = useMemo(() => getFunctionTags(fields), [fields]);
+  const tagsWithKind = useMemo(() => {
+    return Object.keys(tags).reduce((acc, key) => {
+      // @ts-expect-error TS(7053): Element implicitly has an 'any' type because expre... Remove this comment to see the full error message
+      acc[key] = {
+        ...tags[key],
+        kind: FieldKind.TAG,
+      };
+      return acc;
+    }, {});
+  }, [tags]);
 
   useEffect(() => {
     // Clear memoized data on mount to make tests more consistent.
@@ -129,7 +194,7 @@ function SearchBar(props: SearchBarProps) {
   // with data when ready
   const getEventFieldValues = memoize(
     (tag, query, endpointParams): Promise<string[]> => {
-      const projectIdStrings = (projectIds as Readonly<number>[])?.map(String);
+      const projectIdStrings = (projectIds as Array<Readonly<number>>)?.map(String);
 
       if (isAggregateField(tag.key) || isMeasurement(tag.key)) {
         // We can't really auto suggest values for aggregate fields
@@ -137,22 +202,39 @@ function SearchBar(props: SearchBarProps) {
         return Promise.resolve([]);
       }
 
-      return fetchTagValues(
-        api,
-        organization.slug,
-        tag.key,
-        query,
-        projectIdStrings,
-        endpointParams,
+      // device.class is stored as "numbers" in snuba, but we want to suggest high, medium,
+      // and low search filter values because discover maps device.class to these values.
+      if (isDeviceClass(tag.key)) {
+        return Promise.resolve(DEVICE_CLASS_TAG_VALUES);
+      }
 
-        // allows searching for tags on transactions as well
-        true,
+      const fetchPromise =
+        dataset === DiscoverDatasets.SPANS_INDEXED
+          ? fetchSpanFieldValues({
+              api,
+              orgSlug: organization.slug,
+              fieldKey: tag.key,
+              search: query,
+              projectIds: projectIdStrings,
+              endpointParams,
+            })
+          : fetchTagValues({
+              api,
+              orgSlug: organization.slug,
+              tagKey: tag.key,
+              search: query,
+              projectIds: projectIdStrings,
+              endpointParams,
+              // allows searching for tags on transactions as well
+              includeTransactions,
+              // allows searching for tags on sessions as well
+              includeSessions: includeSessionTagsValues,
+              // @ts-expect-error TS(7053): Element implicitly has an 'any' type because expre... Remove this comment to see the full error message
+              dataset: dataset ? DiscoverDatasetsToDatasetMap[dataset] : undefined,
+            });
 
-        // allows searching for tags on sessions as well
-        includeSessionTagsValues
-      ).then(
-        results =>
-          flatten(results.filter(({name}) => defined(name)).map(({name}) => name)),
+      return fetchPromise.then(
+        results => results.filter(({name}) => defined(name)).map(({name}) => name),
         () => {
           throw new Error('Unable to fetch event field values');
         }
@@ -166,62 +248,62 @@ function SearchBar(props: SearchBarProps) {
       React.ComponentProps<typeof Measurements>['children']
     >[0]['measurements']
   ) => {
-    const functionTags = getFunctionTags(fields ?? []);
-    const fieldTags = getFieldTags();
-    const measurementsWithKind = getMeasurementTags(measurements);
-    const spanTags = getSpanTags();
-    const semverTags = getSemverTags();
-
+    const measurementsWithKind = getMeasurementTags(measurements, customMeasurements);
     const orgHasPerformanceView = organization.features.includes('performance-view');
 
-    const combinedTags: TagCollection = orgHasPerformanceView
-      ? Object.assign({}, measurementsWithKind, spanTags, fieldTags, functionTags)
-      : omit(fieldTags, TRACING_FIELDS);
+    const combinedTags: TagCollection =
+      dataset === DiscoverDatasets.ERRORS
+        ? Object.assign({}, functionTags, STATIC_FIELD_TAGS_WITHOUT_TRANSACTION_FIELDS)
+        : dataset === DiscoverDatasets.TRANSACTIONS ||
+            dataset === DiscoverDatasets.METRICS_ENHANCED
+          ? Object.assign(
+              {},
+              measurementsWithKind,
+              functionTags,
+              STATIC_SPAN_TAGS,
+              STATIC_FIELD_TAGS_WITHOUT_ERROR_FIELDS
+            )
+          : orgHasPerformanceView
+            ? Object.assign(
+                {},
+                measurementsWithKind,
+                functionTags,
+                STATIC_SPAN_TAGS,
+                STATIC_FIELD_TAGS
+              )
+            : Object.assign({}, STATIC_FIELD_TAGS_WITHOUT_TRACING);
 
-    const tagsWithKind = Object.fromEntries(
-      Object.keys(tags).map(key => [
-        key,
-        {
-          ...tags[key],
-          kind: FieldKind.TAG,
-        },
-      ])
-    );
+    Object.assign(combinedTags, tagsWithKind, STATIC_SEMVER_TAGS);
 
-    assign(combinedTags, tagsWithKind, fieldTags, semverTags);
+    combinedTags.has = getHasTag(combinedTags);
 
-    const sortedTagKeys = Object.keys(combinedTags);
-    sortedTagKeys.sort((a, b) => {
-      return a.toLowerCase().localeCompare(b.toLowerCase());
-    });
-
-    combinedTags.has = {
-      key: FieldKey.HAS,
-      name: 'Has property',
-      values: sortedTagKeys,
-      predefined: true,
-      kind: FieldKind.FIELD,
-    };
-
-    return omit(combinedTags, omitTags ?? []);
+    const list =
+      omitTags && omitTags.length > 0 ? omit(combinedTags, omitTags) : combinedTags;
+    return list;
   };
+
+  const customPerformanceMetricsSearchConfig = useMemo(
+    () => getSearchConfigFromCustomPerformanceMetrics(customMeasurements),
+    [customMeasurements]
+  );
 
   return (
     <Measurements>
       {({measurements}) => (
         <SmartSearchBar
           hasRecentSearches
-          savedSearchType={SavedSearchType.EVENT}
+          savedSearchType={savedSearchType}
+          projectIds={projectIds}
           onGetTagValues={getEventFieldValues}
-          supportedTags={getTagList({...measurements, ...(customMeasurements ?? {})})}
+          supportedTags={getTagList(measurements)}
           prepareQuery={query => {
             // Prepare query string (e.g. strip special characters like negation operator)
             return query.replace(SEARCH_SPECIAL_CHARS_REGEXP, '');
           }}
           maxSearchItems={maxSearchItems}
-          excludedTags={['environment']}
+          excludedTags={[FieldKey.ENVIRONMENT, FieldKey.TOTAL_COUNT]}
           maxMenuHeight={maxMenuHeight ?? 300}
-          customPerformanceMetrics={customMeasurements}
+          {...customPerformanceMetricsSearchConfig}
           {...props}
         />
       )}

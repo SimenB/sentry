@@ -1,6 +1,11 @@
+import {useTheme} from '@emotion/react';
 import countBy from 'lodash/countBy';
 
-import {ROW_HEIGHT} from 'sentry/components/performance/waterfall/constants';
+import type {SpanBarType} from 'sentry/components/performance/waterfall/constants';
+import {
+  getSpanBarColors,
+  ROW_HEIGHT,
+} from 'sentry/components/performance/waterfall/constants';
 import {DurationPill, RowRectangle} from 'sentry/components/performance/waterfall/rowBar';
 import {
   ConnectorBar,
@@ -10,50 +15,60 @@ import {
 import {
   getDurationDisplay,
   getHumanDuration,
-  toPercent,
 } from 'sentry/components/performance/waterfall/utils';
 import {t} from 'sentry/locale';
-import {EventTransaction} from 'sentry/types/event';
-import theme from 'sentry/utils/theme';
+import type {AggregateEventTransaction, EventTransaction} from 'sentry/types/event';
+import toPercent from 'sentry/utils/number/toPercent';
 
 import {SpanGroupBar} from './spanGroupBar';
-import {EnhancedSpan, ProcessedSpanType, TreeDepthType} from './types';
+import type {EnhancedSpan, ProcessedSpanType, TreeDepthType} from './types';
+import type {SpanBoundsType, SpanGeneratedBoundsType, VerticalMark} from './utils';
 import {
   getSpanGroupBounds,
   getSpanGroupTimestamps,
   getSpanOperation,
   isOrphanSpan,
   isOrphanTreeDepth,
-  SpanBoundsType,
-  SpanGeneratedBoundsType,
   unwrapTreeDepth,
 } from './utils';
 
-type Props = {
-  continuingTreeDepths: Array<TreeDepthType>;
-  event: Readonly<EventTransaction>;
+export type SpanDescendantGroupBarProps = {
+  addContentSpanBarRef: (instance: HTMLDivElement | null) => void;
+  continuingTreeDepths: TreeDepthType[];
+  didAnchoredSpanMount: () => boolean;
+  event: Readonly<EventTransaction | AggregateEventTransaction>;
   generateBounds: (bounds: SpanBoundsType) => SpanGeneratedBoundsType;
-  generateContentSpanBarRef: () => (instance: HTMLDivElement | null) => void;
+  getCurrentLeftPos: () => number;
   onWheel: (deltaX: number) => void;
-  span: Readonly<ProcessedSpanType>;
+  removeContentSpanBarRef: (instance: HTMLDivElement | null) => void;
+  span: ProcessedSpanType;
   spanGrouping: EnhancedSpan[];
   spanNumber: number;
   toggleSpanGroup: () => void;
   treeDepth: number;
+  measurements?: Map<number, VerticalMark>;
+  spanBarType?: SpanBarType;
 };
 
-export function SpanDescendantGroupBar(props: Props) {
+export function SpanDescendantGroupBar(props: SpanDescendantGroupBarProps) {
   const {
     continuingTreeDepths,
     event,
     generateBounds,
+    getCurrentLeftPos,
     span,
     spanGrouping,
     spanNumber,
     toggleSpanGroup,
     onWheel,
-    generateContentSpanBarRef,
+    addContentSpanBarRef,
+    removeContentSpanBarRef,
+    didAnchoredSpanMount,
+    spanBarType,
+    measurements,
   } = props;
+
+  const theme = useTheme();
 
   function renderGroupSpansTitle() {
     if (spanGrouping.length === 0) {
@@ -85,7 +100,7 @@ export function SpanDescendantGroupBar(props: Props) {
   function renderSpanTreeConnector() {
     const {treeDepth: spanTreeDepth} = props;
 
-    const connectorBars: Array<React.ReactNode> = continuingTreeDepths.map(treeDepth => {
+    const connectorBars: React.ReactNode[] = continuingTreeDepths.map(treeDepth => {
       const depth: number = unwrapTreeDepth(treeDepth);
 
       if (depth === 0) {
@@ -135,12 +150,16 @@ export function SpanDescendantGroupBar(props: Props) {
     return (
       <RowRectangle
         style={{
-          backgroundColor: theme.blue300,
+          backgroundColor: getSpanBarColors(spanBarType, theme).primary,
           left: `min(${toPercent(bounds.left || 0)}, calc(100% - 1px))`,
           width: toPercent(bounds.width || 0),
         }}
       >
-        <DurationPill durationDisplay={durationDisplay} showDetail={false}>
+        <DurationPill
+          durationDisplay={durationDisplay}
+          showDetail={false}
+          spanBarType={spanBarType}
+        >
           {durationString}
         </DurationPill>
       </RowRectangle>
@@ -152,6 +171,7 @@ export function SpanDescendantGroupBar(props: Props) {
       data-test-id="span-descendant-group-bar"
       event={event}
       span={span}
+      measurements={measurements}
       spanGrouping={spanGrouping}
       treeDepth={props.treeDepth}
       spanNumber={spanNumber}
@@ -161,7 +181,11 @@ export function SpanDescendantGroupBar(props: Props) {
       renderGroupSpansTitle={renderGroupSpansTitle}
       renderSpanRectangles={renderSpanRectangles}
       onWheel={onWheel}
-      generateContentSpanBarRef={generateContentSpanBarRef}
+      addContentSpanBarRef={addContentSpanBarRef}
+      removeContentSpanBarRef={removeContentSpanBarRef}
+      didAnchoredSpanMount={didAnchoredSpanMount}
+      getCurrentLeftPos={getCurrentLeftPos}
+      spanBarType={spanBarType}
     />
   );
 }

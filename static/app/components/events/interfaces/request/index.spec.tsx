@@ -1,24 +1,24 @@
-import {initializeOrg} from 'sentry-test/initializeOrg';
+import {DataScrubbingRelayPiiConfigFixture} from 'sentry-fixture/dataScrubbingRelayPiiConfig';
+import {EventFixture} from 'sentry-fixture/event';
+import {UserFixture} from 'sentry-fixture/user';
+
 import {render, screen, userEvent} from 'sentry-test/reactTestingLibrary';
 import {textWithMarkupMatcher} from 'sentry-test/utils';
 
 import {Request} from 'sentry/components/events/interfaces/request';
-import {EntryRequest, EntryType} from 'sentry/types/event';
-import {OrganizationContext} from 'sentry/views/organizationContext';
-import {RouteContext} from 'sentry/views/routeContext';
+import ConfigStore from 'sentry/stores/configStore';
+import type {EntryRequest} from 'sentry/types/event';
+import {EntryType} from 'sentry/types/event';
+
+jest.unmock('prismjs');
 
 describe('Request entry', function () {
-  const {organization, router} = initializeOrg({
-    ...initializeOrg(),
-    organization: {
-      ...initializeOrg().organization,
-      relayPiiConfig: JSON.stringify(TestStubs.DataScrubbingRelayPiiConfig()),
-    },
+  beforeEach(() => {
+    ConfigStore.set('user', UserFixture());
   });
 
   it('display redacted data', async function () {
-    const event = {
-      ...TestStubs.Event(),
+    const event = EventFixture({
       entries: [
         {
           type: 'request',
@@ -59,48 +59,50 @@ describe('Request entry', function () {
               url: null,
               query: null,
               data: {
-                a: {
-                  '': {
-                    rem: [['organization:0', 's', 0, 0]],
-                    len: 1,
-                    chunks: [
-                      {
-                        type: 'redaction',
-                        text: '',
-                        rule_id: 'organization:0',
-                        remark: 's',
-                      },
-                    ],
-                  },
-                },
-                c: {
-                  0: {
-                    d: {
-                      '': {
-                        rem: [['organization:0', 's', 0, 0]],
-                        len: 1,
-                        chunks: [
-                          {
-                            type: 'redaction',
-                            text: '',
-                            rule_id: 'organization:0',
-                            remark: 's',
-                          },
-                        ],
-                      },
+                0: {
+                  a: {
+                    '': {
+                      rem: [['organization:0', 's', 0, 0]],
+                      len: 1,
+                      chunks: [
+                        {
+                          type: 'redaction',
+                          text: '',
+                          rule_id: 'organization:0',
+                          remark: 's',
+                        },
+                      ],
                     },
-                    f: {
-                      '': {
-                        rem: [['organization:0', 's', 0, 0]],
-                        len: 1,
-                        chunks: [
-                          {
-                            type: 'redaction',
-                            text: '',
-                            rule_id: 'organization:0',
-                            remark: 's',
-                          },
-                        ],
+                  },
+                  c: {
+                    0: {
+                      d: {
+                        '': {
+                          rem: [['organization:0', 's', 0, 0]],
+                          len: 1,
+                          chunks: [
+                            {
+                              type: 'redaction',
+                              text: '',
+                              rule_id: 'organization:0',
+                              remark: 's',
+                            },
+                          ],
+                        },
+                      },
+                      f: {
+                        '': {
+                          rem: [['organization:0', 's', 0, 0]],
+                          len: 1,
+                          chunks: [
+                            {
+                              type: 'redaction',
+                              text: '',
+                              rule_id: 'organization:0',
+                              remark: 's',
+                            },
+                          ],
+                        },
                       },
                     },
                   },
@@ -168,43 +170,37 @@ describe('Request entry', function () {
           },
         },
       },
-    };
+    });
 
-    render(
-      <OrganizationContext.Provider value={organization}>
-        <RouteContext.Provider
-          value={{
-            router,
-            location: router.location,
-            params: {},
-            routes: [],
-          }}
-        >
-          <Request event={event} data={event.entries[0].data} />
-        </RouteContext.Provider>
-      </OrganizationContext.Provider>
-    );
+    render(<Request event={event} data={event.entries[0]!.data} />, {
+      organization: {
+        relayPiiConfig: JSON.stringify(DataScrubbingRelayPiiConfigFixture()),
+      },
+    });
 
     expect(screen.getAllByText(/redacted/)).toHaveLength(5);
 
-    userEvent.click(await screen.findByLabelText('Expand'));
+    // Expand two levels down
+    await userEvent.click(await screen.findByLabelText('Expand'));
+    await userEvent.click(await screen.findByLabelText('Expand'));
 
     expect(screen.getAllByText(/redacted/)).toHaveLength(7);
 
-    userEvent.hover(screen.getAllByText(/redacted/)[0]);
+    await userEvent.hover(screen.getAllByText(/redacted/)[0]!);
 
     expect(
       await screen.findByText(
         textWithMarkupMatcher(
-          'Replaced because of the PII rule [Replace] [Password fields] with [Scrubbed] from [password] in the settings of the organization org-slug'
+          "Replaced because of the data scrubbing rule [Replace] [Password fields] with [Scrubbed] from [password] in your organization's settings"
         )
       )
     ).toBeInTheDocument(); // tooltip description
   });
 
-  describe('getBodySection', function () {
+  describe('body section', function () {
     it('should return plain-text when given unrecognized inferred Content-Type', function () {
       const data: EntryRequest['data'] = {
+        apiTarget: null,
         query: [],
         data: 'helloworld',
         headers: [],
@@ -216,30 +212,20 @@ describe('Request entry', function () {
         fragment: null,
       };
 
-      const event = {
-        ...TestStubs.Event(),
+      const event = EventFixture({
         entries: [
           {
             type: EntryType.REQUEST,
             data,
           },
         ],
-      };
+      });
 
-      render(
-        <OrganizationContext.Provider value={organization}>
-          <RouteContext.Provider
-            value={{
-              router,
-              location: router.location,
-              params: {},
-              routes: [],
-            }}
-          >
-            <Request event={event} data={event.entries[0].data} />
-          </RouteContext.Provider>
-        </OrganizationContext.Provider>
-      );
+      render(<Request event={event} data={event.entries[0]!.data} />, {
+        organization: {
+          relayPiiConfig: JSON.stringify(DataScrubbingRelayPiiConfigFixture()),
+        },
+      });
 
       expect(
         screen.getByTestId('rich-http-content-body-section-pre')
@@ -248,6 +234,7 @@ describe('Request entry', function () {
 
     it('should return a KeyValueList element when inferred Content-Type is x-www-form-urlencoded', function () {
       const data: EntryRequest['data'] = {
+        apiTarget: null,
         query: [],
         data: {foo: ['bar'], bar: ['baz']},
         headers: [],
@@ -259,30 +246,20 @@ describe('Request entry', function () {
         fragment: null,
       };
 
-      const event = {
-        ...TestStubs.Event(),
+      const event = EventFixture({
         entries: [
           {
             type: EntryType.REQUEST,
             data,
           },
         ],
-      };
+      });
 
-      render(
-        <OrganizationContext.Provider value={organization}>
-          <RouteContext.Provider
-            value={{
-              router,
-              location: router.location,
-              params: {},
-              routes: [],
-            }}
-          >
-            <Request event={event} data={event.entries[0].data} />
-          </RouteContext.Provider>
-        </OrganizationContext.Provider>
-      );
+      render(<Request event={event} data={event.entries[0]!.data} />, {
+        organization: {
+          relayPiiConfig: JSON.stringify(DataScrubbingRelayPiiConfigFixture()),
+        },
+      });
 
       expect(
         screen.getByTestId('rich-http-content-body-key-value-list')
@@ -291,6 +268,7 @@ describe('Request entry', function () {
 
     it('should return a ContextData element when inferred Content-Type is application/json', function () {
       const data: EntryRequest['data'] = {
+        apiTarget: null,
         query: [],
         data: {foo: 'bar'},
         headers: [],
@@ -302,30 +280,20 @@ describe('Request entry', function () {
         fragment: null,
       };
 
-      const event = {
-        ...TestStubs.Event(),
+      const event = EventFixture({
         entries: [
           {
             type: EntryType.REQUEST,
             data,
           },
         ],
-      };
+      });
 
-      render(
-        <OrganizationContext.Provider value={organization}>
-          <RouteContext.Provider
-            value={{
-              router,
-              location: router.location,
-              params: {},
-              routes: [],
-            }}
-          >
-            <Request event={event} data={event.entries[0].data} />
-          </RouteContext.Provider>
-        </OrganizationContext.Provider>
-      );
+      render(<Request event={event} data={event.entries[0]!.data} />, {
+        organization: {
+          relayPiiConfig: JSON.stringify(DataScrubbingRelayPiiConfigFixture()),
+        },
+      });
 
       expect(
         screen.getByTestId('rich-http-content-body-context-data')
@@ -336,6 +304,7 @@ describe('Request entry', function () {
       // > decodeURIComponent('a%AFc')
       // URIError: URI malformed
       const data: EntryRequest['data'] = {
+        apiTarget: null,
         query: 'a%AFc',
         data: '',
         headers: [],
@@ -346,36 +315,59 @@ describe('Request entry', function () {
         fragment: null,
       };
 
-      const event = {
-        ...TestStubs.Event(),
+      const event = EventFixture({
         entries: [
           {
             type: EntryType.REQUEST,
             data,
           },
         ],
-      };
+      });
 
       expect(() =>
-        render(
-          <OrganizationContext.Provider value={organization}>
-            <RouteContext.Provider
-              value={{
-                router,
-                location: router.location,
-                params: {},
-                routes: [],
-              }}
-            >
-              <Request event={event} data={event.entries[0].data} />
-            </RouteContext.Provider>
-          </OrganizationContext.Provider>
-        )
+        render(<Request event={event} data={event.entries[0]!.data} />, {
+          organization: {
+            relayPiiConfig: JSON.stringify(DataScrubbingRelayPiiConfigFixture()),
+          },
+        })
+      ).not.toThrow();
+    });
+
+    it('should remove any non-tuple values from array', function () {
+      const user = UserFixture();
+      user.options.prefersIssueDetailsStreamlinedUI = true;
+      ConfigStore.set('user', user);
+
+      const data: EntryRequest['data'] = {
+        apiTarget: null,
+        query: 'a%AFc',
+        data: '',
+        headers: [['foo', 'bar'], null],
+        cookies: [],
+        env: {},
+        method: 'POST',
+        url: '/Home/PostIndex',
+      };
+      const event = EventFixture({
+        entries: [
+          {
+            type: EntryType.REQUEST,
+            data,
+          },
+        ],
+      });
+      expect(() =>
+        render(<Request event={event} data={event.entries[0]!.data} />, {
+          organization: {
+            relayPiiConfig: JSON.stringify(DataScrubbingRelayPiiConfigFixture()),
+          },
+        })
       ).not.toThrow();
     });
 
     it("should not cause an invariant violation if data.data isn't a string", function () {
       const data: EntryRequest['data'] = {
+        apiTarget: null,
         query: [],
         data: [{foo: 'bar', baz: 1}],
         headers: [],
@@ -386,32 +378,101 @@ describe('Request entry', function () {
         fragment: null,
       };
 
-      const event = {
-        ...TestStubs.Event(),
+      const event = EventFixture({
         entries: [
           {
             type: EntryType.REQUEST,
             data,
           },
         ],
-      };
+      });
 
       expect(() =>
-        render(
-          <OrganizationContext.Provider value={organization}>
-            <RouteContext.Provider
-              value={{
-                router,
-                location: router.location,
-                params: {},
-                routes: [],
-              }}
-            >
-              <Request event={event} data={event.entries[0].data} />
-            </RouteContext.Provider>
-          </OrganizationContext.Provider>
-        )
+        render(<Request event={event} data={event.entries[0]!.data} />, {
+          organization: {
+            relayPiiConfig: JSON.stringify(DataScrubbingRelayPiiConfigFixture()),
+          },
+        })
       ).not.toThrow();
+    });
+
+    describe('graphql', function () {
+      it('should render a graphql query and variables', function () {
+        const data: EntryRequest['data'] = {
+          apiTarget: 'graphql',
+          method: 'POST',
+          url: '/graphql/',
+          data: {
+            query: 'query Test { test }',
+            variables: {foo: 'bar'},
+            operationName: 'Test',
+          },
+        };
+
+        const event = EventFixture({
+          entries: [
+            {
+              type: EntryType.REQUEST,
+              data,
+            },
+          ],
+        });
+
+        render(<Request event={event} data={event.entries[0]!.data} />);
+
+        expect(screen.getByText('query Test { test }')).toBeInTheDocument();
+        expect(screen.getByRole('row', {name: 'operationName Test'})).toBeInTheDocument();
+        expect(
+          screen.getByRole('row', {name: 'variables { foo : bar }'})
+        ).toBeInTheDocument();
+      });
+
+      it('highlights graphql query lines with errors', async function () {
+        const data: EntryRequest['data'] = {
+          apiTarget: 'graphql',
+          method: 'POST',
+          url: '/graphql/',
+          data: {
+            query: 'query Test { test }',
+            variables: {foo: 'bar'},
+            operationName: 'Test',
+          },
+        };
+
+        const event = EventFixture({
+          entries: [
+            {
+              type: EntryType.REQUEST,
+              data,
+            },
+          ],
+          contexts: {
+            response: {
+              data: {
+                errors: [{message: 'Very bad error', locations: [{line: 1, column: 2}]}],
+              },
+            },
+          },
+        });
+
+        const {container} = render(
+          <Request event={event} data={event.entries[0]!.data} />
+        );
+
+        // eslint-disable-next-line testing-library/no-container
+        expect(container.querySelector('.line-highlight')).toBeInTheDocument();
+        expect(
+          // eslint-disable-next-line testing-library/no-container
+          container.querySelector('.line-highlight')?.getAttribute('data-start')
+        ).toBe('1');
+        expect(
+          screen.getByText('There was 1 GraphQL error raised during this request.')
+        ).toBeInTheDocument();
+
+        await userEvent.click(screen.getByText(/There was 1 GraphQL error/i));
+
+        expect(screen.getByText('Line 1 Column 2: Very bad error')).toBeInTheDocument();
+      });
     });
   });
 });

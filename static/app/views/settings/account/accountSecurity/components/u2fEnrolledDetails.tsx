@@ -1,20 +1,23 @@
 import {Fragment, useState} from 'react';
 import styled from '@emotion/styled';
 
-import Button from 'sentry/components/button';
+import {Button, LinkButton} from 'sentry/components/button';
 import Confirm from 'sentry/components/confirm';
-import DateTime from 'sentry/components/dateTime';
+import {DateTime} from 'sentry/components/dateTime';
 import EmptyMessage from 'sentry/components/emptyMessage';
 import Input from 'sentry/components/input';
-import {Panel, PanelBody, PanelHeader, PanelItem} from 'sentry/components/panels';
-import Tooltip from 'sentry/components/tooltip';
+import Panel from 'sentry/components/panels/panel';
+import PanelBody from 'sentry/components/panels/panelBody';
+import PanelHeader from 'sentry/components/panels/panelHeader';
+import PanelItem from 'sentry/components/panels/panelItem';
+import {Tooltip} from 'sentry/components/tooltip';
 import {IconClose, IconDelete} from 'sentry/icons';
 import {t} from 'sentry/locale';
-import space from 'sentry/styles/space';
+import {space} from 'sentry/styles/space';
 import ConfirmHeader from 'sentry/views/settings/account/accountSecurity/components/confirmHeader';
 import TextBlock from 'sentry/views/settings/components/text/textBlock';
 
-const U2fEnrolledDetails = props => {
+function U2fEnrolledDetails(props: any) {
   const {className, isEnrolled, devices, id, onRemoveU2fDevice, onRenameU2fDevice} =
     props;
 
@@ -34,7 +37,7 @@ const U2fEnrolledDetails = props => {
           <EmptyMessage>{t('You have not added any U2F devices')}</EmptyMessage>
         )}
         {hasDevices &&
-          devices?.map((device, i) => (
+          devices?.map((device: any, i: any) => (
             <Device
               key={i}
               device={device}
@@ -44,16 +47,16 @@ const U2fEnrolledDetails = props => {
             />
           ))}
         <AddAnotherPanelItem>
-          <Button type="button" to="/settings/account/security/mfa/u2f/enroll/" size="sm">
+          <LinkButton to="/settings/account/security/mfa/u2f/enroll/" size="sm">
             {t('Add Another Device')}
-          </Button>
+          </LinkButton>
         </AddAnotherPanelItem>
       </PanelBody>
     </Panel>
   );
-};
+}
 
-const Device = props => {
+function Device(props: any) {
   const {device, isLastDevice, onRenameU2fDevice, onRemoveU2fDevice} = props;
   const [deviceName, setDeviceName] = useState(device.name);
   const [isEditing, setEditting] = useState(false);
@@ -78,7 +81,7 @@ const Device = props => {
               <Fragment>
                 <ConfirmHeader>{t('Do you want to remove U2F device?')}</ConfirmHeader>
                 <TextBlock>
-                  {t(`Are you sure you want to remove the U2F device "${device.name}"?`)}
+                  {t('Are you sure you want to remove the U2F device "%s"?', device.name)}
                 </TextBlock>
               </Fragment>
             }
@@ -136,7 +139,7 @@ const Device = props => {
       </Actions>
     </DevicePanelItem>
   );
-};
+}
 
 const DeviceNameInput = styled(Input)`
   width: 50%;

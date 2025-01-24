@@ -1,7 +1,3 @@
-// eslint-disable-next-line no-restricted-imports
-import {browserHistory, withRouter, WithRouterProps} from 'react-router';
-import {Location} from 'history';
-
 import Feature from 'sentry/components/acl/feature';
 import OptionSelector from 'sentry/components/charts/optionSelector';
 import {
@@ -12,21 +8,22 @@ import {
   SectionValue,
 } from 'sentry/components/charts/styles';
 import Count from 'sentry/components/count';
-import {Panel} from 'sentry/components/panels';
+import Panel from 'sentry/components/panels/panel';
 import {t} from 'sentry/locale';
-import {Organization} from 'sentry/types';
+import type {Organization} from 'sentry/types/organization';
 import {defined} from 'sentry/utils';
-import trackAdvancedAnalyticsEvent from 'sentry/utils/analytics/trackAdvancedAnalyticsEvent';
-import EventView from 'sentry/utils/discover/eventView';
-import {SpanSlug} from 'sentry/utils/performance/suspectSpans/types';
+import {trackAnalytics} from 'sentry/utils/analytics';
+import type EventView from 'sentry/utils/discover/eventView';
+import type {SpanSlug} from 'sentry/utils/performance/suspectSpans/types';
 import {decodeScalar} from 'sentry/utils/queryString';
+import {useLocation} from 'sentry/utils/useLocation';
+import {useNavigate} from 'sentry/utils/useNavigate';
 
 import ExclusiveTimeHistogram from './exclusiveTimeHistogram';
 import ExclusiveTimeTimeSeries from './exclusiveTimeTimeSeries';
 
-type Props = WithRouterProps & {
+type Props = {
   eventView: EventView;
-  location: Location;
   organization: Organization;
   spanSlug: SpanSlug;
   totalCount?: number;
@@ -38,9 +35,10 @@ enum DisplayModes {
 }
 
 function Chart(props: Props) {
-  const {location} = props;
+  const navigate = useNavigate();
+  const location = useLocation();
 
-  const display = decodeScalar(props.location.query.display, DisplayModes.TIMESERIES);
+  const display = decodeScalar(location.query.display, DisplayModes.TIMESERIES);
 
   function generateDisplayOptions() {
     return [
@@ -50,12 +48,12 @@ function Chart(props: Props) {
   }
 
   function handleDisplayChange(value: string) {
-    trackAdvancedAnalyticsEvent('performance_views.span_summary.change_chart', {
+    trackAnalytics('performance_views.span_summary.change_chart', {
       organization: props.organization,
       change_to_display: value,
     });
 
-    browserHistory.push({
+    navigate({
       pathname: location.pathname,
       query: {
         ...location.query,
@@ -67,7 +65,7 @@ function Chart(props: Props) {
   return (
     <Panel>
       <ChartContainer>
-        <Feature features={['performance-span-histogram-view']}>
+        <Feature features="performance-span-histogram-view">
           {({hasFeature}) => {
             if (hasFeature) {
               if (display === DisplayModes.TIMESERIES) {
@@ -79,7 +77,7 @@ function Chart(props: Props) {
           }}
         </Feature>
       </ChartContainer>
-      <Feature features={['performance-span-histogram-view']}>
+      <Feature features="performance-span-histogram-view">
         <ChartControls>
           <InlineContainer>
             <SectionHeading>{t('Total Events')}</SectionHeading>
@@ -101,4 +99,4 @@ function Chart(props: Props) {
   );
 }
 
-export default withRouter(Chart);
+export default Chart;

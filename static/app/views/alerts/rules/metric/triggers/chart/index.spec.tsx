@@ -1,7 +1,8 @@
+import {EventsStatsFixture} from 'sentry-fixture/events';
+
 import {initializeOrg} from 'sentry-test/initializeOrg';
 import {render, screen} from 'sentry-test/reactTestingLibrary';
 
-import {Client} from 'sentry/api';
 import TriggersChart from 'sentry/views/alerts/rules/metric/triggers/chart';
 import {
   AlertRuleComparisonType,
@@ -10,19 +11,87 @@ import {
 } from 'sentry/views/alerts/rules/metric/types';
 
 describe('Incident Rules Create', () => {
-  const eventStatsMock = MockApiClient.addMockResponse({
-    url: '/organizations/org-slug/events-stats/',
-    body: TestStubs.EventsStats(),
+  let eventStatsMock: jest.Func;
+  let eventCountsMock: jest.Func;
+  beforeEach(() => {
+    eventStatsMock = MockApiClient.addMockResponse({
+      url: '/organizations/org-slug/events-stats/',
+      body: EventsStatsFixture(),
+    });
+
+    eventCountsMock = MockApiClient.addMockResponse({
+      url: '/organizations/org-slug/events-meta/',
+      body: {count: 5},
+    });
+
+    MockApiClient.addMockResponse({
+      url: '/organizations/org-slug/events/',
+      body: {},
+    });
+  });
+  afterEach(() => {
+    MockApiClient.clearMockResponses();
   });
 
-  const eventCountsMock = MockApiClient.addMockResponse({
-    url: '/organizations/org-slug/events-meta/',
-    body: {count: 5},
-  });
-
-  const api = new Client();
+  const api = new MockApiClient();
 
   it('renders a metric', async () => {
+    const {organization, project, router} = initializeOrg();
+
+    render(
+      <TriggersChart
+        api={api}
+        anomalies={[]}
+        location={router.location}
+        organization={organization}
+        projects={[project]}
+        query="event.type:error"
+        timeWindow={1}
+        aggregate="count()"
+        dataset={Dataset.ERRORS}
+        triggers={[]}
+        environment={null}
+        comparisonType={AlertRuleComparisonType.COUNT}
+        resolveThreshold={null}
+        thresholdType={AlertRuleThresholdType.BELOW}
+        newAlertOrQuery
+        onDataLoaded={() => {}}
+        isQueryValid
+        showTotalCount
+      />
+    );
+
+    expect(await screen.findByTestId('area-chart')).toBeInTheDocument();
+    expect(await screen.findByTestId('alert-total-events')).toBeInTheDocument();
+
+    expect(eventStatsMock).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        query: {
+          interval: '1m',
+          project: [2],
+          query: 'event.type:error',
+          statsPeriod: '9998m',
+          yAxis: 'count()',
+          referrer: 'api.organization-event-stats',
+        },
+      })
+    );
+
+    expect(eventCountsMock).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        query: {
+          project: ['2'],
+          query: 'event.type:error',
+          statsPeriod: '9998m',
+          environment: [],
+        },
+      })
+    );
+  });
+
+  it('does not show & query total count if showTotalCount === false', async () => {
     const {organization, project, router} = initializeOrg();
 
     render(
@@ -41,11 +110,13 @@ describe('Incident Rules Create', () => {
         resolveThreshold={null}
         thresholdType={AlertRuleThresholdType.BELOW}
         newAlertOrQuery
-        handleMEPAlertDataset={() => {}}
+        onDataLoaded={() => {}}
+        isQueryValid
       />
     );
 
     expect(await screen.findByTestId('area-chart')).toBeInTheDocument();
+    expect(screen.queryByTestId('alert-total-events')).not.toBeInTheDocument();
 
     expect(eventStatsMock).toHaveBeenCalledWith(
       expect.anything(),
@@ -54,9 +125,67 @@ describe('Incident Rules Create', () => {
           interval: '1m',
           project: [2],
           query: 'event.type:error',
-          statsPeriod: '10000m',
+          statsPeriod: '9998m',
           yAxis: 'count()',
           referrer: 'api.organization-event-stats',
+        },
+      })
+    );
+
+    expect(eventCountsMock).not.toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        query: {
+          project: ['2'],
+          query: 'event.type:error',
+          statsPeriod: '9998m',
+          environment: [],
+        },
+      })
+    );
+  });
+
+  it('queries the errors dataset if dataset is errors', async () => {
+    const {organization, project, router} = initializeOrg({
+      organization: {features: ['performance-discover-dataset-selector']},
+    });
+
+    render(
+      <TriggersChart
+        api={api}
+        location={router.location}
+        organization={organization}
+        projects={[project]}
+        query="event.type:error"
+        timeWindow={1}
+        aggregate="count()"
+        dataset={Dataset.ERRORS}
+        triggers={[]}
+        environment={null}
+        comparisonType={AlertRuleComparisonType.COUNT}
+        resolveThreshold={null}
+        thresholdType={AlertRuleThresholdType.BELOW}
+        newAlertOrQuery
+        onDataLoaded={() => {}}
+        isQueryValid
+        showTotalCount
+      />
+    );
+
+    expect(await screen.findByTestId('area-chart')).toBeInTheDocument();
+    expect(await screen.findByTestId('alert-total-events')).toBeInTheDocument();
+
+    expect(eventStatsMock).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        query: {
+          interval: '1m',
+          project: [2],
+          query: 'event.type:error',
+          statsPeriod: '9998m',
+          yAxis: 'count()',
+          referrer: 'api.organization-event-stats',
+          dataset: 'errors',
         },
       })
     );
@@ -67,9 +196,100 @@ describe('Incident Rules Create', () => {
         query: {
           project: ['2'],
           query: 'event.type:error',
-          statsPeriod: '10000m',
+          statsPeriod: '9998m',
           environment: [],
+          dataset: 'errors',
         },
+      })
+    );
+  });
+
+  it('queries custom metrics using the metricsEnhanced dataset and metrics layer', async () => {
+    const {organization, project, router} = initializeOrg({
+      organization: {features: ['custom-metrics']},
+    });
+
+    render(
+      <TriggersChart
+        api={api}
+        location={router.location}
+        organization={organization}
+        projects={[project]}
+        query=""
+        timeWindow={1}
+        aggregate="count(d:custom/my_metric@seconds)"
+        dataset={Dataset.GENERIC_METRICS}
+        triggers={[]}
+        environment={null}
+        comparisonType={AlertRuleComparisonType.COUNT}
+        resolveThreshold={null}
+        thresholdType={AlertRuleThresholdType.BELOW}
+        newAlertOrQuery
+        onDataLoaded={() => {}}
+        isQueryValid
+        showTotalCount
+      />
+    );
+
+    expect(await screen.findByTestId('area-chart')).toBeInTheDocument();
+    expect(await screen.findByTestId('alert-total-events')).toBeInTheDocument();
+
+    expect(eventStatsMock).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        query: {
+          interval: '1m',
+          project: [2],
+          query: '',
+          statsPeriod: '9998m',
+          yAxis: 'count(d:custom/my_metric@seconds)',
+          referrer: 'api.organization-event-stats',
+          forceMetricsLayer: 'true',
+          dataset: 'metricsEnhanced',
+        },
+      })
+    );
+  });
+
+  it('does a 7 day query for confidence data on the EAP dataset', async () => {
+    const {organization, project, router} = initializeOrg({
+      organization: {features: ['alerts-eap']},
+    });
+
+    render(
+      <TriggersChart
+        api={api}
+        location={router.location}
+        organization={organization}
+        projects={[project]}
+        query=""
+        timeWindow={1}
+        aggregate="count(span.duration)"
+        dataset={Dataset.EVENTS_ANALYTICS_PLATFORM}
+        triggers={[]}
+        environment={null}
+        comparisonType={AlertRuleComparisonType.COUNT}
+        resolveThreshold={null}
+        thresholdType={AlertRuleThresholdType.BELOW}
+        newAlertOrQuery
+        onDataLoaded={() => {}}
+        isQueryValid
+        showTotalCount
+        includeConfidence
+      />
+    );
+
+    expect(await screen.findByTestId('area-chart')).toBeInTheDocument();
+    expect(await screen.findByTestId('alert-total-events')).toBeInTheDocument();
+
+    expect(eventStatsMock).toHaveBeenCalledWith(
+      '/organizations/org-slug/events-stats/',
+      expect.objectContaining({
+        query: expect.objectContaining({
+          dataset: 'spans',
+          statsPeriod: '9998m',
+          yAxis: 'count(span.duration)',
+        }),
       })
     );
   });

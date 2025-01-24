@@ -1,155 +1,118 @@
 import logging
-from datetime import datetime, timedelta
-from typing import (
-    Any,
-    Callable,
-    Mapping,
-    MutableMapping,
-    Optional,
-    Sequence,
-    TypedDict,
-    Union,
-    cast,
-)
+from collections.abc import Mapping
+from datetime import datetime, timezone
+from typing import Any, cast
 
-from arroyo import Topic
-from arroyo.backends.kafka import KafkaConsumer, KafkaPayload
-from arroyo.backends.kafka.configuration import build_kafka_consumer_configuration
-from arroyo.processing import StreamProcessor
-from arroyo.processing.strategies import ProcessingStrategy, ProcessingStrategyFactory
-from arroyo.types import Message, Partition, Position
-from django.conf import settings
+import orjson
+from arroyo.backends.kafka import KafkaPayload
+from arroyo.processing.strategies import (
+    CommitOffsets,
+    ProcessingStrategy,
+    ProcessingStrategyFactory,
+)
+from arroyo.types import Commit, Message, Partition
+from django.core.cache import cache
+from sentry_kafka_schemas.schema_types.snuba_generic_metrics_v1 import GenericMetric
 
 from sentry.constants import DataCategory
-from sentry.sentry_metrics.indexer.strings import TRANSACTION_METRICS_NAMES
-from sentry.utils import json
-from sentry.utils.kafka_config import get_kafka_consumer_cluster_options
+from sentry.models.project import Project
+from sentry.sentry_metrics.indexer.strings import SPAN_METRICS_NAMES, TRANSACTION_METRICS_NAMES
+from sentry.signals import first_custom_metric_received
+from sentry.snuba.metrics import parse_mri
+from sentry.snuba.metrics.naming_layer.mri import is_custom_metric
 from sentry.utils.outcomes import Outcome, track_outcome
 
 logger = logging.getLogger(__name__)
 
-
-def get_metrics_billing_consumer(
-    group_id: str,
-    auto_offset_reset: str,
-    force_topic: Union[str, None],
-    force_cluster: Union[str, None],
-    max_batch_size: int,
-    max_batch_time: int,
-) -> StreamProcessor[KafkaPayload]:
-    topic = force_topic or settings.KAFKA_SNUBA_GENERIC_METRICS
-    bootstrap_servers = _get_bootstrap_servers(topic, force_cluster)
-
-    return StreamProcessor(
-        consumer=KafkaConsumer(
-            build_kafka_consumer_configuration(
-                default_config={},
-                group_id=group_id,
-                auto_offset_reset=auto_offset_reset,
-                bootstrap_servers=bootstrap_servers,
-            ),
-        ),
-        topic=Topic(topic),
-        processor_factory=BillingMetricsConsumerStrategyFactory(max_batch_size, max_batch_time),
-    )
+# 7 days of TTL.
+CACHE_TTL_IN_SECONDS = 60 * 60 * 24 * 7
 
 
-def _get_bootstrap_servers(topic: str, force_cluster: Union[str, None]) -> Sequence[str]:
-    cluster = force_cluster or settings.KAFKA_TOPICS[topic]["cluster"]
-
-    options = get_kafka_consumer_cluster_options(cluster)
-    servers = options["bootstrap.servers"]
-    if isinstance(servers, (list, tuple)):
-        return servers
-    return [servers]
+def _get_project_flag_updated_cache_key(org_id: int, project_id: int) -> str:
+    return f"has-custom-metrics-flag-updated:{org_id}:{project_id}"
 
 
 class BillingMetricsConsumerStrategyFactory(ProcessingStrategyFactory[KafkaPayload]):
-    def __init__(self, max_batch_size: int, max_batch_time: int):
-        self.__max_batch_size = max_batch_size
-        self.__max_batch_time = max_batch_time
-
     def create_with_partitions(
         self,
-        commit: Callable[[Mapping[Partition, Position]], None],
+        commit: Commit,
         partitions: Mapping[Partition, int],
     ) -> ProcessingStrategy[KafkaPayload]:
-        return BillingTxCountMetricConsumerStrategy(
-            commit, self.__max_batch_size, self.__max_batch_time
-        )
-
-
-class MetricsBucket(TypedDict):
-    """
-    Metrics bucket as decoded from kafka.
-
-    Only defines the fields that are relevant for this consumer."""
-
-    org_id: int
-    project_id: int
-    metric_id: int
-    timestamp: int
-    value: Any
+        return BillingTxCountMetricConsumerStrategy(CommitOffsets(commit))
 
 
 class BillingTxCountMetricConsumerStrategy(ProcessingStrategy[KafkaPayload]):
-    """A metrics consumer that generates a billing outcome for each processed
-    transaction, processing a bucket at a time. The transaction count is
-    computed from the amount of values from `d:transactions/duration@millisecond`
-    buckets.
+    """A metrics consumer that generates an accepted outcome for each processed (as opposed to indexed)
+    transaction or span, processing a bucket at a time. The transaction / span count is
+    directly taken from the `c:transactions/usage@none` or `c:spans/usage@none` counter metric.
+
+    See https://develop.sentry.dev/application-architecture/dynamic-sampling/outcomes/.
     """
 
-    #: The ID of the metric used to count transactions
-    metric_id = TRANSACTION_METRICS_NAMES["d:transactions/duration@millisecond"]
+    #: The IDs of the metrics used to count transactions or spans
+    metric_ids = {
+        TRANSACTION_METRICS_NAMES["c:transactions/usage@none"]: DataCategory.TRANSACTION,
+        SPAN_METRICS_NAMES["c:spans/usage@none"]: DataCategory.SPAN,
+    }
 
-    def __init__(
-        self,
-        commit: Callable[[Mapping[Partition, Position]], None],
-        max_batch_size: int,
-        max_batch_time: int,
-    ) -> None:
-        self.__commit = commit
-        self.__max_batch_size = max_batch_size
-        self.__max_batch_time = timedelta(milliseconds=max_batch_time)
-        self.__messages_since_last_commit = 0
-        self.__last_commit = datetime.now()
-        self.__ready_to_commit: MutableMapping[Partition, Position] = {}
+    def __init__(self, next_step: ProcessingStrategy[Any]) -> None:
+        self.__next_step = next_step
         self.__closed = False
 
     def poll(self) -> None:
-        if self._should_commit():
-            self._bulk_commit()
+        self.__next_step.poll()
 
     def terminate(self) -> None:
         self.close()
 
     def close(self) -> None:
         self.__closed = True
+        self.__next_step.close()
 
     def submit(self, message: Message[KafkaPayload]) -> None:
         assert not self.__closed
-        self.__messages_since_last_commit += 1
 
         payload = self._get_payload(message)
-        self._produce_billing_outcomes(payload)
-        self._mark_commit_ready(message)
 
-    def _get_payload(self, message: Message[KafkaPayload]) -> MetricsBucket:
-        payload = json.loads(message.payload.value.decode("utf-8"), use_rapid_json=True)
-        return cast(MetricsBucket, payload)
+        self._produce_outcomes(payload)
+        self._flag_metric_received_for_project(payload)
 
-    def _count_processed_transactions(self, bucket_payload: MetricsBucket) -> int:
-        if bucket_payload["metric_id"] != self.metric_id:
-            return 0
-        value = bucket_payload["value"]
+        self.__next_step.submit(message)
+
+    def _get_payload(self, message: Message[KafkaPayload]) -> GenericMetric:
+        payload = orjson.loads(message.payload.value)
+        return cast(GenericMetric, payload)
+
+    def _count_processed_items(self, generic_metric: GenericMetric) -> Mapping[DataCategory, int]:
+        metric_id = generic_metric["metric_id"]
         try:
-            return len(value)
+            data_category = self.metric_ids[metric_id]
+        except KeyError:
+            return {}
+
+        value = generic_metric["value"]
+        try:
+            quantity = max(int(value), 0)  # type: ignore[arg-type]
         except TypeError:
             # Unexpected value type for this metric ID, skip.
-            return 0
+            return {}
 
-    def _produce_billing_outcomes(self, payload: MetricsBucket) -> None:
-        quantity = self._count_processed_transactions(payload)
+        items = {data_category: quantity}
+
+        return items
+
+    def _produce_outcomes(self, generic_metric: GenericMetric) -> None:
+        for category, quantity in self._count_processed_items(generic_metric).items():
+            self._produce_accepted_outcome(
+                org_id=generic_metric["org_id"],
+                project_id=generic_metric["project_id"],
+                category=category,
+                quantity=quantity,
+            )
+
+    def _produce_accepted_outcome(
+        self, *, org_id: int, project_id: int, category: DataCategory, quantity: int
+    ) -> None:
         if quantity < 1:
             return
 
@@ -160,34 +123,47 @@ class BillingTxCountMetricConsumerStrategy(ProcessingStrategy[KafkaPayload]):
         # we may have to revisit this part to achieve a
         # better approximation of exactly-once delivery.
         track_outcome(
-            org_id=payload["org_id"],
-            project_id=payload["project_id"],
+            org_id=org_id,
+            project_id=project_id,
             key_id=None,
             outcome=Outcome.ACCEPTED,
             reason=None,
-            timestamp=datetime.fromtimestamp(payload["timestamp"]),
+            timestamp=datetime.now(timezone.utc),
             event_id=None,
-            category=DataCategory.TRANSACTION_PROCESSED,
+            category=category,
             quantity=quantity,
         )
 
-    def _mark_commit_ready(self, message: Message[KafkaPayload]) -> None:
-        self.__ready_to_commit[message.partition] = Position(message.next_offset, message.timestamp)
+    def _flag_metric_received_for_project(self, generic_metric: GenericMetric) -> None:
+        try:
+            org_id = generic_metric["org_id"]
+            project_id = generic_metric["project_id"]
+            metric_mri = self._resolve(generic_metric["mapping_meta"], generic_metric["metric_id"])
 
-    def join(self, timeout: Optional[float] = None) -> None:
-        self._bulk_commit()
+            parsed_mri = parse_mri(metric_mri)
+            if parsed_mri is None or not is_custom_metric(parsed_mri):
+                return
 
-    def _should_commit(self) -> bool:
-        if not self.__ready_to_commit:
-            return False
-        if self.__messages_since_last_commit >= self.__max_batch_size:
-            return True
-        if self.__last_commit + self.__max_batch_time <= datetime.now():
-            return True
-        return False
+            # If the cache key is present, it means that we have already updated the metric flag for this project.
+            cache_key = _get_project_flag_updated_cache_key(org_id, project_id)
+            if cache.get(cache_key) is not None:
+                return
 
-    def _bulk_commit(self) -> None:
-        self.__commit(self.__ready_to_commit)
-        self.__ready_to_commit = {}
-        self.__messages_since_last_commit = 0
-        self.__last_commit = datetime.now()
+            project = Project.objects.get_from_cache(id=project_id)
+
+            if not project.flags.has_custom_metrics:
+                first_custom_metric_received.send_robust(project=project, sender=project)
+
+            cache.set(cache_key, "1", CACHE_TTL_IN_SECONDS)
+        except Project.DoesNotExist:
+            pass
+
+    def _resolve(self, mapping_meta: Mapping[str, Any], indexed_value: int) -> str | None:
+        for _, inner_meta in mapping_meta.items():
+            if (string_value := inner_meta.get(str(indexed_value))) is not None:
+                return string_value
+
+        return None
+
+    def join(self, timeout: float | None = None) -> None:
+        self.__next_step.join(timeout)

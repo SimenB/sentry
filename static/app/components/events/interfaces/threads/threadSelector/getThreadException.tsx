@@ -1,4 +1,4 @@
-import {Event, ExceptionType, ExceptionValue, Thread} from 'sentry/types';
+import type {Event, ExceptionType, ExceptionValue, Thread} from 'sentry/types/event';
 import {defined} from 'sentry/utils';
 
 function getException(
@@ -6,12 +6,12 @@ function getException(
   exceptionDataValues: ExceptionValue[],
   thread: Thread
 ) {
-  if (exceptionDataValues.length === 1 && !exceptionDataValues[0].stacktrace) {
+  if (exceptionDataValues.length === 1 && !exceptionDataValues[0]!.stacktrace) {
     return {
       ...exceptionData,
       values: [
         {
-          ...exceptionDataValues[0],
+          ...exceptionDataValues[0]!,
           stacktrace: thread.stacktrace,
           rawStacktrace: thread.rawStacktrace,
         },

@@ -1,9 +1,9 @@
-import {InjectedRouter} from 'react-router';
 import styled from '@emotion/styled';
-import {LocationDescriptor, LocationDescriptorObject} from 'history';
+import type {LocationDescriptor, LocationDescriptorObject} from 'history';
 
 import {openModal} from 'sentry/actionCreators/modal';
 import ContextPickerModal from 'sentry/components/contextPickerModal';
+import type {InjectedRouter} from 'sentry/types/legacyReactRouter';
 
 type Project = {
   id: string;
@@ -23,6 +23,7 @@ type Props = {
   noProjectRedirectPath: LocationDescriptor;
   projects: Project[];
   router: InjectedRouter;
+  allowAllProjectsSelection?: boolean;
 };
 
 function PickProjectToContinue({
@@ -30,6 +31,7 @@ function PickProjectToContinue({
   nextPath,
   router,
   projects,
+  allowAllProjectsSelection = false,
 }: Props) {
   const nextPathQuery = nextPath.query;
   let navigating = false;
@@ -47,7 +49,7 @@ function PickProjectToContinue({
 
   // if the project in URL is missing, but this release belongs to only one project, redirect there
   if (projects.length === 1) {
-    router.replace(path + projects[0].id);
+    router.replace(path + projects[0]!.id);
     return null;
   }
 
@@ -58,11 +60,12 @@ function PickProjectToContinue({
         needOrg={false}
         needProject
         nextPath={`${path}:project`}
-        onFinish={pathname => {
+        onFinish={to => {
           navigating = true;
-          router.replace(pathname);
+          router.replace(to);
         }}
         projectSlugs={projects.map(p => p.slug)}
+        allowAllProjectsSelection={allowAllProjectsSelection}
       />
     ),
     {

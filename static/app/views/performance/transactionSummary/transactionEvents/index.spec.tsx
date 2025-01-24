@@ -1,30 +1,32 @@
-import {browserHistory} from 'react-router';
+import {LocationFixture} from 'sentry-fixture/locationFixture';
 
-import {
-  initializeData as _initializeData,
-  initializeDataSettings,
-} from 'sentry-test/performance/initializePerformanceData';
-import {act, render, screen, userEvent, within} from 'sentry-test/reactTestingLibrary';
+import type {InitializeDataSettings} from 'sentry-test/performance/initializePerformanceData';
+import {initializeData as _initializeData} from 'sentry-test/performance/initializePerformanceData';
+import {act, render, screen, userEvent} from 'sentry-test/reactTestingLibrary';
 
 import ProjectsStore from 'sentry/stores/projectsStore';
 import {MEPSettingProvider} from 'sentry/utils/performance/contexts/metricsEnhancedSetting';
-import {OrganizationContext} from 'sentry/views/organizationContext';
+import {useLocation} from 'sentry/utils/useLocation';
 import TransactionEvents from 'sentry/views/performance/transactionSummary/transactionEvents';
+import {
+  EVENTS_TABLE_RESPONSE_FIELDS,
+  MOCK_EVENTS_TABLE_DATA,
+} from 'sentry/views/performance/transactionSummary/transactionEvents/testUtils';
 
-import {EVENTS_TABLE_RESPONSE_FIELDS, MOCK_EVENTS_TABLE_DATA} from './eventsTable.spec';
+jest.mock('sentry/utils/useLocation');
 
-const WrappedComponent = ({data}) => {
+const mockUseLocation = jest.mocked(useLocation);
+
+function WrappedComponent({data}: {data: ReturnType<typeof initializeData>}) {
   return (
-    <OrganizationContext.Provider value={data.organization}>
-      <MEPSettingProvider>
-        <TransactionEvents
-          organization={data.organization}
-          location={data.router.location}
-        />
-      </MEPSettingProvider>
-    </OrganizationContext.Provider>
+    <MEPSettingProvider>
+      <TransactionEvents
+        organization={data.organization}
+        location={data.router.location}
+      />
+    </MEPSettingProvider>
   );
-};
+}
 
 const setupMockApiResponeses = () => {
   MockApiClient.addMockResponse({
@@ -123,21 +125,42 @@ const setupMockApiResponeses = () => {
         options.query?.query.includes('transaction.duration:<=500'), // 500 refers to p50 value
     ],
   });
+  MockApiClient.addMockResponse({
+    url: '/organizations/org-slug/replay-count/',
+    body: {},
+  });
+  MockApiClient.addMockResponse({
+    url: `/organizations/org-slug/recent-searches/`,
+    body: [],
+  });
+  MockApiClient.addMockResponse({
+    url: `/organizations/org-slug/tags/`,
+    body: [],
+  });
 };
 
-const initializeData = (settings?: initializeDataSettings) => {
+const setupMocks = () => {
+  mockUseLocation.mockReturnValue(
+    LocationFixture({pathname: '/organizations/org-slug/performance/summary'})
+  );
+};
+
+const initializeData = (settings?: InitializeDataSettings) => {
   settings = {
     features: ['performance-view'],
     query: {project: '1', transaction: 'transaction'},
     ...settings,
   };
   const data = _initializeData(settings);
-  act(() => void ProjectsStore.loadInitialData(data.organization.projects));
+  act(() => void ProjectsStore.loadInitialData(data.projects));
   return data;
 };
 
 describe('Performance > Transaction Summary > Transaction Events > Index', () => {
-  beforeEach(setupMockApiResponeses);
+  beforeEach(() => {
+    setupMockApiResponeses();
+    setupMocks();
+  });
   afterEach(() => {
     MockApiClient.clearMockResponses();
     jest.clearAllMocks();
@@ -146,7 +169,7 @@ describe('Performance > Transaction Summary > Transaction Events > Index', () =>
   it('should contain all transaction events', async () => {
     const data = initializeData();
 
-    render(<WrappedComponent data={data} />, {context: data.routerContext});
+    render(<WrappedComponent data={data} />, {router: data.router});
     expect(await screen.findByText('uhoh@example.com')).toBeInTheDocument();
     expect(await screen.findByText('moreuhoh@example.com')).toBeInTheDocument();
   });
@@ -156,7 +179,7 @@ describe('Performance > Transaction Summary > Transaction Events > Index', () =>
       query: {project: '1', transaction: 'transaction', showTransactions: 'p50'},
     });
 
-    render(<WrappedComponent data={data} />, {context: data.routerContext});
+    render(<WrappedComponent data={data} />, {router: data.router});
     expect(await screen.findByText('uhoh@example.com')).toBeInTheDocument();
     expect(screen.queryByText('moreuhoh@example.com')).not.toBeInTheDocument();
   });
@@ -164,19 +187,19 @@ describe('Performance > Transaction Summary > Transaction Events > Index', () =>
   it('should update transaction percentile query if selected', async () => {
     const data = initializeData();
 
-    render(<WrappedComponent data={data} />, {context: data.routerContext});
-    const percentileContainer = await screen.findByRole('presentation');
-    const percentileButton = await within(percentileContainer).findByRole('button');
+    render(<WrappedComponent data={data} />, {router: data.router});
+    const percentileButton = await screen.findByRole('button', {
+      name: /percentile p100/i,
+    });
 
-    userEvent.click(percentileButton);
+    await userEvent.click(percentileButton);
 
-    const p50Selection = document.querySelector('[value=p50]') as HTMLElement;
+    const p50 = screen.getByRole('option', {name: 'p50'});
+    expect(p50).toBeInTheDocument();
 
-    expect(p50Selection).not.toBe(null);
+    await userEvent.click(p50);
 
-    userEvent.click(p50Selection);
-
-    expect(browserHistory.push).toHaveBeenCalledWith(
+    expect(data.router.push).toHaveBeenCalledWith(
       expect.objectContaining({query: expect.objectContaining({showTransactions: 'p50'})})
     );
   });

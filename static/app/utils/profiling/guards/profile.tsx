@@ -8,10 +8,6 @@ export function isSchema(input: any): input is Profiling.Schema {
   );
 }
 
-export function isNodeProfile(profile: any): profile is [Profiling.NodeProfile, {}] {
-  return Array.isArray(profile) && profile.length === 2 && isSampledProfile(profile[0]);
-}
-
 export function isEventedProfile(profile: any): profile is Profiling.EventedProfile {
   return 'type' in profile && profile.type === 'evented';
 }
@@ -24,38 +20,43 @@ export function isJSProfile(profile: any): profile is JSSelfProfiling.Trace {
   return !('type' in profile) && Array.isArray(profile.resources);
 }
 
-export function isChromeTraceObjectFormat(
+export function isSentrySampledProfile(
   profile: any
-): profile is ChromeTrace.ObjectFormat {
-  return typeof profile === 'object' && 'traceEvents' in profile;
-}
-
-// We check for the presence of at least one ProfileChunk event in the trace
-export function isChromeTraceArrayFormat(
-  profile: any
-): profile is ChromeTrace.ProfileType {
+): profile is Profiling.SentrySampledProfile {
   return (
-    Array.isArray(profile) && profile.some(p => p.ph === 'P' && p.name === 'ProfileChunk')
+    'profile' in profile &&
+    'samples' in profile.profile &&
+    'stacks' in profile.profile &&
+    'frames' in profile.profile
   );
 }
 
-// Typescript uses only a subset of the event types (only B and E cat),
-// so we need to inspect the contents of the trace to determine the type of the profile.
-// The TS trace can still contain other event types like metadata events, meaning we cannot
-// use array.every() and need to check all the events to make sure no P events are present
-export function isTypescriptChromeTraceArrayFormat(
+export function isSentryContinuousProfile(
   profile: any
-): profile is ChromeTrace.ArrayFormat {
+): profile is Profiling.ContinuousProfile {
   return (
-    Array.isArray(profile) &&
-    !profile.some(p => p.ph === 'P' && p.name === 'ProfileChunk')
+    'samples' in profile &&
+    'stacks' in profile &&
+    'frames' in profile &&
+    !('type' in profile) &&
+    !Array.isArray(profile.resources)
   );
 }
 
-export function isChromeTraceFormat(profile: any): profile is ChromeTrace.ArrayFormat {
-  return (
-    isTypescriptChromeTraceArrayFormat(profile) ||
-    isChromeTraceObjectFormat(profile) ||
-    isChromeTraceArrayFormat(profile)
-  );
+export function isSentryContinuousProfileChunk(
+  profile: any
+): profile is Profiling.SentryContinousProfileChunk {
+  return 'chunk_id' in profile;
+}
+
+export function isContinuousProfileReference(
+  ref: Profiling.BaseProfileReference
+): ref is Profiling.BaseContinuousProfileReference {
+  return typeof ref !== 'string' && 'profiler_id' in ref;
+}
+
+export function isTransactionProfileReference(
+  ref: Profiling.BaseProfileReference
+): ref is Profiling.BaseTransactionProfileReference {
+  return typeof ref !== 'string' && 'profile_id' in ref;
 }

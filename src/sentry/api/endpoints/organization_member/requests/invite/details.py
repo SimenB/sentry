@@ -5,17 +5,19 @@ from rest_framework.request import Request
 from rest_framework.response import Response
 
 from sentry import roles
+from sentry.api.api_publish_status import ApiPublishStatus
 from sentry.api.base import region_silo_endpoint
 from sentry.api.bases import OrganizationMemberEndpoint
 from sentry.api.bases.organization import OrganizationPermission
+from sentry.api.endpoints.organization_member.index import OrganizationMemberRequestSerializer
 from sentry.api.serializers import serialize
 from sentry.api.serializers.models.organization_member import OrganizationMemberWithTeamsSerializer
 from sentry.exceptions import UnableToAcceptMemberInvitationException
-from sentry.models import InviteStatus, Organization, OrganizationMember
+from sentry.models.organization import Organization
+from sentry.models.organizationmember import InviteStatus, OrganizationMember
 from sentry.utils.audit import get_api_key_for_audit_log
 
 from ... import get_allowed_org_roles, save_team_assignments
-from ...index import OrganizationMemberSerializer
 
 
 class ApproveInviteRequestSerializer(serializers.Serializer):
@@ -44,6 +46,11 @@ class InviteRequestPermissions(OrganizationPermission):
 
 @region_silo_endpoint
 class OrganizationInviteRequestDetailsEndpoint(OrganizationMemberEndpoint):
+    publish_status = {
+        "DELETE": ApiPublishStatus.PRIVATE,
+        "GET": ApiPublishStatus.PRIVATE,
+        "PUT": ApiPublishStatus.PRIVATE,
+    }
     permission_classes = (InviteRequestPermissions,)
 
     def _get_member(
@@ -83,16 +90,17 @@ class OrganizationInviteRequestDetailsEndpoint(OrganizationMemberEndpoint):
 
         Update and/or approve an invite request to an organization.
 
-        :pparam string organization_slug: the slug of the organization the member will belong to
+        :pparam string organization_id_or_slug: the id or slug of the organization the member will belong to
         :param string member_id: the member ID
         :param boolean approve: allows the member to be invited
         :param string role: the suggested role of the new member
-        :param array teams: the suggested slugs of the teams the member should belong to.
-
+        :param string orgRole: the suggested org-role of the new member
+        :param array teams: the teams which the member should belong to.
+        :param array teamRoles: the teams and team-roles assigned to the member
         :auth: required
         """
 
-        serializer = OrganizationMemberSerializer(
+        serializer = OrganizationMemberRequestSerializer(
             data=request.data,
             context={"organization": organization, "allowed_roles": roles.get_all()},
             partial=True,
@@ -103,11 +111,21 @@ class OrganizationInviteRequestDetailsEndpoint(OrganizationMemberEndpoint):
 
         result = serializer.validated_data
 
-        if result.get("role"):
-            member.update(role=result["role"])
+        if result.get("orgRole"):
+            member.role = result["orgRole"]
+            member.save()
+        elif result.get("role"):
+            member.role = result["role"]
+            member.save()
 
-        if "teams" in result:
-            save_team_assignments(member, result["teams"])
+        # Do not set team-roles when inviting members
+        if "teamRoles" in result or "teams" in result:
+            teams = (
+                [team for team, _ in result.get("teamRoles")]
+                if "teamRoles" in result and result["teamRoles"]
+                else result.get("teams")
+            )
+            save_team_assignments(member, teams)
 
         if "approve" in request.data:
             allowed_roles = get_allowed_org_roles(request, organization)
@@ -153,7 +171,7 @@ class OrganizationInviteRequestDetailsEndpoint(OrganizationMemberEndpoint):
 
         Delete an invite request to an organization.
 
-        :pparam string organization_slug: the slug of the organization the member would belong to
+        :pparam string organization_id_or_slug: the id or slug of the organization the member would belong to
         :param string member_id: the member ID
 
         :auth: required

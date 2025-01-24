@@ -1,47 +1,10 @@
-import {initializeOrg} from 'sentry-test/initializeOrg';
 import {render, screen} from 'sentry-test/reactTestingLibrary';
-
-import {OrganizationContext} from 'sentry/views/organizationContext';
-import {RouteContext} from 'sentry/views/routeContext';
 
 import ReplayTagsTableRow from './replayTagsTableRow';
 
-const releaseTag = {
-  key: 'release',
-  value: ['1.0.0', '2.0.0'],
-};
-
-const genericTag = {
-  key: 'foo',
-  value: ['bar', 'baz'],
-};
-
-function TestComponent({children}) {
-  const {organization, router} = initializeOrg();
-
-  return (
-    <OrganizationContext.Provider value={organization}>
-      <RouteContext.Provider
-        value={{
-          router,
-          location: router.location,
-          params: {},
-          routes: [],
-        }}
-      >
-        {children}
-      </RouteContext.Provider>
-    </OrganizationContext.Provider>
-  );
-}
-
 describe('ReplayTagsTableRow', () => {
   it('Should render tag key and value correctly', () => {
-    render(
-      <TestComponent>
-        <ReplayTagsTableRow tag={genericTag} />
-      </TestComponent>
-    );
+    render(<ReplayTagsTableRow name="foo" values={['bar', 'baz']} />);
 
     expect(screen.getByText('foo')).toBeInTheDocument();
     expect(screen.getByText('bar')).toBeInTheDocument();
@@ -49,11 +12,7 @@ describe('ReplayTagsTableRow', () => {
   });
 
   it('Should render release tags correctly', () => {
-    render(
-      <TestComponent>
-        <ReplayTagsTableRow tag={releaseTag} />
-      </TestComponent>
-    );
+    render(<ReplayTagsTableRow name="release" values={['1.0.0', '2.0.0']} />);
 
     expect(screen.getByText('release')).toBeInTheDocument();
     expect(screen.getByText('1.0.0')).toBeInTheDocument();
@@ -62,33 +21,30 @@ describe('ReplayTagsTableRow', () => {
 
   it('Should render the tag value as a link if we get a link result from generateUrl', () => {
     render(
-      <TestComponent>
-        <ReplayTagsTableRow tag={genericTag} generateUrl={() => 'https://foo.bar'} />
-      </TestComponent>
+      <ReplayTagsTableRow
+        name="foo"
+        values={['bar', 'baz']}
+        generateUrl={(name, value) => ({pathname: '/home', query: {[name]: value}})}
+      />
     );
 
-    expect(screen.getByText('foo')).toBeInTheDocument();
-    expect(screen.getByText('bar')).toBeInTheDocument();
-    expect(screen.getByText('bar').closest('a')).toHaveAttribute(
-      'href',
-      'https://foo.bar'
-    );
+    expect(screen.getByText('bar').closest('a')).toHaveAttribute('href', '/home?foo=bar');
+    expect(screen.getByText('baz').closest('a')).toHaveAttribute('href', '/home?foo=baz');
   });
 
-  it('Should not render the tag value as a link if we get the value in the query prop', () => {
+  it('Should render tags and values with spaces inside them', () => {
     render(
-      <TestComponent>
-        <ReplayTagsTableRow
-          tag={genericTag}
-          generateUrl={() => 'https://foo.bar'}
-          query="foo:bar"
-        />
-      </TestComponent>
+      <ReplayTagsTableRow
+        name="foo bar"
+        values={['biz baz']}
+        generateUrl={(name, value) => ({pathname: '/home', query: {[name]: value}})}
+      />
     );
 
-    expect(screen.getByText('foo')).toBeInTheDocument();
-    expect(screen.getByText('bar')).toBeInTheDocument();
-    // Expect bar to not be a link
-    expect(screen.getByText('bar').closest('a')).toBeNull();
+    expect(screen.getByText('foo bar')).toBeInTheDocument();
+    expect(screen.getByText('biz baz').closest('a')).toHaveAttribute(
+      'href',
+      '/home?foo%20bar=biz%20baz'
+    );
   });
 });

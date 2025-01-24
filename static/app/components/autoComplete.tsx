@@ -10,13 +10,20 @@
  */
 import {Component} from 'react';
 
-import DeprecatedDropdownMenu, {
-  GetActorArgs,
-  GetMenuArgs,
-} from 'sentry/components/deprecatedDropdownMenu';
+import type {GetActorArgs, GetMenuArgs} from 'sentry/components/deprecatedDropdownMenu';
+import DeprecatedDropdownMenu from 'sentry/components/deprecatedDropdownMenu';
 import {uniqueId} from 'sentry/utils/guid';
 
-const defaultProps = {
+interface DefaultProps {
+  closeOnSelect: boolean;
+  disabled: boolean;
+  inputIsActor: boolean;
+  shouldSelectWithEnter: boolean;
+  shouldSelectWithTab: boolean;
+  itemToString?: () => string;
+}
+
+const defaultProps: DefaultProps = {
   itemToString: () => '',
   /**
    * If input should be considered an "actor". If there is another parent actor, then this should be `false`.
@@ -111,7 +118,7 @@ type State<T> = {
   selectedItem?: T;
 };
 
-type Props<T> = typeof defaultProps & {
+export interface AutoCompleteProps<T> extends DefaultProps {
   /**
    * Must be a function that returns a component
    */
@@ -122,10 +129,10 @@ type Props<T> = typeof defaultProps & {
   inputValue?: string;
   isOpen?: boolean;
   itemToString?: (item?: T) => string;
-  onClose?: (...args: Array<any>) => void;
+  onClose?: (...args: any[]) => void;
   onInputValueChange?: (value: string) => void;
   onMenuOpen?: () => void;
-  onOpen?: (...args: Array<any>) => void;
+  onOpen?: (...args: any[]) => void;
   onSelect?: (
     item: T,
     state?: State<T>,
@@ -135,9 +142,9 @@ type Props<T> = typeof defaultProps & {
    * Resets autocomplete input when menu closes
    */
   resetInputOnClose?: boolean;
-};
+}
 
-class AutoComplete<T extends Item> extends Component<Props<T>, State<T>> {
+class AutoComplete<T extends Item> extends Component<AutoCompleteProps<T>, State<T>> {
   static defaultProps = defaultProps;
 
   state: State<T> = this.getInitialState();
@@ -156,7 +163,7 @@ class AutoComplete<T extends Item> extends Component<Props<T>, State<T>> {
     this._mounted = true;
   }
 
-  componentDidUpdate(_prevProps: Props<T>, prevState: State<T>) {
+  componentDidUpdate(_prevProps: AutoCompleteProps<T>, prevState: State<T>) {
     // If we do NOT want to close on select, then we should not reset highlight state
     // when we select an item (when we select an item, `this.state.selectedItem` changes)
     if (this.props.closeOnSelect && this.state.selectedItem !== prevState.selectedItem) {
@@ -374,7 +381,7 @@ class AutoComplete<T extends Item> extends Component<Props<T>, State<T>> {
       this.closeMenu();
 
       this.setState({
-        inputValue: itemToString(item),
+        inputValue: itemToString?.(item) ?? '',
         selectedItem: item,
       });
       return;
@@ -409,7 +416,7 @@ class AutoComplete<T extends Item> extends Component<Props<T>, State<T>> {
    *
    * This is exposed to render function
    */
-  openMenu = (...args: Array<any>) => {
+  openMenu = (...args: any[]) => {
     const {onOpen, disabled} = this.props;
 
     onOpen?.(...args);
@@ -429,7 +436,7 @@ class AutoComplete<T extends Item> extends Component<Props<T>, State<T>> {
    *
    * This is exposed to render function
    */
-  closeMenu = (...args: Array<any>) => {
+  closeMenu = (...args: any[]) => {
     const {onClose, resetInputOnClose} = this.props;
 
     onClose?.(...args);

@@ -1,19 +1,22 @@
 import {Component, Fragment} from 'react';
 import styled from '@emotion/styled';
 
-import Button from 'sentry/components/button';
+import {Button} from 'sentry/components/button';
+import type {StaticDropdownAutoCompleteProps} from 'sentry/components/dropdownAutoComplete';
 import DropdownAutoComplete from 'sentry/components/dropdownAutoComplete';
-import {Item} from 'sentry/components/dropdownAutoComplete/types';
+import type {Item} from 'sentry/components/dropdownAutoComplete/types';
 import DropdownButton from 'sentry/components/dropdownButton';
-import SelectControl, {
-  ControlProps,
-} from 'sentry/components/forms/controls/selectControl';
+import type {ControlProps} from 'sentry/components/forms/controls/selectControl';
+import SelectControl from 'sentry/components/forms/controls/selectControl';
+import FormField from 'sentry/components/forms/formField';
 import {IconAdd, IconDelete} from 'sentry/icons';
 import {t} from 'sentry/locale';
-import space from 'sentry/styles/space';
-import {defined, objectIsEmpty} from 'sentry/utils';
+import {space} from 'sentry/styles/space';
+import {defined} from 'sentry/utils';
+import {isEmptyObject} from 'sentry/utils/object/isEmptyObject';
 
-import InputField, {InputFieldProps} from './inputField';
+// XXX(epurkhiser): This is wrong, it should not be inheriting these props
+import type {InputFieldProps} from './inputField';
 
 interface DefaultProps {
   /**
@@ -43,7 +46,7 @@ export interface ChoiceMapperProps extends DefaultProps {
   /**
    * Props forwarded to the add mapping dropdown.
    */
-  addDropdown: React.ComponentProps<typeof DropdownAutoComplete>;
+  addDropdown: StaticDropdownAutoCompleteProps;
   /**
    * A list of column labels (headers) for the multichoice table. This should
    * have the same mapping keys as the mappedSelectors prop.
@@ -103,10 +106,10 @@ export interface ChoiceMapperFieldProps
       'onBlur' | 'onChange' | 'value' | 'formatMessageValue' | 'disabled'
     > {}
 
-export default class ChoiceMapper extends Component<ChoiceMapperFieldProps> {
+export default class ChoiceMapperField extends Component<ChoiceMapperFieldProps> {
   static defaultProps = defaultProps;
 
-  hasValue = (value: InputFieldProps['value']) => defined(value) && !objectIsEmpty(value);
+  hasValue = (value: InputFieldProps['value']) => defined(value) && !isEmptyObject(value);
 
   renderField = (props: ChoiceMapperFieldProps) => {
     const {
@@ -145,7 +148,6 @@ export default class ChoiceMapper extends Component<ChoiceMapperFieldProps> {
     };
 
     const removeRow = (itemKey: string) => {
-      // eslint-disable-next-line no-unused-vars
       saveChanges(
         Object.fromEntries(Object.entries(value).filter(([key, _]) => key !== itemKey))
       );
@@ -179,7 +181,7 @@ export default class ChoiceMapper extends Component<ChoiceMapperFieldProps> {
       >
         {({isOpen}) => (
           <DropdownButton
-            icon={<IconAdd size="xs" isCircled />}
+            icon={<IconAdd isCircled />}
             isOpen={isOpen}
             size="xs"
             disabled={disabled}
@@ -217,11 +219,11 @@ export default class ChoiceMapper extends Component<ChoiceMapperFieldProps> {
                 <Control>
                   <SelectControl
                     {...(perItemMapping
-                      ? mappedSelectors[itemKey][fieldKey]
+                      ? mappedSelectors[itemKey]![fieldKey]
                       : mappedSelectors[fieldKey])}
                     height={30}
                     disabled={disabled}
-                    onChange={v => setValue(itemKey, fieldKey, v ? v.value : null)}
+                    onChange={(v: any) => setValue(itemKey, fieldKey, v ? v.value : null)}
                     value={value[itemKey][fieldKey]}
                   />
                 </Control>
@@ -246,11 +248,12 @@ export default class ChoiceMapper extends Component<ChoiceMapperFieldProps> {
 
   render() {
     return (
-      <InputField
+      <FormField
         {...this.props}
-        inline={({model}) => !this.hasValue(model.getValue(this.props.name))}
-        field={this.renderField}
-      />
+        inline={({model}: any) => !this.hasValue(model.getValue(this.props.name))}
+      >
+        {this.renderField}
+      </FormField>
     );
   }
 }

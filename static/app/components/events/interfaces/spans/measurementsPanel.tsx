@@ -1,25 +1,20 @@
 import {Component, createRef} from 'react';
 import styled from '@emotion/styled';
 
-import {toPercent} from 'sentry/components/performance/waterfall/utils';
-import Tooltip from 'sentry/components/tooltip';
-import space from 'sentry/styles/space';
-import {EventTransaction} from 'sentry/types/event';
+import {Tooltip} from 'sentry/components/tooltip';
+import {space} from 'sentry/styles/space';
 import {defined} from 'sentry/utils';
-import {WEB_VITAL_DETAILS} from 'sentry/utils/performance/vitals/constants';
-import {Vital} from 'sentry/utils/performance/vitals/types';
+import toPercent from 'sentry/utils/number/toPercent';
+import {VITAL_DETAILS} from 'sentry/utils/performance/vitals/constants';
+import type {Vital} from 'sentry/utils/performance/vitals/types';
 
-import {
-  getMeasurementBounds,
-  getMeasurements,
-  SpanBoundsType,
-  SpanGeneratedBoundsType,
-} from './utils';
+import type {SpanBoundsType, SpanGeneratedBoundsType, VerticalMark} from './utils';
+import {getMeasurementBounds} from './utils';
 
 type Props = {
   dividerPosition: number;
-  event: EventTransaction;
   generateBounds: (bounds: SpanBoundsType) => SpanGeneratedBoundsType;
+  measurements: Map<number, VerticalMark>;
 };
 
 type VitalLabel = {
@@ -28,8 +23,7 @@ type VitalLabel = {
 };
 
 function MeasurementsPanel(props: Props) {
-  const {event, generateBounds, dividerPosition} = props;
-  const measurements = getMeasurements(event, generateBounds);
+  const {measurements, generateBounds, dividerPosition} = props;
 
   return (
     <Container
@@ -39,7 +33,7 @@ function MeasurementsPanel(props: Props) {
       }}
     >
       {Array.from(measurements.values()).map(verticalMark => {
-        const mark = Object.values(verticalMark.marks)[0];
+        const mark = Object.values(verticalMark.marks)[0]!;
         const {timestamp} = mark;
         const bounds = getMeasurementBounds(timestamp, generateBounds);
 
@@ -50,8 +44,8 @@ function MeasurementsPanel(props: Props) {
         }
 
         const vitalLabels: VitalLabel[] = Object.keys(verticalMark.marks).map(name => ({
-          vital: WEB_VITAL_DETAILS[`measurements.${name}`],
-          isPoorValue: verticalMark.marks[name].failedThreshold,
+          vital: VITAL_DETAILS[`measurements.${name}` as keyof typeof VITAL_DETAILS],
+          isPoorValue: verticalMark.marks[name]!.failedThreshold,
         }));
 
         if (vitalLabels.length > 1) {
@@ -68,7 +62,7 @@ function MeasurementsPanel(props: Props) {
           <LabelContainer
             key={String(timestamp)}
             left={toPercent(bounds.left || 0)}
-            vitalLabel={vitalLabels[0]}
+            vitalLabel={vitalLabels[0]!}
           />
         );
       })}
@@ -107,11 +101,11 @@ const Label = styled('div')<{
 }>`
   transform: ${p => (p.isSingleLabel ? `translate(-50%, 15%)` : `translateY(15%)`)};
   font-size: ${p => p.theme.fontSizeExtraSmall};
-  font-weight: 600;
-  color: ${p => (p.failedThreshold ? `${p.theme.red300}` : `${p.theme.gray500}`)};
-  background: ${p => p.theme.white};
+  font-weight: ${p => p.theme.fontWeightBold};
+  color: ${p => (p.failedThreshold ? `${p.theme.errorText}` : `${p.theme.textColor}`)};
+  background: ${p => p.theme.background};
   border: 1px solid;
-  border-color: ${p => (p.failedThreshold ? p.theme.red300 : p.theme.gray100)};
+  border-color: ${p => (p.failedThreshold ? p.theme.red300 : p.theme.gray200)};
   border-radius: ${p => p.theme.borderRadius};
   height: 75%;
   display: flex;
@@ -139,7 +133,6 @@ class LabelContainer extends Component<LabelContainerProps> {
   componentDidMount() {
     const {current} = this.elementDOMRef;
     if (current) {
-      // eslint-disable-next-line react/no-did-mount-set-state
       this.setState({
         width: current.clientWidth,
       });
@@ -185,7 +178,6 @@ class MultiLabelContainer extends Component<MultiLabelContainerProps> {
   componentDidMount() {
     const {current} = this.elementDOMRef;
     if (current) {
-      // eslint-disable-next-line react/no-did-mount-set-state
       this.setState({
         width: current.clientWidth,
       });

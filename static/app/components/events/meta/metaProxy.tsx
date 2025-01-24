@@ -1,15 +1,13 @@
 import isEmpty from 'lodash/isEmpty';
-import isNull from 'lodash/isNull';
-import memoize from 'lodash/memoize';
 
-import {Meta} from 'sentry/types';
+import type {Meta} from 'sentry/types/group';
 
 const GET_META = Symbol('GET_META');
 const IS_PROXY = Symbol('IS_PROXY');
 
 type SymbolProp = typeof GET_META | typeof IS_PROXY;
 
-function isAnnotated(meta) {
+function isAnnotated(meta: any) {
   if (isEmpty(meta)) {
     return false;
   }
@@ -25,15 +23,16 @@ export class MetaProxy {
     this.local = local;
   }
 
+  // @ts-expect-error TS(7023): 'get' implicitly has return type 'any' because it ... Remove this comment to see the full error message
   get<T extends {}>(
-    obj: T | Array<T>,
+    obj: T | T[],
     prop: Extract<keyof T, string> | SymbolProp,
     receiver: T
   ) {
     // trap calls to `getMeta` to return meta object
     if (prop === GET_META) {
-      return key => {
-        if (this.local && this.local[key] && this.local[key]['']) {
+      return (key: any) => {
+        if (this.local?.[key]?.['']) {
           // TODO: Error checks
           const meta = this.local[key][''];
 
@@ -49,7 +48,7 @@ export class MetaProxy {
     }
 
     const value = Reflect.get(obj, prop, receiver);
-    if (!Reflect.has(obj, prop) || typeof value !== 'object' || isNull(value)) {
+    if (!Reflect.has(obj, prop) || typeof value !== 'object' || value === null) {
       return value;
     }
 
@@ -61,11 +60,11 @@ export class MetaProxy {
 
     // Make sure we apply proxy to all children (objects and arrays)
     // Do we need to check for annotated inside of objects?
-    return new Proxy(value, new MetaProxy(this.local && this.local[prop]));
+    return new Proxy(value, new MetaProxy(this.local?.[prop]));
   }
 }
 
-export const withMeta = memoize(function withMeta<T>(event: T): T {
+export function withMeta<T>(event: T): T {
   if (!event) {
     return event;
   }
@@ -81,15 +80,17 @@ export const withMeta = memoize(function withMeta<T>(event: T): T {
   //
   // https://github.com/microsoft/TypeScript/issues/20846
   return new Proxy(event, new MetaProxy((event as any)._meta)) as T;
-});
+}
 
 export function getMeta<T extends {}>(
   obj: T | undefined,
   prop: Extract<keyof T, string>
 ): Meta | undefined {
+  // @ts-expect-error TS(7053): Element implicitly has an 'any' type because expre... Remove this comment to see the full error message
   if (!obj || typeof obj[GET_META] !== 'function') {
     return undefined;
   }
 
+  // @ts-expect-error TS(7053): Element implicitly has an 'any' type because expre... Remove this comment to see the full error message
   return obj[GET_META](prop);
 }

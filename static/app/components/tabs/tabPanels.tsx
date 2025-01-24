@@ -1,12 +1,14 @@
 import {useContext, useRef} from 'react';
 import styled from '@emotion/styled';
-import {AriaTabPanelProps, useTabPanel} from '@react-aria/tabs';
+import type {AriaTabPanelProps} from '@react-aria/tabs';
+import {useTabPanel} from '@react-aria/tabs';
 import {useCollection} from '@react-stately/collections';
 import {ListCollection} from '@react-stately/list';
-import {TabListState} from '@react-stately/tabs';
-import {CollectionBase, Node, Orientation} from '@react-types/shared';
+import type {TabListState} from '@react-stately/tabs';
+import type {CollectionBase, Node, Orientation} from '@react-types/shared';
 
 import {TabsContext} from './index';
+import {Item} from './item';
 import {tabsShouldForwardProp} from './utils';
 
 const collectionFactory = (nodes: Iterable<Node<any>>) => new ListCollection(nodes);
@@ -49,14 +51,22 @@ export function TabPanels(props: TabPanelsProps) {
   );
 }
 
+TabPanels.Item = Item;
+
 interface TabPanelProps extends AriaTabPanelProps {
-  orientation: Orientation;
   state: TabListState<any>;
   children?: React.ReactNode;
   className?: string;
+  orientation?: Orientation;
 }
 
-function TabPanel({state, orientation, className, children, ...props}: TabPanelProps) {
+function TabPanel({
+  state,
+  orientation = 'horizontal',
+  className,
+  children,
+  ...props
+}: TabPanelProps) {
   const ref = useRef<HTMLDivElement>(null);
   const {tabPanelProps} = useTabPanel(props, state, ref);
 
@@ -79,9 +89,10 @@ const TabPanelWrap = styled('div', {shouldForwardProp: tabsShouldForwardProp})<{
 
   ${p => (p.orientation === 'horizontal' ? `height: 100%;` : `width: 100%;`)};
 
-  &.focus-visible {
+  &:focus-visible {
     outline: none;
-    box-shadow: inset ${p => p.theme.focusBorder} 0 0 0 1px,
+    box-shadow:
+      inset ${p => p.theme.focusBorder} 0 0 0 1px,
       ${p => p.theme.focusBorder} 0 0 0 1px;
     z-index: 1;
   }

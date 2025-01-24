@@ -1,4 +1,4 @@
-import {Location, Query} from 'history';
+import type {Location, Query} from 'history';
 import pick from 'lodash/pick';
 
 import {DEFAULT_RELATIVE_PERIODS} from 'sentry/constants';
@@ -6,14 +6,23 @@ import {t} from 'sentry/locale';
 import {defined} from 'sentry/utils';
 import EventView from 'sentry/utils/discover/eventView';
 import {isAggregateField} from 'sentry/utils/discover/fields';
-import {SpanSlug} from 'sentry/utils/performance/suspectSpans/types';
+import type {SpanSlug} from 'sentry/utils/performance/suspectSpans/types';
 import {decodeScalar} from 'sentry/utils/queryString';
 import {MutableSearch} from 'sentry/utils/tokenizeSearch';
+import type {DomainView} from 'sentry/views/insights/pages/useFilters';
+import {getTransactionSummaryBaseUrl} from 'sentry/views/performance/transactionSummary/utils';
 
-import {SpanSort, SpanSortOption, SpanSortOthers, SpanSortPercentiles} from './types';
+import type {SpanSort, SpanSortOption} from './types';
+import {SpanSortOthers, SpanSortPercentiles} from './types';
 
-export function generateSpansRoute({orgSlug}: {orgSlug: string}): string {
-  return `/organizations/${orgSlug}/performance/summary/spans/`;
+export function generateSpansRoute({
+  orgSlug,
+  view,
+}: {
+  orgSlug: string;
+  view?: DomainView;
+}): string {
+  return `${getTransactionSummaryBaseUrl(orgSlug, view)}/spans/`;
 }
 
 export function spansRouteWithQuery({
@@ -21,14 +30,17 @@ export function spansRouteWithQuery({
   transaction,
   projectID,
   query,
+  view,
 }: {
   orgSlug: string;
   query: Query;
   transaction: string;
   projectID?: string | string[];
+  view?: DomainView;
 }) {
   const pathname = generateSpansRoute({
     orgSlug,
+    view,
   });
 
   return {
@@ -65,11 +77,6 @@ export const SPAN_SORT_OPTIONS: SpanSortOption[] = [
     prefix: t('Sort By'),
     label: t('Average Count'),
     field: SpanSortOthers.AVG_OCCURRENCE,
-  },
-  {
-    prefix: t('Sort By'),
-    label: t('Total Count'),
-    field: SpanSortOthers.COUNT,
   },
   {
     prefix: t('Sort By'),
@@ -112,7 +119,7 @@ export function getSuspectSpanSortFromLocation(
 }
 
 export function getSuspectSpanSortFromEventView(eventView: EventView): SpanSortOption {
-  const sort = eventView.sorts.length ? eventView.sorts[0].field : DEFAULT_SORT;
+  const sort = eventView.sorts.length ? eventView.sorts[0]!.field : DEFAULT_SORT;
   return getSuspectSpanSort(sort);
 }
 
@@ -156,7 +163,11 @@ export function generateSpansEventView({
       id: undefined,
       version: 2,
       name: transactionName,
-      fields: [...Object.values(SpanSortOthers), ...Object.values(SpanSortPercentiles)],
+      fields: [
+        ...Object.values(SpanSortOthers),
+        ...Object.values(SpanSortPercentiles),
+        'trace',
+      ],
       query: conditions.formatString(),
       projects: [],
     },
@@ -176,6 +187,7 @@ export function generateSpansEventView({
 export function getTotalsView(eventView: EventView): EventView {
   const totalsView = eventView.withColumns([
     {kind: 'function', function: ['count', '', undefined, undefined]},
+    {kind: 'function', function: ['sum', 'transaction.duration', undefined, undefined]},
   ]);
 
   const conditions = new MutableSearch(eventView.query);
@@ -203,12 +215,6 @@ export const SPAN_SORT_TO_FIELDS: Record<SpanSort, string[]> = {
     'count()',
     'count_unique(id)',
     'equation|count() / count_unique(id)',
-    'sumArray(spans_exclusive_time)',
-  ],
-  [SpanSortOthers.COUNT]: [
-    'percentileArray(spans_exclusive_time, 0.75)',
-    'count()',
-    'count_unique(id)',
     'sumArray(spans_exclusive_time)',
   ],
   [SpanSortPercentiles.P50_EXCLUSIVE_TIME]: [

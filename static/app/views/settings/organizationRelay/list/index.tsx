@@ -1,6 +1,6 @@
 import orderBy from 'lodash/orderBy';
 
-import {Relay, RelayActivity} from 'sentry/types';
+import type {Relay, RelayActivity} from 'sentry/types/relay';
 
 import ActivityList from './activityList';
 import CardHeader from './cardHeader';
@@ -12,24 +12,17 @@ type WaitingActivityProps = React.ComponentProps<typeof WaitingActivity>;
 
 type Props = {
   disabled: boolean;
-  relayActivities: Array<RelayActivity>;
-  relays: Array<Relay>;
+  relayActivities: RelayActivity[];
+  relays: Relay[];
 } & Pick<CardHeaderProps, 'onDelete' | 'onEdit'> &
   Pick<WaitingActivityProps, 'onRefresh'>;
 
-const List = ({
-  relays,
-  relayActivities,
-  onRefresh,
-  onDelete,
-  onEdit,
-  disabled,
-}: Props) => {
+function List({relays, relayActivities, onRefresh, onDelete, onEdit, disabled}: Props) {
   const orderedRelays = orderBy(relays, relay => relay.created, ['desc']);
 
   const relaysByPublicKey = getRelaysByPublicKey(orderedRelays, relayActivities);
 
-  const renderCardContent = (activities: Array<RelayActivity>) => {
+  const renderCardContent = (activities: RelayActivity[]) => {
     if (!activities.length) {
       return <WaitingActivity onRefresh={onRefresh} disabled={disabled} />;
     }
@@ -41,7 +34,7 @@ const List = ({
     <div>
       {Object.keys(relaysByPublicKey).map(relayByPublicKey => {
         const {name, description, created, activities} =
-          relaysByPublicKey[relayByPublicKey];
+          relaysByPublicKey[relayByPublicKey]!;
         return (
           <div key={relayByPublicKey}>
             <CardHeader
@@ -59,6 +52,6 @@ const List = ({
       })}
     </div>
   );
-};
+}
 
 export default List;

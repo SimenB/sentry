@@ -1,21 +1,19 @@
 import {Fragment, useEffect} from 'react';
-import {browserHistory} from 'react-router';
 import styled from '@emotion/styled';
-import {Location} from 'history';
+import type {Location} from 'history';
 
 import LoadingIndicator from 'sentry/components/loadingIndicator';
-import {Organization} from 'sentry/types';
-import EventView from 'sentry/utils/discover/eventView';
-import {
-  MetricDataSwitcherOutcome,
-  useMetricsCardinalityContext,
-} from 'sentry/utils/performance/contexts/metricsCardinality';
+import type {Organization} from 'sentry/types/organization';
+import type EventView from 'sentry/utils/discover/eventView';
+import type {MetricDataSwitcherOutcome} from 'sentry/utils/performance/contexts/metricsCardinality';
+import {useMetricsCardinalityContext} from 'sentry/utils/performance/contexts/metricsCardinality';
 import {
   canUseMetricsData,
   MEPState,
   METRIC_SEARCH_SETTING_PARAM,
 } from 'sentry/utils/performance/contexts/metricsEnhancedSetting';
 import {decodeScalar} from 'sentry/utils/queryString';
+import {useNavigate} from 'sentry/utils/useNavigate';
 
 interface MetricDataSwitchProps {
   children: (props: MetricDataSwitcherOutcome) => React.ReactNode;
@@ -92,14 +90,15 @@ function MetricsSwitchHandler({
   const {query} = location;
   const mepSearchState = decodeScalar(query[METRIC_SEARCH_SETTING_PARAM], '');
   const hasQuery = decodeScalar(query.query, '');
-  const queryIsTransactionsBased = mepSearchState === MEPState.transactionsOnly;
+  const queryIsTransactionsBased = mepSearchState === MEPState.TRANSACTIONS_ONLY;
+  const navigate = useNavigate();
 
   const shouldAdjustQuery =
     hasQuery && queryIsTransactionsBased && !outcome.forceTransactionsOnly;
 
   useEffect(() => {
     if (shouldAdjustQuery) {
-      browserHistory.push({
+      navigate({
         pathname: location.pathname,
         query: {
           ...location.query,
@@ -109,7 +108,7 @@ function MetricsSwitchHandler({
         },
       });
     }
-  }, [shouldAdjustQuery, location]);
+  }, [shouldAdjustQuery, location, navigate]);
 
   if (hasQuery && queryIsTransactionsBased && !outcome.forceTransactionsOnly) {
     eventView.query = ''; // TODO: Create switcher provider and move it to the route level to remove the need for this.

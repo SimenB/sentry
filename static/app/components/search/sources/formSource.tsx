@@ -1,16 +1,18 @@
 import {Component} from 'react';
-// eslint-disable-next-line no-restricted-imports
-import {withRouter, WithRouterProps} from 'react-router';
 
 import {loadSearchMap} from 'sentry/actionCreators/formSearch';
-import FormSearchStore, {FormSearchField} from 'sentry/stores/formSearchStore';
-import {createFuzzySearch, Fuse} from 'sentry/utils/fuzzySearch';
-import replaceRouterParams from 'sentry/utils/replaceRouterParams';
+import type {FormSearchField} from 'sentry/stores/formSearchStore';
+import FormSearchStore from 'sentry/stores/formSearchStore';
+import type {WithRouterProps} from 'sentry/types/legacyReactRouter';
+import type {Fuse} from 'sentry/utils/fuzzySearch';
+import {createFuzzySearch} from 'sentry/utils/fuzzySearch';
+// eslint-disable-next-line no-restricted-imports
+import withSentryRouter from 'sentry/utils/withSentryRouter';
 
-import {ChildProps, Result, ResultItem} from './types';
+import type {ChildProps, Result, ResultItem} from './types';
 import {strGetFn} from './utils';
 
-type Props = WithRouterProps<{orgId: string}> & {
+interface Props extends WithRouterProps<{}> {
   children: (props: ChildProps) => React.ReactElement;
   /**
    * search term
@@ -24,7 +26,7 @@ type Props = WithRouterProps<{orgId: string}> & {
    * fusejs options.
    */
   searchOptions?: Fuse.IFuseOptions<FormSearchField>;
-};
+}
 
 type State = {
   fuzzy: null | Fuse<FormSearchField>;
@@ -59,7 +61,7 @@ class FormSource extends Component<Props, State> {
   }
 
   render() {
-    const {searchMap, query, params, children} = this.props;
+    const {searchMap, query, children} = this.props;
     const {fuzzy} = this.state;
 
     const results =
@@ -70,9 +72,7 @@ class FormSource extends Component<Props, State> {
             ...item,
             sourceType: 'field',
             resultType: 'field',
-            to: `${replaceRouterParams(item.route, params)}#${encodeURIComponent(
-              item.field.name
-            )}`,
+            to: {pathname: item.route, hash: `#${encodeURIComponent(item.field.name)}`},
           } as ResultItem,
           ...rest,
         };
@@ -111,4 +111,4 @@ class FormSourceContainer extends Component<ContainerProps, ContainerState> {
     return <FormSource searchMap={this.state.searchMap} {...this.props} />;
   }
 }
-export default withRouter(FormSourceContainer);
+export default withSentryRouter(FormSourceContainer);

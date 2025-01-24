@@ -1,15 +1,15 @@
 import {Component} from 'react';
+import {OrganizationFixture} from 'sentry-fixture/organization';
+import {ProjectFixture} from 'sentry-fixture/project';
 
-declare const TestStubs;
-
-const MOCK_ORG = TestStubs.Organization();
+const MOCK_ORG = OrganizationFixture();
 const DEFAULTS = {
   organization: MOCK_ORG,
   organizations: [MOCK_ORG],
-  project: TestStubs.Project(),
+  project: ProjectFixture(),
 };
 
-const withLatestContextMock = WrappedComponent =>
+const withLatestContextMock = (WrappedComponent: any) =>
   class WithLatestContextMockWrapper extends Component {
     render() {
       return <WrappedComponent {...DEFAULTS} {...this.props} />;

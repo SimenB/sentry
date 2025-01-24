@@ -1,28 +1,31 @@
 import {Fragment} from 'react';
-import {Link} from 'react-router';
 import {css} from '@emotion/react';
 import styled from '@emotion/styled';
-import {Location} from 'history';
+import type {Location} from 'history';
 
-import Alert from 'sentry/components/alert';
-import {AsyncComponentProps} from 'sentry/components/asyncComponent';
+import {Alert} from 'sentry/components/alert';
+import Link from 'sentry/components/links/link';
 import LoadingIndicator from 'sentry/components/loadingIndicator';
 import NotAvailable from 'sentry/components/notAvailable';
-import {PanelItem} from 'sentry/components/panels';
-import PanelTable from 'sentry/components/panels/panelTable';
+import PanelItem from 'sentry/components/panels/panelItem';
+import {PanelTable} from 'sentry/components/panels/panelTable';
 import {IconArrow} from 'sentry/icons';
 import {t, tct} from 'sentry/locale';
-import space from 'sentry/styles/space';
-import {Organization, ReleaseProject} from 'sentry/types';
-import DiscoverQuery, {TableData} from 'sentry/utils/discover/discoverQuery';
-import EventView from 'sentry/utils/discover/eventView';
+import {space} from 'sentry/styles/space';
+import type {Organization} from 'sentry/types/organization';
+import type {ReleaseProject} from 'sentry/types/release';
+import type {TableData} from 'sentry/utils/discover/discoverQuery';
+import DiscoverQuery from 'sentry/utils/discover/discoverQuery';
+import type EventView from 'sentry/utils/discover/eventView';
 import {getFieldRenderer} from 'sentry/utils/discover/fieldRenderers';
+import {SavedQueryDatasets} from 'sentry/utils/discover/types';
 import {MobileVital, WebVital} from 'sentry/utils/fields';
 import {
   MOBILE_VITAL_DETAILS,
   WEB_VITAL_DETAILS,
 } from 'sentry/utils/performance/vitals/constants';
-import {PROJECT_PERFORMANCE_TYPE} from 'sentry/views/performance/utils';
+import {hasDatasetSelector} from 'sentry/views/dashboards/utils';
+import {ProjectPerformanceType} from 'sentry/views/performance/utils';
 
 type PerformanceCardTableProps = {
   allReleasesEventView: EventView;
@@ -30,7 +33,7 @@ type PerformanceCardTableProps = {
   isLoading: boolean;
   location: Location;
   organization: Organization;
-  performanceType: string;
+  performanceType: ProjectPerformanceType;
   project: ReleaseProject;
   releaseEventView: EventView;
   thisReleaseTableData: TableData | null;
@@ -117,7 +120,15 @@ function PerformanceCardTable({
       ]);
       return (
         <SubTitle key={idx}>
-          <Link to={newView.getResultsViewUrlTarget(organization.slug)}>
+          <Link
+            to={newView.getResultsViewUrlTarget(
+              organization.slug,
+              false,
+              hasDatasetSelector(organization)
+                ? SavedQueryDatasets.TRANSACTIONS
+                : undefined
+            )}
+          >
             {WEB_VITAL_DETAILS[vital.title].name} (
             {WEB_VITAL_DETAILS[vital.title].acronym})
           </Link>
@@ -131,8 +142,16 @@ function PerformanceCardTable({
       ]);
       return (
         <SubTitle key={idx}>
-          <Link to={newView.getResultsViewUrlTarget(organization.slug)}>
-            {t(span.title)}
+          <Link
+            to={newView.getResultsViewUrlTarget(
+              organization.slug,
+              false,
+              hasDatasetSelector(organization)
+                ? SavedQueryDatasets.TRANSACTIONS
+                : undefined
+            )}
+          >
+            {span.title}
           </Link>
         </SubTitle>
       );
@@ -183,16 +202,18 @@ function PerformanceCardTable({
         <StyledPanelItem>
           <TitleSpace />
           {webVitals.map((vital, index) => (
+            // @ts-expect-error TS(7053): Element implicitly has an 'any' type because expre... Remove this comment to see the full error message
             <MultipleEmptySubText key={vital[index]}>
-              {<StyledNotAvailable tooltip={t('No results found')} />}
+              <StyledNotAvailable tooltip={t('No results found')} />
             </MultipleEmptySubText>
           ))}
         </StyledPanelItem>
         <StyledPanelItem>
           <TitleSpace />
           {spans.map((span, index) => (
+            // @ts-expect-error TS(7053): Element implicitly has an 'any' type because expre... Remove this comment to see the full error message
             <MultipleEmptySubText key={span[index]}>
-              {<StyledNotAvailable tooltip={t('No results found')} />}
+              <StyledNotAvailable tooltip={t('No results found')} />
             </MultipleEmptySubText>
           ))}
         </StyledPanelItem>
@@ -309,8 +330,16 @@ function PerformanceCardTable({
       ]);
       return (
         <SubTitle key={idx}>
-          <Link to={newView.getResultsViewUrlTarget(organization.slug)}>
-            {t(span.title)}
+          <Link
+            to={newView.getResultsViewUrlTarget(
+              organization.slug,
+              false,
+              hasDatasetSelector(organization)
+                ? SavedQueryDatasets.TRANSACTIONS
+                : undefined
+            )}
+          >
+            {span.title}
           </Link>
         </SubTitle>
       );
@@ -364,8 +393,9 @@ function PerformanceCardTable({
         <StyledPanelItem>
           <TitleSpace />
           {spans.map((span, index) => (
+            // @ts-expect-error TS(7053): Element implicitly has an 'any' type because expre... Remove this comment to see the full error message
             <MultipleEmptySubText key={span[index]}>
-              {<StyledNotAvailable tooltip={t('No results found')} />}
+              <StyledNotAvailable tooltip={t('No results found')} />
             </MultipleEmptySubText>
           ))}
         </StyledPanelItem>
@@ -452,10 +482,10 @@ function PerformanceCardTable({
 
   function renderMobilePerformance() {
     const mobileVitals = [
-      MobileVital.AppStartCold,
-      MobileVital.AppStartWarm,
-      MobileVital.FramesSlow,
-      MobileVital.FramesFrozen,
+      MobileVital.APP_START_COLD,
+      MobileVital.APP_START_WARM,
+      MobileVital.FRAMES_SLOW,
+      MobileVital.FRAMES_FROZEN,
     ];
     const mobileVitalTitles = mobileVitals.map(mobileVital => {
       return (
@@ -612,31 +642,33 @@ function PerformanceCardTable({
 
   const loader = <StyledLoadingIndicator />;
 
-  const platformPerformanceRender = {
-    [PROJECT_PERFORMANCE_TYPE.FRONTEND]: {
+  const platformPerformanceRender: Partial<
+    Record<ProjectPerformanceType, {section: React.ReactNode; title: string}>
+  > = {
+    [ProjectPerformanceType.FRONTEND]: {
       title: t('Frontend Performance'),
       section: renderFrontendPerformance(),
     },
-    [PROJECT_PERFORMANCE_TYPE.BACKEND]: {
+    [ProjectPerformanceType.BACKEND]: {
       title: t('Backend Performance'),
       section: renderBackendPerformance(),
     },
-    [PROJECT_PERFORMANCE_TYPE.MOBILE]: {
+    [ProjectPerformanceType.MOBILE]: {
       title: t('Mobile Performance'),
       section: renderMobilePerformance(),
     },
-    [PROJECT_PERFORMANCE_TYPE.ANY]: {
+    [ProjectPerformanceType.ANY]: {
       title: t('[Unknown] Performance'),
       section: renderUnknownPerformance(),
     },
   };
 
-  const isUnknownPlatform = performanceType === PROJECT_PERFORMANCE_TYPE.ANY;
+  const isUnknownPlatform = performanceType === ProjectPerformanceType.ANY;
 
   return (
     <Fragment>
       <HeadCellContainer>
-        {platformPerformanceRender[performanceType].title}
+        {platformPerformanceRender[performanceType]?.title}
       </HeadCellContainer>
       {isUnknownPlatform && (
         <StyledAlert type="warning" showIcon system>
@@ -672,17 +704,17 @@ function PerformanceCardTable({
         loader={loader}
         disableTopBorder={isUnknownPlatform}
       >
-        {platformPerformanceRender[performanceType].section}
+        {platformPerformanceRender[performanceType]?.section}
       </StyledPanelTable>
     </Fragment>
   );
 }
 
-interface Props extends AsyncComponentProps {
+interface Props {
   allReleasesEventView: EventView;
   location: Location;
   organization: Organization;
-  performanceType: string;
+  performanceType: ProjectPerformanceType;
   project: ReleaseProject;
   releaseEventView: EventView;
 }
@@ -700,14 +732,12 @@ function PerformanceCardTableWrapper({
       eventView={allReleasesEventView}
       orgSlug={organization.slug}
       location={location}
-      useEvents
     >
       {({isLoading, tableData: allReleasesTableData}) => (
         <DiscoverQuery
           eventView={releaseEventView}
           orgSlug={organization.slug}
           location={location}
-          useEvents
         >
           {({isLoading: isReleaseLoading, tableData: thisReleaseTableData}) => (
             <PerformanceCardTable
@@ -730,7 +760,7 @@ function PerformanceCardTableWrapper({
 
 export default PerformanceCardTableWrapper;
 
-const emptyFieldCss = p => css`
+const emptyFieldCss = (p: any) => css`
   color: ${p.theme.chartOther};
   text-align: right;
 `;
@@ -812,12 +842,12 @@ const SubText = styled('div')`
   text-align: right;
 `;
 
-const TrendText = styled('div')<{color: string}>`
+const TrendText = styled('div')<{color: 'success' | 'error'}>`
   color: ${p => p.theme[p.color]};
   text-align: right;
 `;
 
-const StyledIconArrow = styled(IconArrow)<{color: string}>`
+const StyledIconArrow = styled(IconArrow)<{color: 'success' | 'error'}>`
   color: ${p => p.theme[p.color]};
   margin-left: ${space(0.5)};
 `;

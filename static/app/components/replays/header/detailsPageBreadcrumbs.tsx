@@ -1,10 +1,14 @@
-import {ComponentProps, Fragment} from 'react';
-import styled from '@emotion/styled';
+import {Fragment} from 'react';
 
-import Breadcrumbs from 'sentry/components/breadcrumbs';
+import {Breadcrumbs} from 'sentry/components/breadcrumbs';
+import ProjectBadge from 'sentry/components/idBadge/projectBadge';
 import Placeholder from 'sentry/components/placeholder';
-import ReplaysFeatureBadge from 'sentry/components/replays/replaysFeatureBadge';
 import {t} from 'sentry/locale';
+import EventView from 'sentry/utils/discover/eventView';
+import {getShortEventId} from 'sentry/utils/events';
+import normalizeUrl from 'sentry/utils/url/normalizeUrl';
+import {useLocation} from 'sentry/utils/useLocation';
+import useProjects from 'sentry/utils/useProjects';
 import type {ReplayRecord} from 'sentry/views/replays/types';
 
 type Props = {
@@ -13,33 +17,46 @@ type Props = {
 };
 
 function DetailsPageBreadcrumbs({orgSlug, replayRecord}: Props) {
-  const labelTitle = replayRecord?.user.displayName;
+  const location = useLocation();
+  const eventView = EventView.fromLocation(location);
+
+  const {projects} = useProjects();
+  const project = projects.find(p => p.id === replayRecord?.project_id);
+
+  const labelTitle = replayRecord ? (
+    <Fragment>{getShortEventId(replayRecord?.id)}</Fragment>
+  ) : (
+    <Placeholder width="100%" height="16px" />
+  );
 
   return (
     <Breadcrumbs
       crumbs={[
         {
-          to: `/organizations/${orgSlug}/replays/`,
-          label: t('Replays'),
+          to: {
+            pathname: normalizeUrl(`/organizations/${orgSlug}/replays/`),
+            query: eventView.generateQueryStringObject(),
+          },
+          label: t('Session Replay'),
         },
         {
-          label: labelTitle ? (
-            <Fragment>
-              {labelTitle} <ReplaysFeatureBadge />
-            </Fragment>
-          ) : (
-            <HeaderPlaceholder width="500px" height="24px" />
-          ),
+          to: {
+            pathname: normalizeUrl(`/organizations/${orgSlug}/replays/`),
+            query: {
+              ...eventView.generateQueryStringObject(),
+              project: replayRecord?.project_id,
+            },
+          },
+          label: project ? (
+            <ProjectBadge disableLink project={project} avatarSize={16} />
+          ) : null,
+        },
+        {
+          label: labelTitle,
         },
       ]}
     />
   );
 }
-
-const HeaderPlaceholder = styled((props: ComponentProps<typeof Placeholder>) => (
-  <Placeholder width="100%" height="19px" {...props} />
-))`
-  background-color: ${p => p.theme.background};
-`;
 
 export default DetailsPageBreadcrumbs;

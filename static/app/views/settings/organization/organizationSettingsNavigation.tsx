@@ -1,12 +1,13 @@
 import {Component} from 'react';
 
+import ConfigStore from 'sentry/stores/configStore';
 import HookStore from 'sentry/stores/hookStore';
-import {Organization} from 'sentry/types';
-import {HookName, Hooks} from 'sentry/types/hooks';
+import type {HookName, Hooks} from 'sentry/types/hooks';
+import type {Organization} from 'sentry/types/organization';
 import withOrganization from 'sentry/utils/withOrganization';
 import SettingsNavigation from 'sentry/views/settings/components/settingsNavigation';
 import navigationConfiguration from 'sentry/views/settings/organization/navigationConfiguration';
-import {NavigationSection} from 'sentry/views/settings/types';
+import type {NavigationSection} from 'sentry/views/settings/types';
 
 type Props = {
   organization: Organization;
@@ -21,7 +22,6 @@ class OrganizationSettingsNavigation extends Component<Props, State> {
   state: State = this.getHooks();
 
   componentDidMount() {
-    // eslint-disable-next-line react/no-did-mount-set-state
     this.setState(this.getHooks());
   }
 
@@ -38,7 +38,10 @@ class OrganizationSettingsNavigation extends Component<Props, State> {
    * We should update the hook interface for the two hooks used here
    */
   unsubscribe = HookStore.listen(
-    (hookName: HookName, hooks: Hooks['settings:organization-navigation-config'][]) => {
+    (
+      hookName: HookName,
+      hooks: Array<Hooks['settings:organization-navigation-config']>
+    ) => {
       this.handleHooks(hookName, hooks);
     },
     undefined
@@ -58,7 +61,10 @@ class OrganizationSettingsNavigation extends Component<Props, State> {
     };
   }
 
-  handleHooks(name: HookName, hooks: Hooks['settings:organization-navigation-config'][]) {
+  handleHooks(
+    name: HookName,
+    hooks: Array<Hooks['settings:organization-navigation-config']>
+  ) {
     const org = this.props.organization;
     if (name !== 'settings:organization-navigation-config') {
       return;
@@ -71,7 +77,7 @@ class OrganizationSettingsNavigation extends Component<Props, State> {
     const {organization} = this.props as Props;
     const access = new Set(organization.access);
     const features = new Set(organization.features);
-
+    const isSelfHosted = ConfigStore.get('isSelfHosted');
     return (
       <SettingsNavigation
         navigationObjects={navigationConfiguration}
@@ -80,6 +86,7 @@ class OrganizationSettingsNavigation extends Component<Props, State> {
         organization={organization}
         hooks={hooks}
         hookConfigs={hookConfigs}
+        isSelfHosted={isSelfHosted}
       />
     );
   }

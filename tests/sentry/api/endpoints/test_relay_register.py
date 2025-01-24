@@ -1,13 +1,14 @@
 from uuid import uuid4
 
+import orjson
 from django.conf import settings
 from django.urls import reverse
 from django.utils import timezone
-from sentry_relay import generate_key_pair
+from sentry_relay.auth import generate_key_pair
 
-from sentry.models import Relay, RelayUsage
-from sentry.testutils import APITestCase
-from sentry.utils import json
+from sentry.models.relay import Relay, RelayUsage
+from sentry.testutils.cases import APITestCase
+from sentry.testutils.helpers.options import override_options
 
 
 class RelayRegisterTest(APITestCase):
@@ -23,10 +24,6 @@ class RelayRegisterTest(APITestCase):
         self.relay_id = str(uuid4())
 
         self.path = reverse("sentry-api-0-relay-register-challenge")
-
-    def add_internal_key(self, public_key):
-        if public_key not in settings.SENTRY_RELAY_WHITELIST_PK:
-            settings.SENTRY_RELAY_WHITELIST_PK.append(str(self.public_key))
 
     def register_relay(self, key_pair, version, relay_id):
 
@@ -46,7 +43,7 @@ class RelayRegisterTest(APITestCase):
         )
 
         assert resp.status_code == 200, resp.content
-        result = json.loads(resp.content)
+        result = orjson.loads(resp.content)
 
         data = {
             "token": str(result.get("token")),
@@ -178,7 +175,7 @@ class RelayRegisterTest(APITestCase):
         )
 
         assert resp.status_code == 200, resp.content
-        result = json.loads(resp.content)
+        result = orjson.loads(resp.content)
 
         raw_json, signature = self.private_key.pack(result)
 
@@ -209,7 +206,7 @@ class RelayRegisterTest(APITestCase):
         )
 
         assert resp.status_code == 200, resp.content
-        result = json.loads(resp.content)
+        result = orjson.loads(resp.content)
 
         raw_json, signature = self.private_key.pack(result)
 
@@ -253,7 +250,7 @@ class RelayRegisterTest(APITestCase):
         )
 
         assert resp.status_code == 200, resp.content
-        result = json.loads(resp.content)
+        result = orjson.loads(resp.content)
 
         raw_json, signature = self.private_key.pack(result)
 
@@ -294,7 +291,7 @@ class RelayRegisterTest(APITestCase):
             HTTP_X_SENTRY_RELAY_SIGNATURE=signature,
         )
 
-        result = json.loads(resp.content)
+        result = orjson.loads(resp.content)
 
         resp = self.client.post(
             self.path,
@@ -336,7 +333,7 @@ class RelayRegisterTest(APITestCase):
         )
 
         assert resp.status_code == 200, resp.content
-        result = json.loads(resp.content)
+        result = orjson.loads(resp.content)
 
         _, signature = self.private_key.pack(result)
 
@@ -364,7 +361,7 @@ class RelayRegisterTest(APITestCase):
         )
 
         assert resp.status_code == 200, resp.content
-        result = json.loads(resp.content)
+        result = orjson.loads(resp.content)
 
         del result["token"]
 
@@ -394,7 +391,7 @@ class RelayRegisterTest(APITestCase):
         )
 
         assert resp.status_code == 200, resp.content
-        result = json.loads(resp.content)
+        result = orjson.loads(resp.content)
 
         raw_json, signature = self.private_key.pack(result)
 
@@ -421,7 +418,7 @@ class RelayRegisterTest(APITestCase):
         )
 
         assert resp.status_code == 200, resp.content
-        result = json.loads(resp.content)
+        result = orjson.loads(resp.content)
 
         raw_json, signature = self.private_key.pack(result)
 
@@ -461,7 +458,7 @@ class RelayRegisterTest(APITestCase):
         )
 
         assert resp.status_code == 200, resp.content
-        result = json.loads(resp.content)
+        result = orjson.loads(resp.content)
 
         raw_json, signature = self.private_key.pack(result)
 
@@ -567,5 +564,5 @@ class RelayRegisterTest(APITestCase):
         static_auth = {relay_id: {"internal": True, "public_key": str(public_key)}}
 
         with self.assertNumQueries(0):
-            with self.settings(SENTRY_OPTIONS={"relay.static_auth": static_auth}):
+            with override_options({"relay.static_auth": static_auth}):
                 self.register_relay(key_pair, "1.1.1", relay_id)

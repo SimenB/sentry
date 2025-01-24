@@ -1,18 +1,18 @@
 import styled from '@emotion/styled';
 
+import type {LinkButtonProps} from 'sentry/components/button';
+import {LinkButton} from 'sentry/components/button';
 import {IconDownload} from 'sentry/icons';
 import {t} from 'sentry/locale';
-import space from 'sentry/styles/space';
+import {space} from 'sentry/styles/space';
 import useApi from 'sentry/utils/useApi';
 import useOrganization from 'sentry/utils/useOrganization';
 import useProjects from 'sentry/utils/useProjects';
 
-import Button, {ButtonPropsWithoutAriaLabel} from '../button';
-
 interface ExportProfileButtonProps
-  extends Omit<ButtonPropsWithoutAriaLabel, 'onClick' | 'children'> {
+  extends Omit<LinkButtonProps, 'onClick' | 'children' | 'external'> {
   eventId: string | undefined;
-  orgId: string | undefined;
+  orgId: string;
   projectId: string | undefined;
   children?: React.ReactNode;
   variant?: 'xs' | 'default';
@@ -39,7 +39,7 @@ export function ExportProfileButton(props: ExportProfileButtonProps) {
       <IconDownload size="xs" />
     </StyledButtonSmall>
   ) : (
-    <Button
+    <LinkButton
       icon={<IconDownload />}
       title={title}
       href={href}
@@ -47,11 +47,11 @@ export function ExportProfileButton(props: ExportProfileButtonProps) {
       {...props}
     >
       {props.children}
-    </Button>
+    </LinkButton>
   );
 }
 
-const StyledButtonSmall = styled(Button)`
+const StyledButtonSmall = styled(LinkButton)`
   border: none;
   background-color: transparent;
   box-shadow: none;

@@ -1,8 +1,6 @@
-from sentry.testutils import APITestCase
-from sentry.testutils.silo import region_silo_test
+from sentry.testutils.cases import APITestCase
 
 
-@region_silo_test
 class OrganizationUserDetailsTest(APITestCase):
     endpoint = "sentry-api-0-organization-user-details"
 
@@ -25,3 +23,7 @@ class OrganizationUserDetailsTest(APITestCase):
         user = self.create_user("meep@localhost", username="meep")
 
         self.get_error_response(self.org.slug, user.id, status_code=404)
+
+    def test_bad_user_id(self):
+        self.get_error_response(self.org.slug, 123, status_code=404)
+        self.get_error_response(self.org.slug, "not_valid", status_code=400)

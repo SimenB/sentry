@@ -1,8 +1,8 @@
 /* eslint no-script-url:0 */
 
-import marked from 'sentry/utils/marked';
+import marked, {limitedMarked} from 'sentry/utils/marked';
 
-function expectMarkdown(test) {
+function expectMarkdown(test: any) {
   expect(marked(test[0])).toEqual('<p>' + test[1] + '</p>\n');
 }
 
@@ -12,6 +12,10 @@ describe('marked', function () {
       ['[x](http://example.com)', '<a href="http://example.com">x</a>'],
       ['[x](https://example.com)', '<a href="https://example.com">x</a>'],
       ['[x](mailto:foo@example.com)', '<a href="mailto:foo@example.com">x</a>'],
+      [
+        '[x](https://example.com "Example Title")',
+        '<a href="https://example.com" title="Example Title">x</a>',
+      ],
     ]) {
       expectMarkdown(test);
     }
@@ -44,18 +48,33 @@ describe('marked', function () {
     }
   });
 
-  it('escapes XSS and removes invalid attributes on img', function () {
+  it('escapes injections', function () {
     [
       [
-        `[test](http://example.com\""#><img/onerror='alert\(location\)'/src=>)
-![test](http://example.com"/onerror='alert\(location\)'/)`,
-        `<a href="http://example.com"><img src="">"&gt;test</a>
-<img alt="test" src="http://example.com">`,
+        '[x<b>Bold</b>](https://evil.example.com)',
+        '<a href="https://evil.example.com">x&lt;b&gt;Bold&lt;/b&gt;</a>',
+      ],
+      [
+        '[x](https://evil.example.com"class="foo)',
+        '<a href="https://evil.example.com%22class=%22foo">x</a>',
+      ],
+      [
+        '[x](https://evil.example.com "class=\\"bar")',
+        '<a href="https://evil.example.com" title="class=&quot;bar">x</a>',
       ],
       [
         '<script> <img <script> src=x onerror=alert(1) />',
         '&lt;script&gt; &lt;img &lt;script&gt; src=x onerror=alert(1) /&gt;',
       ],
     ].forEach(expectMarkdown);
+  });
+
+  it('limited renderer does not render images and hyperlinks as html', function () {
+    for (const test of [
+      ['![alt](http://example.com/rick.gif)', 'http://example.com/rick.gif'],
+      ['[click me](http://example.com)', 'http://example.com'],
+    ]) {
+      expect(limitedMarked(test[0]!)).toEqual('<p>' + test[1] + '</p>\n');
+    }
   });
 });

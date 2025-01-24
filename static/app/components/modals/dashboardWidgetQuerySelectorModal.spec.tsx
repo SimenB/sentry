@@ -1,17 +1,22 @@
-import {mountWithTheme} from 'sentry-test/enzyme';
 import {initializeOrg} from 'sentry-test/initializeOrg';
+import {render, screen} from 'sentry-test/reactTestingLibrary';
 
-import {Client} from 'sentry/api';
 import DashboardWidgetQuerySelectorModal from 'sentry/components/modals/dashboardWidgetQuerySelectorModal';
-import {t} from 'sentry/locale';
-import {DisplayType} from 'sentry/views/dashboardsV2/types';
+import type {Widget} from 'sentry/views/dashboards/types';
+import {DisplayType} from 'sentry/views/dashboards/types';
 
 const stubEl: any = (props: any) => <div>{props.children}</div>;
 
-const api: Client = new Client();
+const api = new MockApiClient();
 
-function mountModal({initialData, widget}) {
-  return mountWithTheme(
+function renderModal({
+  initialData,
+  widget,
+}: {
+  initialData: ReturnType<typeof initializeOrg>;
+  widget: Widget;
+}) {
+  return render(
     <DashboardWidgetQuerySelectorModal
       Header={stubEl}
       Footer={stubEl}
@@ -22,7 +27,7 @@ function mountModal({initialData, widget}) {
       widget={widget}
       api={api}
     />,
-    initialData.routerContext
+    {router: initialData.router}
   );
 }
 
@@ -30,14 +35,12 @@ describe('Modals -> AddDashboardWidgetModal', function () {
   const initialData = initializeOrg({
     organization: {
       features: ['performance-view', 'discover-query'],
-      apdexThreshold: 400,
     },
     router: {},
-    project: 1,
     projects: [],
   });
-  let mockQuery;
-  let mockWidget;
+  let mockQuery!: Widget['queries'][number];
+  let mockWidget!: Widget;
 
   beforeEach(function () {
     mockQuery = {
@@ -45,7 +48,6 @@ describe('Modals -> AddDashboardWidgetModal', function () {
       fields: ['count()', 'failure_count()'],
       aggregates: ['count()', 'failure_count()'],
       columns: [],
-      id: '1',
       name: 'Query Name',
       orderby: '',
     };
@@ -71,16 +73,12 @@ describe('Modals -> AddDashboardWidgetModal', function () {
       body: {data: [{'event.type': 'error'}], meta: {'event.type': 'string'}},
     });
     MockApiClient.addMockResponse({
-      url: '/organizations/org-slug/events-geo/',
-      body: {data: [], meta: {}},
-    });
-    MockApiClient.addMockResponse({
       url: '/organizations/org-slug/recent-searches/',
       body: [],
     });
     MockApiClient.addMockResponse({
       url: '/organizations/org-slug/dashboards/',
-      body: [{id: '1', title: t('Test Dashboard')}],
+      body: [{id: '1', title: 'Test Dashboard'}],
     });
   });
 
@@ -88,62 +86,42 @@ describe('Modals -> AddDashboardWidgetModal', function () {
     MockApiClient.clearMockResponses();
   });
 
-  it('renders a single query selection when the widget only has one query', async function () {
-    const wrapper = mountModal({initialData, widget: mockWidget});
-    await tick();
-    expect(wrapper.find('StyledInput').length).toEqual(1);
-    expect(wrapper.find('StyledInput').props().value).toEqual(
-      'title:/organizations/:orgId/performance/summary/'
-    );
-    expect(wrapper.find('OpenInDiscoverButton').length).toEqual(1);
-    wrapper.unmount();
+  it('renders a single query selection when the widget only has one query', function () {
+    renderModal({initialData, widget: mockWidget});
+
+    expect(
+      screen.getByDisplayValue('title:/organizations/:orgId/performance/summary/')
+    ).toBeInTheDocument();
+    expect(screen.getByRole('button', {name: 'Open in Discover'})).toBeInTheDocument();
   });
 
-  it('renders a multiple query selections when the widget only has multiple queries', async function () {
+  it('renders a multiple query selections when the widget only has multiple queries', function () {
     mockWidget.queries.push({
       ...mockQuery,
       conditions: 'title:/organizations/:orgId/performance/',
-      id: '2',
     });
     mockWidget.queries.push({
       ...mockQuery,
       conditions: 'title:/organizations/:orgId/',
-      id: '3',
     });
-    const wrapper = mountModal({initialData, widget: mockWidget});
-    await tick();
-    expect(wrapper.find('StyledInput').length).toEqual(3);
-    expect(wrapper.find('StyledInput').at(0).props().value).toEqual(
-      'title:/organizations/:orgId/performance/summary/'
-    );
-    expect(wrapper.find('StyledInput').at(1).props().value).toEqual(
-      'title:/organizations/:orgId/performance/'
-    );
-    expect(wrapper.find('StyledInput').at(2).props().value).toEqual(
-      'title:/organizations/:orgId/'
-    );
-    expect(wrapper.find('OpenInDiscoverButton').length).toEqual(3);
-    wrapper.unmount();
+    renderModal({initialData, widget: mockWidget});
+    const queryFields = screen.getAllByRole('textbox');
+    expect(queryFields).toHaveLength(3);
+
+    expect(
+      screen.getByDisplayValue('title:/organizations/:orgId/performance/summary/')
+    ).toBeInTheDocument();
+    expect(
+      screen.getByDisplayValue('title:/organizations/:orgId/performance/')
+    ).toBeInTheDocument();
+    expect(screen.getByDisplayValue('title:/organizations/:orgId/')).toBeInTheDocument();
   });
 
-  it('links user to the query in discover when a query is selected from the modal', async function () {
-    const wrapper = mountModal({initialData, widget: mockWidget});
-    await tick();
-    expect(wrapper.find('QueryContainer').find('Link').props().to).toEqual(
+  it('links user to the query in discover when a query is selected from the modal', function () {
+    renderModal({initialData, widget: mockWidget});
+    expect(screen.getByRole('link')).toHaveAttribute(
+      'href',
       '/organizations/org-slug/discover/results/?field=count%28%29&field=failure_count%28%29&name=Test%20Widget&query=title%3A%2Forganizations%2F%3AorgId%2Fperformance%2Fsummary%2F&statsPeriod=14d&yAxis=count%28%29&yAxis=failure_count%28%29'
     );
-    wrapper.unmount();
-  });
-
-  it('links user to the query in discover with additional field when a world map query is selected from the modal', async function () {
-    mockWidget.queries[0].fields = ['count()'];
-    mockWidget.queries[0].aggregates = ['count()'];
-    mockWidget.displayType = DisplayType.WORLD_MAP;
-    const wrapper = mountModal({initialData, widget: mockWidget});
-    await tick();
-    expect(wrapper.find('QueryContainer').find('Link').props().to).toEqual(
-      '/organizations/org-slug/discover/results/?display=worldmap&field=geo.country_code&field=count%28%29&name=Test%20Widget&query=title%3A%2Forganizations%2F%3AorgId%2Fperformance%2Fsummary%2F%20has%3Ageo.country_code&statsPeriod=14d&yAxis=count%28%29'
-    );
-    wrapper.unmount();
   });
 });

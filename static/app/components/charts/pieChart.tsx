@@ -1,23 +1,24 @@
 import {Component, createRef} from 'react';
+import type {Theme} from '@emotion/react';
 import {withTheme} from '@emotion/react';
 import type {PieSeriesOption} from 'echarts';
 
-import {ReactEchartsRef, Series} from 'sentry/types/echarts';
-import type {Theme} from 'sentry/utils/theme';
+import type {ReactEchartsRef, Series} from 'sentry/types/echarts';
 
 import Legend from './components/legend';
 import PieSeries from './series/pieSeries';
+import type {BaseChartProps} from './baseChart';
 import BaseChart from './baseChart';
 
-type ChartProps = Omit<React.ComponentProps<typeof BaseChart>, 'css'>;
+export interface PieChartSeries
+  extends Series,
+    Omit<PieSeriesOption, 'id' | 'color' | 'data'> {}
 
-export type PieChartSeries = Series & Omit<PieSeriesOption, 'data' | 'name'>;
-
-type Props = Omit<ChartProps, 'series'> & {
+interface Props extends Omit<BaseChartProps, 'series'> {
   series: PieChartSeries[];
   theme: Theme;
   selectOnRender?: boolean;
-};
+}
 
 class PieChart extends Component<Props> {
   componentDidMount() {
@@ -43,7 +44,7 @@ class PieChart extends Component<Props> {
 
   // Select a series to highlight (e.g. shows details of series)
   // This is the same event as when you hover over a series in the chart
-  highlight = dataIndex => {
+  highlight = (dataIndex: any) => {
     if (!this.chart.current) {
       return;
     }
@@ -56,7 +57,7 @@ class PieChart extends Component<Props> {
   };
 
   // Opposite of `highlight`
-  downplay = dataIndex => {
+  downplay = (dataIndex: any) => {
     if (!this.chart.current) {
       return;
     }
@@ -76,7 +77,7 @@ class PieChart extends Component<Props> {
       .reduce(
         (acc, [name, value]) => ({
           ...acc,
-          [name]: value,
+          [name!]: value,
         }),
         {}
       );
@@ -94,21 +95,24 @@ class PieChart extends Component<Props> {
 
     // Note, we only take the first series unit!
     const [firstSeries] = series;
-    const seriesPercentages = this.getSeriesPercentages(firstSeries);
+    const seriesPercentages: Record<string, unknown> = this.getSeriesPercentages(
+      firstSeries!
+    );
 
     return (
       <BaseChart
         ref={this.chart}
         colors={
-          firstSeries &&
-          firstSeries.data && [...theme.charts.getColorPalette(firstSeries.data.length)]
+          firstSeries?.data && [
+            ...(theme.charts.getColorPalette(firstSeries.data.length) ?? []),
+          ]
         }
         // when legend highlights it does NOT pass dataIndex :(
         onHighlight={({name}) => {
           if (
             !this.isInitialSelected ||
             !name ||
-            firstSeries.data[this.selected].name === name
+            firstSeries!.data[this.selected]!.name === name
           ) {
             return;
           }
@@ -149,9 +153,9 @@ class PieChart extends Component<Props> {
           formatter: data => {
             return [
               '<div class="tooltip-series">',
-              `<div><span class="tooltip-label">${data.marker}<strong>${data.name}</strong></span> ${data.percent}%</div>`,
+              `<div><span class="tooltip-label">${(data as any).marker}<strong>${(data as any).name}</strong></span> ${(data as any).percent}%</div>`,
               '</div>',
-              `<div class="tooltip-date">${data.value}</div>`,
+              `<div class="tooltip-footer">${(data as any).value}</div>`,
               '</div>',
               '<div class="tooltip-arrow"></div>',
             ].join('');
@@ -159,8 +163,8 @@ class PieChart extends Component<Props> {
         }}
         series={[
           PieSeries({
-            name: firstSeries.seriesName,
-            data: firstSeries.data,
+            name: firstSeries!.seriesName,
+            data: firstSeries!.data,
             avoidLabelOverlap: false,
             label: {
               formatter: ({name, percent}) => `${name}\n${percent}%`,

@@ -1,11 +1,12 @@
-import {Project, Team} from 'sentry/types';
+import type {Team} from 'sentry/types/organization';
+import type {Project} from 'sentry/types/project';
 
 export default function getProjectsByTeams(
   teams: Team[],
   projects: Project[],
   isSuperuser: boolean = false
 ): {projectsByTeam: {[teamSlug: string]: Project[]}; teamlessProjects: Project[]} {
-  const projectsByTeam = {};
+  const projectsByTeam: Record<string, Project[]> = {};
   const teamlessProjects: Project[] = [];
   let usersTeams = new Set(teams.filter(team => team.isMember).map(team => team.slug));
 
@@ -24,7 +25,7 @@ export default function getProjectsByTeams(
         if (!projectsByTeam.hasOwnProperty(team.slug)) {
           projectsByTeam[team.slug] = [];
         }
-        projectsByTeam[team.slug].push(project);
+        projectsByTeam[team.slug]!.push(project);
       });
     }
   });

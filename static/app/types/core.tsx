@@ -5,8 +5,8 @@
  * or used in multiple views.
  */
 import type {getInterval} from 'sentry/components/charts/utils';
-import {MenuListItemProps} from 'sentry/components/menuListItem';
-import type {API_ACCESS_SCOPES} from 'sentry/constants';
+import type {MenuListItemProps} from 'sentry/components/menuListItem';
+import type {ALLOWED_SCOPES} from 'sentry/constants';
 
 /**
  * Visual representation of a project/team/organization/user
@@ -14,6 +14,7 @@ import type {API_ACCESS_SCOPES} from 'sentry/constants';
 export type Avatar = {
   avatarType: 'letter_avatar' | 'upload' | 'gravatar' | 'background' | 'default';
   avatarUuid: string | null;
+  avatarUrl?: string | null;
   color?: boolean;
 };
 
@@ -30,7 +31,7 @@ export type Actor = {
   email?: string;
 };
 
-export type Scope = typeof API_ACCESS_SCOPES[number];
+export type Scope = (typeof ALLOWED_SCOPES)[number];
 
 export type DateString = Date | string | null;
 
@@ -46,8 +47,13 @@ export type Writable<T> = {-readonly [K in keyof T]: T[K]};
  * The option format used by react-select based components
  */
 export interface SelectValue<T> extends MenuListItemProps {
-  label: string | number | React.ReactElement;
   value: T;
+  /**
+   * In scenarios where you're using a react element as the label react-select
+   * will be unable to filter to that label. Use this to specify the plain text of
+   * the label.
+   */
+  textValue?: string;
 }
 
 /**
@@ -55,20 +61,59 @@ export interface SelectValue<T> extends MenuListItemProps {
  */
 export type Choice = [
   value: string | number,
-  label: string | number | React.ReactElement
+  label: string | number | React.ReactElement,
 ];
 
 export type Choices = Choice[];
 
-// https://github.com/getsentry/relay/blob/master/relay-common/src/constants.rs
-// Note: the value of the enum on the frontend is plural,
-// but the value of the enum on the backend is singular
+/**
+ * These are very similar to the plural types of DATA_CATEGORY_INFO.
+ * DATA_CATEGORY_INFO and DataCategoryExact have additional categories
+ * that are used in stats but not other places like billing.
+ */
 export enum DataCategory {
-  DEFAULT = 'default',
   ERRORS = 'errors',
   TRANSACTIONS = 'transactions',
   ATTACHMENTS = 'attachments',
-  TRANSACTIONS_PROCESSED = 'transactionsProcessed',
+  PROFILES = 'profiles',
+  REPLAYS = 'replays',
+  MONITOR_SEATS = 'monitorSeats',
+  PROFILE_DURATION = 'profileDuration',
+  SPANS = 'spans',
+  SPANS_INDEXED = 'spansIndexed',
+  PROFILE_CHUNKS = 'profileChunks',
+}
+
+/**
+ * https://github.com/getsentry/relay/blob/master/relay-base-schema/src/data_category.rs
+ * Matches the backend singular backend enum directly.
+ * For display variations, refer to `DATA_CATEGORY_INFO` rather than manipulating these strings
+ */
+export enum DataCategoryExact {
+  ERROR = 'error',
+  TRANSACTION = 'transaction',
+  ATTACHMENT = 'attachment',
+  PROFILE = 'profile',
+  REPLAY = 'replay',
+  // TODO: Update processed and indexed transactions to camel case"
+  TRANSACTION_PROCESSED = 'transaction_processed',
+  TRANSACTION_INDEXED = 'transaction_indexed',
+  MONITOR = 'monitor',
+  MONITOR_SEAT = 'monitorSeat',
+  PROFILE_DURATION = 'profileDuration',
+  SPAN = 'span',
+  SPAN_INDEXED = 'spanIndexed',
+}
+
+export interface DataCategoryInfo {
+  apiName: string;
+  displayName: string;
+  isBilledCategory: boolean;
+  name: DataCategoryExact;
+  plural: string;
+  productName: string;
+  titleName: string;
+  uid: number;
 }
 
 export type EventType = 'error' | 'transaction' | 'attachment';
@@ -77,9 +122,11 @@ export enum Outcome {
   ACCEPTED = 'accepted',
   FILTERED = 'filtered',
   INVALID = 'invalid',
-  DROPPED = 'dropped', // this is not a real outcome coming from the server
+  ABUSE = 'abuse',
   RATE_LIMITED = 'rate_limited',
   CLIENT_DISCARD = 'client_discard',
+  CARDINALITY_LIMITED = 'cardinality_limited',
+  DROPPED = 'dropped', // this is not a real outcome coming from the server
 }
 
 export type IntervalPeriod = ReturnType<typeof getInterval>;
@@ -94,9 +141,9 @@ export type PageFilters = {
    * Currently selected time filter
    */
   datetime: {
-    end: DateString;
+    end: DateString | null;
     period: string | null;
-    start: DateString;
+    start: DateString | null;
     utc: boolean | null;
   };
   /**

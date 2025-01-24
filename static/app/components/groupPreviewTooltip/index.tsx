@@ -1,44 +1,55 @@
-import {Fragment, ReactChild} from 'react';
+import type {ReactChild} from 'react';
 
-import ProjectsStore from 'sentry/stores/projectsStore';
-import {IssueCategory} from 'sentry/types';
+import {EvidencePreview} from 'sentry/components/groupPreviewTooltip/evidencePreview';
+import {IssueCategory} from 'sentry/types/group';
 
+import {SpanEvidencePreview} from './spanEvidencePreview';
 import {StackTracePreview} from './stackTracePreview';
 
 type GroupPreviewTooltipProps = {
   children: ReactChild;
   groupId: string;
-  issueCategory: IssueCategory;
-  // we need eventId only when hovering over Event, not Group
-  // (different API call is made to get the stack trace then)
-  eventId?: string;
   groupingCurrentLevel?: number;
+  issueCategory?: IssueCategory;
   projectId?: string;
+  query?: string;
 };
 
-const GroupPreviewTooltip = ({
+function GroupPreviewTooltip({
   children,
-  eventId,
   groupId,
   groupingCurrentLevel,
   issueCategory,
-  projectId,
-}: GroupPreviewTooltipProps) => {
+  query,
+}: GroupPreviewTooltipProps) {
+  if (!issueCategory) {
+    return null;
+  }
+
   switch (issueCategory) {
     case IssueCategory.ERROR:
       return (
         <StackTracePreview
-          issueId={groupId}
+          groupId={groupId}
           groupingCurrentLevel={groupingCurrentLevel}
-          eventId={eventId}
-          projectSlug={eventId ? ProjectsStore.getById(projectId)?.slug : undefined}
+          query={query}
         >
           {children}
         </StackTracePreview>
       );
+    case IssueCategory.PERFORMANCE:
+      return (
+        <SpanEvidencePreview groupId={groupId} query={query}>
+          {children}
+        </SpanEvidencePreview>
+      );
     default:
-      return <Fragment>{children}</Fragment>;
+      return (
+        <EvidencePreview groupId={groupId} query={query}>
+          {children}
+        </EvidencePreview>
+      );
   }
-};
+}
 
 export default GroupPreviewTooltip;

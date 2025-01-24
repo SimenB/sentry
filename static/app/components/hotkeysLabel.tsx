@@ -1,6 +1,7 @@
 import styled from '@emotion/styled';
 
-import space from 'sentry/styles/space';
+import {space} from 'sentry/styles/space';
+import toArray from 'sentry/utils/array/toArray';
 import {getKeyCode} from 'sentry/utils/getKeyCode';
 
 const macModifiers = {
@@ -36,6 +37,7 @@ const keyToDisplay = (
   }
 
   const modifierMap = isMac ? macModifiers : normalModifiers;
+  // @ts-expect-error TS(7053): Element implicitly has an 'any' type because expre... Remove this comment to see the full error message
   const keyStr = modifierMap[keyCode] ?? genericGlyphs[keyCode] ?? key.toUpperCase();
 
   const specificToOs = keyCode === getKeyCode('command') ? 'macos' : 'generic';
@@ -56,11 +58,9 @@ type Props = {
   forcePlatform?: 'macos' | 'generic';
 };
 
-const HotkeysLabel = ({value, forcePlatform}: Props) => {
+function HotkeysLabel({value, forcePlatform}: Props) {
   // Split by commas and then split by +, but allow escaped /+
-  const hotkeySets = (Array.isArray(value) ? value : [value]).map(o =>
-    o.trim().split('+')
-  );
+  const hotkeySets = toArray(value).map(o => o.trim().split('+'));
 
   const isMac = forcePlatform
     ? forcePlatform === 'macos'
@@ -80,7 +80,7 @@ const HotkeysLabel = ({value, forcePlatform}: Props) => {
   }
 
   return <HotkeysContainer>{finalKeySet.map(key => key.label)}</HotkeysContainer>;
-};
+}
 
 export default HotkeysLabel;
 

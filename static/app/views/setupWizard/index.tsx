@@ -1,67 +1,68 @@
-import {useCallback, useEffect, useRef, useState} from 'react';
+import {useState} from 'react';
+import {createBrowserRouter, RouterProvider} from 'react-router-dom';
 
-import Button from 'sentry/components/button';
+import LoadingError from 'sentry/components/loadingError';
 import LoadingIndicator from 'sentry/components/loadingIndicator';
-import ThemeAndStyleProvider from 'sentry/components/themeAndStyleProvider';
+import {ThemeAndStyleProvider} from 'sentry/components/themeAndStyleProvider';
 import {t} from 'sentry/locale';
-import useApi from 'sentry/utils/useApi';
+import {
+  DEFAULT_QUERY_CLIENT_CONFIG,
+  QueryClient,
+  QueryClientProvider,
+} from 'sentry/utils/queryClient';
+import {useSetupWizardViewedAnalytics} from 'sentry/views/setupWizard/utils/setupWizardAnalytics';
+import {useOrganizationsWithRegion} from 'sentry/views/setupWizard/utils/useOrganizationsWithRegion';
+import {WaitingForWizardToConnect} from 'sentry/views/setupWizard/waitingForWizardToConnect';
+import {WizardProjectSelection} from 'sentry/views/setupWizard/wizardProjectSelection';
+
+const queryClient = new QueryClient(DEFAULT_QUERY_CLIENT_CONFIG);
 
 type Props = {
-  hash?: boolean | string;
+  hash: string;
+  enableProjectSelection?: boolean;
 };
 
-function SetupWizard({hash = false}: Props) {
-  const api = useApi();
-  const closeTimeoutRef = useRef<number | undefined>(undefined);
-  const [finished, setFinished] = useState(false);
-
-  useEffect(() => {
-    return () => {
-      if (closeTimeoutRef.current) {
-        window.clearTimeout(closeTimeoutRef.current);
-      }
-    };
-  });
-
-  useEffect(() => {
-    return () => {
-      window.clearTimeout(closeTimeoutRef.current);
-    };
-  });
-
-  const checkFinished = useCallback(async () => {
-    try {
-      await api.requestPromise(`/wizard/${hash}/`);
-    } catch {
-      setFinished(true);
-      window.clearTimeout(closeTimeoutRef.current);
-      closeTimeoutRef.current = window.setTimeout(() => window.close(), 10000);
-    }
-  }, [api, hash]);
-
-  useEffect(() => {
-    const pollingInterval = window.setInterval(checkFinished, 1000);
-    return () => window.clearInterval(pollingInterval);
-  }, [checkFinished]);
+function SetupWizard({hash, enableProjectSelection = false}: Props) {
+  const [router] = useState(() =>
+    createBrowserRouter([
+      {
+        path: '*',
+        element: (
+          <SetupWizardContent
+            hash={hash}
+            enableProjectSelection={enableProjectSelection}
+          />
+        ),
+      },
+    ])
+  );
 
   return (
     <ThemeAndStyleProvider>
-      <div className="container">
-        {!finished ? (
-          <LoadingIndicator style={{margin: '2em auto'}}>
-            <div className="row">
-              <h5>{t('Waiting for wizard to connect')}</h5>
-            </div>
-          </LoadingIndicator>
-        ) : (
-          <div className="row">
-            <h5>{t('Return to your terminal to complete your setup')}</h5>
-            <h5>{t('(This window will close in 10 seconds)')}</h5>
-            <Button onClick={() => window.close()}>{t('Close browser tab')}</Button>
-          </div>
-        )}
-      </div>
+      <QueryClientProvider client={queryClient}>
+        <RouterProvider router={router} />
+      </QueryClientProvider>
     </ThemeAndStyleProvider>
+  );
+}
+
+function SetupWizardContent({hash, enableProjectSelection}: Props) {
+  const {data: organizations, isError, isLoading} = useOrganizationsWithRegion();
+
+  useSetupWizardViewedAnalytics(organizations);
+
+  if (isLoading) {
+    return <LoadingIndicator />;
+  }
+
+  if (isError || !organizations) {
+    return <LoadingError message={t('Failed to load organizations')} />;
+  }
+
+  return enableProjectSelection ? (
+    <WizardProjectSelection hash={hash} organizations={organizations} />
+  ) : (
+    <WaitingForWizardToConnect hash={hash} organizations={organizations} />
   );
 }
 

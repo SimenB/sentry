@@ -19,7 +19,7 @@ const COLORS = [
   '#847a8c', // gray
 ] as const;
 
-type Color = typeof COLORS[number];
+type Color = (typeof COLORS)[number];
 
 function hashIdentifier(identifier: string) {
   identifier += '';
@@ -37,7 +37,7 @@ function getColor(identifier: string | undefined): Color {
   }
 
   const id = hashIdentifier(identifier);
-  return COLORS[id % COLORS.length];
+  return COLORS[id % COLORS.length]!;
 }
 
 function getInitials(displayName: string | undefined) {
@@ -46,9 +46,9 @@ function getInitials(displayName: string | undefined) {
   );
   // Use Array.from as slicing and substring() work on ucs2 segments which
   // results in only getting half of any 4+ byte character.
-  let initials = Array.from(names[0])[0];
+  let initials = Array.from(names[0]!)[0]!;
   if (names.length > 1) {
-    initials += Array.from(names[names.length - 1])[0];
+    initials += Array.from(names[names.length - 1]!)[0]!;
   }
   return initials.toUpperCase();
 }
@@ -87,8 +87,7 @@ const LetterAvatar = styled(
           height="120"
           rx="15"
           ry="15"
-          opacity={suggested ? '50%' : '100%'}
-          fill={getColor(identifier)}
+          fill={suggested ? theme.background : getColor(identifier)}
         />
         <text
           x="50%"
@@ -96,7 +95,7 @@ const LetterAvatar = styled(
           fontSize="65"
           style={{dominantBaseline: 'central'}}
           textAnchor="middle"
-          fill={theme.white}
+          fill={suggested ? theme.subText : theme.white}
         >
           {getInitials(displayName)}
         </text>
@@ -106,10 +105,6 @@ const LetterAvatar = styled(
 )<Props>`
   ${imageStyle};
 `;
-
-LetterAvatar.defaultProps = {
-  round: false,
-};
 
 export default forwardRef<SVGSVGElement, Props>((props, ref) => (
   <LetterAvatar forwardedRef={ref} {...props} />

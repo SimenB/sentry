@@ -1,6 +1,6 @@
 import ScoreBar from 'sentry/components/scoreBar';
-import Tooltip from 'sentry/components/tooltip';
-import CHART_PALETTE from 'sentry/constants/chartPalette';
+import {Tooltip} from 'sentry/components/tooltip';
+import {CHART_PALETTE} from 'sentry/constants/chartPalette';
 import {tct} from 'sentry/locale';
 import {defined} from 'sentry/utils';
 
@@ -44,7 +44,7 @@ function UserMisery(props: Props) {
     );
   } else if (defined(miserableUsers) && defined(totalUsers)) {
     title = tct(
-      'User Misery score is [userMisery], because [miserableUsers] out of [totalUsers] unique users had a miserable experience.',
+      'User Misery score is [userMisery], meaning [miserableUsers] out of [totalUsers] unique users had a miserable experience.',
       {
         miserableUsers,
         totalUsers,

@@ -11,17 +11,17 @@ import {SpanSortOthers} from 'sentry/views/performance/transactionSummary/transa
 
 const initializeData = () => {
   const data = _initializeData({
-    features: ['performance-view', 'performance-suspect-spans-view'],
+    features: ['performance-view'],
   });
 
-  act(() => ProjectsStore.loadInitialData(data.organization.projects));
+  act(() => ProjectsStore.loadInitialData(data.projects));
   return data;
 };
 
 describe('SuspectSpansTable', () => {
   it('should not calculate frequency percentages above 100%', async () => {
     const initialData = initializeData();
-    const suspectSpan = makeSuspectSpan(SAMPLE_SPANS[0]);
+    const suspectSpan = makeSuspectSpan(SAMPLE_SPANS[0]!);
     suspectSpan.frequency = 120;
 
     render(
@@ -32,9 +32,9 @@ describe('SuspectSpansTable', () => {
         isLoading={false}
         suspectSpans={[suspectSpan]}
         totals={{'count()': 100}}
-        sort={SpanSortOthers.COUNT}
+        sort={SpanSortOthers.SUM_EXCLUSIVE_TIME}
       />,
-      {context: initialData.routerContext}
+      {router: initialData.router}
     );
 
     const frequencyHeader = await screen.findByTestId('grid-editable');

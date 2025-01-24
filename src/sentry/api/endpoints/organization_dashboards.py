@@ -1,20 +1,39 @@
-import re
+from __future__ import annotations
 
-from django.db import IntegrityError, transaction
-from django.db.models import Case, When
+from django.db import IntegrityError, router, transaction
+from django.db.models import Case, Exists, IntegerField, OuterRef, Value, When
+from drf_spectacular.utils import extend_schema
 from rest_framework.request import Request
 from rest_framework.response import Response
 
 from sentry import features
+from sentry.api.api_owners import ApiOwner
+from sentry.api.api_publish_status import ApiPublishStatus
 from sentry.api.base import region_silo_endpoint
 from sentry.api.bases.organization import OrganizationEndpoint, OrganizationPermission
 from sentry.api.paginator import ChainPaginator
 from sentry.api.serializers import serialize
-from sentry.api.serializers.models.dashboard import DashboardListSerializer
+from sentry.api.serializers.models.dashboard import (
+    DashboardDetailsModelSerializer,
+    DashboardListResponse,
+    DashboardListSerializer,
+)
 from sentry.api.serializers.rest_framework import DashboardSerializer
-from sentry.models import Dashboard
+from sentry.apidocs.constants import (
+    RESPONSE_BAD_REQUEST,
+    RESPONSE_CONFLICT,
+    RESPONSE_FORBIDDEN,
+    RESPONSE_NOT_FOUND,
+)
+from sentry.apidocs.examples.dashboard_examples import DashboardExamples
+from sentry.apidocs.parameters import CursorQueryParam, GlobalParams, VisibilityParams
+from sentry.apidocs.utils import inline_sentry_response_serializer
+from sentry.db.models.fields.text import CharField
+from sentry.models.dashboard import Dashboard, DashboardFavoriteUser
+from sentry.models.organization import Organization
+from sentry.users.services.user.service import user_service
 
-MAX_RETRIES = 10
+MAX_RETRIES = 2
 DUPLICATE_TITLE_PATTERN = r"(.*) copy(?:$|\s(\d+))"
 
 
@@ -26,35 +45,75 @@ class OrganizationDashboardsPermission(OrganizationPermission):
         "DELETE": ["org:read", "org:write", "org:admin"],
     }
 
+    def has_object_permission(self, request: Request, view, obj):
+        if isinstance(obj, Organization):
+            return super().has_object_permission(request, view, obj)
 
+        if isinstance(obj, Dashboard):
+            # allow for Managers and Owners
+            if request.access.has_scope("org:write"):
+                return True
+
+            # check if user is restricted from editing dashboard
+            if hasattr(obj, "permissions"):
+                return obj.permissions.has_edit_permissions(request.user.id)
+
+            # if no permissions are assigned, it is considered accessible to all users
+            return True
+
+        return True
+
+
+@extend_schema(tags=["Dashboards"])
 @region_silo_endpoint
 class OrganizationDashboardsEndpoint(OrganizationEndpoint):
+    publish_status = {
+        "GET": ApiPublishStatus.PUBLIC,
+        "POST": ApiPublishStatus.PUBLIC,
+    }
+    owner = ApiOwner.PERFORMANCE
     permission_classes = (OrganizationDashboardsPermission,)
 
+    @extend_schema(
+        operation_id="List an Organization's Custom Dashboards",
+        parameters=[GlobalParams.ORG_ID_OR_SLUG, VisibilityParams.PER_PAGE, CursorQueryParam],
+        request=None,
+        responses={
+            200: inline_sentry_response_serializer(
+                "DashboardListResponse", list[DashboardListResponse]
+            ),
+            400: RESPONSE_BAD_REQUEST,
+            403: RESPONSE_FORBIDDEN,
+            404: RESPONSE_NOT_FOUND,
+        },
+        examples=DashboardExamples.DASHBOARDS_QUERY_RESPONSE,
+    )
     def get(self, request: Request, organization) -> Response:
         """
-        Retrieve an Organization's Dashboards
-        `````````````````````````````````````
-
-        Retrieve a list of dashboards that are associated with the given organization.
-        If on the first page, this endpoint will also include any pre-built dashboards
-        that haven't been replaced or removed.
-
-        :pparam string organization_slug: the slug of the organization the
-                                          dashboards belongs to.
-        :qparam string query: the title of the dashboard being searched for.
-        :auth: required
+        Retrieve a list of custom dashboards that are associated with the given organization.
         """
         if not features.has("organizations:dashboards-basic", organization, actor=request.user):
             return Response(status=404)
 
-        dashboards = Dashboard.objects.filter(organization_id=organization.id).select_related(
-            "created_by"
-        )
+        if features.has("organizations:dashboards-favourite", organization, actor=request.user):
+            filter_by = request.query_params.get("filter")
+            if filter_by == "onlyFavorites":
+                dashboards = Dashboard.objects.filter(
+                    organization_id=organization.id, dashboardfavoriteuser__user_id=request.user.id
+                )
+            elif filter_by == "excludeFavorites":
+                dashboards = Dashboard.objects.exclude(
+                    organization_id=organization.id, dashboardfavoriteuser__user_id=request.user.id
+                )
+            else:
+                dashboards = Dashboard.objects.filter(organization_id=organization.id)
+        else:
+            dashboards = Dashboard.objects.filter(organization_id=organization.id)
+
         query = request.GET.get("query")
         if query:
             dashboards = dashboards.filter(title__icontains=query)
-        prebuilt = Dashboard.get_prebuilt_list(organization, query)
+        prebuilt = Dashboard.get_prebuilt_list(organization, request.user, query)
 
         sort_by = request.query_params.get("sort")
         if sort_by and sort_by.startswith("-"):
@@ -62,6 +121,7 @@ class OrganizationDashboardsEndpoint(OrganizationEndpoint):
         else:
             desc = False
 
+        order_by: list[Case | str]
         if sort_by == "title":
             order_by = [
                 "-title" if desc else "title",
@@ -69,7 +129,7 @@ class OrganizationDashboardsEndpoint(OrganizationEndpoint):
             ]
 
         elif sort_by == "dateCreated":
-            order_by = "-date_added" if desc else "date_added"
+            order_by = ["-date_added" if desc else "date_added"]
 
         elif sort_by == "mostPopular":
             order_by = [
@@ -78,13 +138,46 @@ class OrganizationDashboardsEndpoint(OrganizationEndpoint):
             ]
 
         elif sort_by == "recentlyViewed":
-            order_by = "last_visited" if desc else "-last_visited"
+            order_by = ["last_visited" if desc else "-last_visited"]
 
         elif sort_by == "mydashboards":
-            order_by = [
-                Case(When(created_by_id=request.user.id, then=-1), default="created_by_id"),
-                "-date_added",
-            ]
+            if features.has(
+                "organizations:dashboards-table-view", organization, actor=request.user
+            ):
+                user_name_dict = {
+                    user.id: user.name
+                    for user in user_service.get_many_by_id(
+                        ids=list(dashboards.values_list("created_by_id", flat=True))
+                    )
+                }
+                dashboards = dashboards.annotate(
+                    user_name=Case(
+                        *[
+                            When(created_by_id=user_id, then=Value(user_name))
+                            for user_id, user_name in user_name_dict.items()
+                        ],
+                        default=Value(""),
+                        output_field=CharField(),
+                    )
+                )
+                order_by = [
+                    Case(
+                        When(created_by_id=request.user.id, then=-1),
+                        default=1,
+                        output_field=IntegerField(),
+                    ),
+                    "-user_name" if desc else "user_name",
+                    "-date_added",
+                ]
+            else:
+                order_by = [
+                    Case(
+                        When(created_by_id=request.user.id, then=-1),
+                        default="created_by_id",
+                        output_field=IntegerField(),
+                    ),
+                    "-date_added",
+                ]
 
         elif sort_by == "myDashboardsAndRecentlyViewed":
             order_by = [
@@ -93,12 +186,27 @@ class OrganizationDashboardsEndpoint(OrganizationEndpoint):
             ]
 
         else:
-            order_by = "title"
+            order_by = ["title"]
 
-        if not isinstance(order_by, list):
-            order_by = [order_by]
+        if features.has("organizations:dashboards-favourite", organization, actor=request.user):
+            pin_by = request.query_params.get("pin")
+            if pin_by == "favorites":
+                favorited_by_subquery = DashboardFavoriteUser.objects.filter(
+                    dashboard=OuterRef("pk"), user_id=request.user.id
+                )
 
-        dashboards = dashboards.order_by(*order_by)
+                order_by_favorites = [
+                    Case(
+                        When(Exists(favorited_by_subquery), then=-1),
+                        default=1,
+                        output_field=IntegerField(),
+                    )
+                ]
+                dashboards = dashboards.order_by(*order_by_favorites, *order_by)
+            else:
+                dashboards = dashboards.order_by(*order_by)
+        else:
+            dashboards = dashboards.order_by(*order_by)
 
         list_serializer = DashboardListSerializer()
 
@@ -120,21 +228,34 @@ class OrganizationDashboardsEndpoint(OrganizationEndpoint):
             serialized.extend(serialize(dashboards, request.user, serializer=list_serializer))
             return serialized
 
+        render_pre_built_dashboard = True
+        if features.has("organizations:dashboards-favourite", organization, actor=request.user):
+            if filter_by and filter_by == "onlyFavorites" or pin_by and pin_by == "favorites":
+                render_pre_built_dashboard = False
+
         return self.paginate(
             request=request,
-            sources=[prebuilt, dashboards],
+            sources=([prebuilt, dashboards] if render_pre_built_dashboard else [dashboards]),
             paginator_cls=ChainPaginator,
             on_results=handle_results,
         )
 
+    @extend_schema(
+        operation_id="Create a New Dashboard for an Organization",
+        parameters=[GlobalParams.ORG_ID_OR_SLUG],
+        request=DashboardSerializer,
+        responses={
+            201: DashboardDetailsModelSerializer,
+            400: RESPONSE_BAD_REQUEST,
+            403: RESPONSE_FORBIDDEN,
+            404: RESPONSE_NOT_FOUND,
+            409: RESPONSE_CONFLICT,
+        },
+        examples=DashboardExamples.DASHBOARD_POST_RESPONSE,
+    )
     def post(self, request: Request, organization, retry=0) -> Response:
         """
-        Create a New Dashboard for an Organization
-        ``````````````````````````````````````````
-
         Create a new dashboard for the given Organization
-        :pparam string organization_slug: the slug of the organization the
-                                          dashboards belongs to.
         """
         if not features.has("organizations:dashboards-edit", organization, actor=request.user):
             return Response(status=404)
@@ -145,6 +266,7 @@ class OrganizationDashboardsEndpoint(OrganizationEndpoint):
                 "organization": organization,
                 "request": request,
                 "projects": self.get_projects(request, organization),
+                "environment": self.request.GET.getlist("environment"),
             },
         )
 
@@ -152,26 +274,15 @@ class OrganizationDashboardsEndpoint(OrganizationEndpoint):
             return Response(serializer.errors, status=400)
 
         try:
-            with transaction.atomic():
+            with transaction.atomic(router.db_for_write(Dashboard)):
                 dashboard = serializer.save()
-                return Response(serialize(dashboard, request.user), status=201)
+            return Response(serialize(dashboard, request.user), status=201)
         except IntegrityError:
-            pass
+            duplicate = request.data.get("duplicate", False)
 
-        duplicate = request.data.get("duplicate", False)
-        if not duplicate or retry >= MAX_RETRIES:
-            return Response("Dashboard title already taken", status=409)
+            if not duplicate or retry >= MAX_RETRIES:
+                return Response("Dashboard title already taken", status=409)
 
-        title = request.data["title"]
-        match = re.match(DUPLICATE_TITLE_PATTERN, title)
-        if match:
-            partial_title = match.group(1)
-            copy_counter = match.group(2)
-            if copy_counter:
-                request.data["title"] = f"{partial_title} copy {int(copy_counter) + 1}"
-            else:
-                request.data["title"] = f"{partial_title} copy 1"
-        else:
-            request.data["title"] = f"{title} copy"
+            request.data["title"] = Dashboard.incremental_title(organization, request.data["title"])
 
-        return self.post(request, organization, retry=retry + 1)
+            return self.post(request, organization, retry=retry + 1)

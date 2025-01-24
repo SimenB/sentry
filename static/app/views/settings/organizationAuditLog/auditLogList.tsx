@@ -1,22 +1,28 @@
 import {Fragment} from 'react';
 import styled from '@emotion/styled';
 
-import ActivityAvatar from 'sentry/components/activity/item/avatar';
+import {ActivityAvatar} from 'sentry/components/activity/item/avatar';
 import UserAvatar from 'sentry/components/avatar/userAvatar';
-import DateTime from 'sentry/components/dateTime';
+import Tag from 'sentry/components/badge/tag';
+import {DateTime} from 'sentry/components/dateTime';
 import SelectControl from 'sentry/components/forms/controls/selectControl';
 import Link from 'sentry/components/links/link';
-import Pagination, {CursorHandler} from 'sentry/components/pagination';
-import {PanelTable} from 'sentry/components/panels';
-import Tag from 'sentry/components/tag';
-import Tooltip from 'sentry/components/tooltip';
+import type {CursorHandler} from 'sentry/components/pagination';
+import Pagination from 'sentry/components/pagination';
+import {PanelTable} from 'sentry/components/panels/panelTable';
+import {Tooltip} from 'sentry/components/tooltip';
 import {t, tct} from 'sentry/locale';
-import space from 'sentry/styles/space';
-import {AuditLog, Organization, User} from 'sentry/types';
+import {space} from 'sentry/styles/space';
+import type {AuditLog, Organization} from 'sentry/types/organization';
+import type {User} from 'sentry/types/user';
 import {shouldUse24Hours} from 'sentry/utils/dates';
 import useOrganization from 'sentry/utils/useOrganization';
 import useProjects from 'sentry/utils/useProjects';
 import SettingsPageHeader from 'sentry/views/settings/components/settingsPageHeader';
+import {
+  projectDetectorSettingsId,
+  retentionPrioritiesLabels,
+} from 'sentry/views/settings/projectPerformance/projectPerformance';
 
 const avatarStyle = {
   width: 36,
@@ -54,22 +60,70 @@ const addUsernameDisplay = (logEntryUser: User | undefined) => {
   return null;
 };
 
-function AuditNote({entry, orgSlug}: {entry: AuditLog; orgSlug: Organization['slug']}) {
+const getTypeDisplay = (event: string) => {
+  if (event.startsWith('rule.')) {
+    return event.replace('rule.', 'issue-alert.');
+  }
+  if (event.startsWith('alertrule.')) {
+    return event.replace('alertrule.', 'metric-alert.');
+  }
+  return event;
+};
+
+const getEventOptions = (eventTypes: string[] | null) =>
+  eventTypes
+    ?.map(type => {
+      // Having both rule.x and alertrule.x may be confusing, so we'll replace their labels to be more descriptive.
+      // We need to maintain the values here so we still fetch the correct audit log events from the backend should we want
+      // to filter.
+      // See https://github.com/getsentry/sentry/issues/46997
+      if (type.startsWith('rule.')) {
+        return {
+          label: type.replace('rule.', 'issue-alert.'),
+          value: type,
+        };
+      }
+      if (type.startsWith('alertrule.')) {
+        return {
+          label: type.replace('alertrule.', 'metric-alert.'),
+          value: type,
+        };
+      }
+      return {
+        label: type,
+        value: type,
+      };
+    })
+    .sort((a, b) => a.label.localeCompare(b.label));
+
+function AuditNote({
+  entry,
+  orgSlug,
+}: {
+  entry: NonNullable<AuditLog>;
+  orgSlug: Organization['slug'];
+}) {
   const {projects} = useProjects();
   const project = projects.find(p => p.id === String(entry.data.id));
+
+  if (entry.event.startsWith('rule.')) {
+    return <Note>{entry.note.replace('rule', 'issue alert rule')}</Note>;
+  }
 
   if (!project) {
     return <Note>{entry.note}</Note>;
   }
 
-  const projectSlug = (
-    <Link to={`/settings/${orgSlug}/projects/${project.slug}/`}>{entry.data.slug}</Link>
-  );
-
   if (entry.event === 'project.create') {
     return (
       <Note>
-        {tct('Created project [project-slug]', {['project-slug']: projectSlug})}
+        {tct('Created project [projectSettingsLink]', {
+          projectSettingsLink: (
+            <Link to={`/settings/${orgSlug}/projects/${project.slug}/`}>
+              {entry.data.slug}
+            </Link>
+          ),
+        })}
       </Note>
     );
   }
@@ -92,59 +146,85 @@ function AuditNote({entry, orgSlug}: {entry: AuditLog; orgSlug: Organization['sl
 
     return (
       <Note>
-        {tct('Edited project [project-slug] [note]', {
-          ['project-slug']: projectSlug,
+        {tct('Edited project [projectSettingsLink] [note]', {
+          projectSettingsLink: (
+            <Link to={`/settings/${orgSlug}/projects/${project.slug}/`}>
+              {entry.data.slug}
+            </Link>
+          ),
           note: entry.note.replace('edited project settings ', ''),
         })}
       </Note>
     );
   }
 
-  if (entry.event === 'sampling.add') {
+  if (entry.event === 'project.change-performance-issue-detection') {
     return (
       <Note>
-        {tct('Added server-side sampling rule in the project [project-slug]', {
-          ['project-slug']: projectSlug,
+        {tct('Edited project [projectSettingsLink] [note]', {
+          projectSettingsLink: (
+            <Link
+              to={`/settings/${orgSlug}/projects/${project.slug}/performance/#${projectDetectorSettingsId}`}
+            >
+              {entry.data.slug} performance issue detector settings
+            </Link>
+          ),
+          note: entry.note.replace(
+            'edited project performance issue detector settings ',
+            ''
+          ),
         })}
       </Note>
     );
   }
 
-  if (entry.event === 'sampling.remove') {
+  if (entry.event === 'sampling_priority.enabled') {
     return (
       <Note>
-        {tct('Deleted server-side sampling rule in the project [project-slug]', {
-          ['project-slug']: projectSlug,
-        })}
+        {tct(
+          'Enabled retention priority "[biasLabel]" in project [samplingInProjectSettingsLink]',
+          {
+            samplingInProjectSettingsLink: (
+              <Link to={`/settings/${orgSlug}/projects/${project.slug}/performance/`}>
+                {entry.data.slug}
+              </Link>
+            ),
+            // @ts-expect-error TS(7053): Element implicitly has an 'any' type because expre... Remove this comment to see the full error message
+            biasLabel: retentionPrioritiesLabels[entry.data.name],
+          }
+        )}
       </Note>
     );
   }
 
-  if (entry.event === 'sampling.edit') {
+  if (entry.event === 'sampling_priority.disabled') {
     return (
       <Note>
-        {tct('Edited server-side sampling rule in the project [project-slug]', {
-          ['project-slug']: projectSlug,
-        })}
+        {tct(
+          'Disabled retention priority "[biasLabel]" in project [samplingInProjectSettingsLink]',
+          {
+            samplingInProjectSettingsLink: (
+              <Link to={`/settings/${orgSlug}/projects/${project.slug}/performance/`}>
+                {entry.data.slug}
+              </Link>
+            ),
+            // @ts-expect-error TS(7053): Element implicitly has an 'any' type because expre... Remove this comment to see the full error message
+            biasLabel: retentionPrioritiesLabels[entry.data.name],
+          }
+        )}
       </Note>
     );
   }
 
-  if (entry.event === 'sampling.activate') {
+  if (entry.event === 'project.ownership-rule.edit') {
     return (
       <Note>
-        {tct('Enabled server-side sampling rule in the project [project-slug]', {
-          ['project-slug']: projectSlug,
-        })}
-      </Note>
-    );
-  }
-
-  if (entry.event === 'sampling.deactivate') {
-    return (
-      <Note>
-        {tct('Disabled server-side sampling rule in the project [project-slug]', {
-          ['project-slug']: projectSlug,
+        {tct('Modified ownership rules in project [projectSettingsLink]', {
+          projectSettingsLink: (
+            <Link to={`/settings/${orgSlug}/projects/${project.slug}/`}>
+              {entry.data.slug}
+            </Link>
+          ),
         })}
       </Note>
     );
@@ -163,7 +243,7 @@ type Props = {
   pageLinks: string | null;
 };
 
-const AuditLogList = ({
+function AuditLogList({
   isLoading,
   pageLinks,
   entries,
@@ -171,16 +251,11 @@ const AuditLogList = ({
   eventTypes,
   onCursor,
   onEventSelect,
-}: Props) => {
+}: Props) {
   const is24Hours = shouldUse24Hours();
   const organization = useOrganization();
   const hasEntries = entries && entries.length > 0;
   const ipv4Length = 15;
-
-  const eventOptions = eventTypes?.map(type => ({
-    label: type,
-    value: type,
-  }));
 
   const action = (
     <EventSelector
@@ -189,8 +264,8 @@ const AuditLogList = ({
       name="eventFilter"
       value={eventType}
       placeholder={t('Select Action: ')}
-      options={eventOptions}
-      onChange={options => {
+      options={getEventOptions(eventTypes)}
+      onChange={(options: any) => {
         onEventSelect(options?.value);
       }}
     />
@@ -205,7 +280,10 @@ const AuditLogList = ({
         emptyMessage={t('No audit entries available')}
         isLoading={isLoading}
       >
-        {entries?.map(entry => {
+        {(entries ?? []).map(entry => {
+          if (!entry) {
+            return null;
+          }
           return (
             <Fragment key={entry.id}>
               <UserInfo>
@@ -216,7 +294,7 @@ const AuditLogList = ({
                 </NameContainer>
               </UserInfo>
               <FlexCenter>
-                <MonoDetail>{entry.event}</MonoDetail>
+                <MonoDetail>{getTypeDisplay(entry.event)}</MonoDetail>
               </FlexCenter>
               <FlexCenter>
                 {entry.ipAddress && (
@@ -245,7 +323,7 @@ const AuditLogList = ({
       {pageLinks && <Pagination pageLinks={pageLinks} onCursor={onCursor} />}
     </div>
   );
-};
+}
 
 const SentryAvatar = styled(ActivityAvatar)`
   margin-right: ${space(1)};
@@ -280,6 +358,7 @@ const NameContainer = styled('div')`
 const Note = styled('div')`
   font-size: ${p => p.theme.fontSizeSmall};
   word-break: break-word;
+  margin-top: ${space(0.5)};
 `;
 
 const FlexCenter = styled('div')`

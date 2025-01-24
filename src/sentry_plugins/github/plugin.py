@@ -1,24 +1,29 @@
 import logging
 from uuid import uuid4
 
-from django.conf.urls import url
+from django.urls import re_path
 from rest_framework.request import Request
 from rest_framework.response import Response
 
 from sentry import options
 from sentry.exceptions import PluginError
-from sentry.integrations import FeatureDescription, IntegrationFeatures
+from sentry.integrations.base import FeatureDescription, IntegrationFeatures
+from sentry.integrations.services.integration.model import RpcIntegration
+from sentry.integrations.services.integration.service import integration_service
 from sentry.locks import locks
-from sentry.models import Integration, Organization, OrganizationOption, Repository
+from sentry.models.options.organization_option import OrganizationOption
+from sentry.models.organization import Organization
+from sentry.models.repository import Repository
 from sentry.plugins.bases.issue2 import IssueGroupActionEndpoint, IssuePlugin2
 from sentry.plugins.providers import RepositoryProvider
 from sentry.shared_integrations.constants import ERR_INTERNAL, ERR_UNAUTHORIZED
 from sentry.shared_integrations.exceptions import ApiError
+from sentry.users.services.user import RpcUser
+from sentry.users.services.usersocialauth.service import usersocialauth_service
 from sentry.utils.http import absolute_uri
 from sentry_plugins.base import CorePluginMixin
-from social_auth.models import UserSocialAuth
 
-from .client import GitHubAppsClient, GitHubClient
+from .client import GithubPluginAppsClient, GithubPluginClient
 
 API_ERRORS = {
     404: "GitHub returned a 404 Not Found error. If this repository exists, ensure"
@@ -47,11 +52,11 @@ class GitHubMixin(CorePluginMixin):
         else:
             return ERR_INTERNAL
 
-    def get_client(self, user):
+    def get_client(self, user: RpcUser):
         auth = self.get_auth(user=user)
         if auth is None:
             raise PluginError(API_ERRORS[401])
-        return GitHubClient(auth=auth)
+        return GithubPluginClient(auth=auth)
 
 
 # TODO(dcramer): half of this plugin is for the issue tracking integration
@@ -87,7 +92,7 @@ class GitHubPlugin(GitHubMixin, IssuePlugin2):
 
     def get_group_urls(self):
         return super().get_group_urls() + [
-            url(
+            re_path(
                 r"^autocomplete",
                 IssueGroupActionEndpoint.as_view(view_method_name="view_autocomplete", plugin=self),
             )
@@ -96,7 +101,7 @@ class GitHubPlugin(GitHubMixin, IssuePlugin2):
     def get_url_module(self):
         return "sentry_plugins.github.urls"
 
-    def is_configured(self, request: Request, project, **kwargs):
+    def is_configured(self, project) -> bool:
         return bool(self.get_option("repo", project))
 
     def get_new_issue_fields(self, request: Request, group, event, **kwargs):
@@ -137,7 +142,7 @@ class GitHubPlugin(GitHubMixin, IssuePlugin2):
             {
                 "name": "comment",
                 "label": "Comment",
-                "default": "Sentry issue: [{issue_id}]({url})".format(
+                "default": "Sentry Issue: [{issue_id}]({url})".format(
                     url=absolute_uri(group.get_absolute_url(params={"referrer": "github_plugin"})),
                     issue_id=group.qualified_short_id,
                 ),
@@ -152,13 +157,13 @@ class GitHubPlugin(GitHubMixin, IssuePlugin2):
             with self.get_client(request.user) as client:
                 response = client.list_assignees(repo=self.get_option("repo", group.project))
         except Exception as e:
-            raise self.raise_error(e)
+            self.raise_error(e)
 
         users = tuple((u["login"], u["login"]) for u in response)
 
         return (("", "Unassigned"),) + users
 
-    def create_issue(self, request: Request, group, form_data, **kwargs):
+    def create_issue(self, request: Request, group, form_data):
         # TODO: support multiple identities via a selection input in the form?
         with self.get_client(request.user) as client:
             try:
@@ -171,7 +176,7 @@ class GitHubPlugin(GitHubMixin, IssuePlugin2):
                     },
                 )
             except Exception as e:
-                raise self.raise_error(e)
+                self.raise_error(e)
 
         return response["number"]
 
@@ -186,14 +191,14 @@ class GitHubPlugin(GitHubMixin, IssuePlugin2):
                         repo=repo, issue_id=issue["number"], data={"body": comment}
                     )
             except Exception as e:
-                raise self.raise_error(e)
+                self.raise_error(e)
 
         return {"title": issue["title"]}
 
-    def get_issue_label(self, group, issue_id, **kwargs):
+    def get_issue_label(self, group, issue_id: str) -> str:
         return f"GH-{issue_id}"
 
-    def get_issue_url(self, group, issue_id, **kwargs):
+    def get_issue_url(self, group, issue_id: str) -> str:
         # XXX: get_option may need tweaked in Sentry so that it can be pre-fetched in bulk
         repo = self.get_option("repo", group.project)
 
@@ -219,7 +224,7 @@ class GitHubPlugin(GitHubMixin, IssuePlugin2):
 
         return Response({field: issues})
 
-    def get_configure_plugin_fields(self, request: Request, project, **kwargs):
+    def get_configure_plugin_fields(self, project, **kwargs):
         return [
             {
                 "name": "repo",
@@ -249,8 +254,6 @@ class GitHubPlugin(GitHubMixin, IssuePlugin2):
         bindings.add("repository.provider", GitHubRepositoryProvider, id="github")
         if self.has_apps_configured():
             bindings.add("repository.provider", GitHubAppsRepositoryProvider, id="github_apps")
-        else:
-            self.logger.info("apps-not-configured")
 
 
 class GitHubRepositoryProvider(GitHubMixin, RepositoryProvider):
@@ -283,7 +286,7 @@ class GitHubRepositoryProvider(GitHubMixin, RepositoryProvider):
                 with self.get_client(actor) as client:
                     repo = client.get_repo(config["name"])
             except Exception as e:
-                raise self.raise_error(e)
+                self.raise_error(e)
             else:
                 config["external_id"] = str(repo["id"])
         return config
@@ -338,7 +341,7 @@ class GitHubRepositoryProvider(GitHubMixin, RepositoryProvider):
                         "status_code": getattr(e, "code", None),
                     },
                 )
-                raise self.raise_error(e)
+                self.raise_error(e)
             else:
                 return {
                     "name": data["name"],
@@ -408,31 +411,16 @@ class GitHubRepositoryProvider(GitHubMixin, RepositoryProvider):
                 try:
                     res = client.get_last_commits(name, end_sha)
                 except Exception as e:
-                    raise self.raise_error(e)
+                    self.raise_error(e)
                 else:
                     return self._format_commits(repo, res[:10])
             else:
                 try:
                     res = client.compare_commits(name, start_sha, end_sha)
                 except Exception as e:
-                    raise self.raise_error(e)
+                    self.raise_error(e)
                 else:
                     return self._format_commits(repo, res["commits"])
-
-        def get_pr_commits(self, repo, number, actor=None):
-            # (not currently used by sentry)
-            if actor is None:
-                raise NotImplementedError("Cannot fetch commits anonymously")
-
-            # use config name because that is kept in sync via webhooks
-            name = repo.config["name"]
-            try:
-                with self.get_client(actor) as client:
-                    res = client.get_pr_commits(name, number)
-            except Exception as e:
-                raise self.raise_error(e)
-            else:
-                return self._format_commits(repo, res)
 
 
 class GitHubAppsRepositoryProvider(GitHubRepositoryProvider):
@@ -440,39 +428,13 @@ class GitHubAppsRepositoryProvider(GitHubRepositoryProvider):
     auth_provider = "github_apps"
     logger = logging.getLogger("sentry.plugins.github_apps")
 
-    def get_install_url(self):
-        return options.get("github.apps-install-url")
-
-    def get_available_auths(self, user, organization, integrations, social_auths, **kwargs):
-        allowed_gh_installations = set(self.get_installations(user))
-
-        linked_integrations = {i.id for i in integrations}
-
-        _integrations = list(Integration.objects.filter(external_id__in=allowed_gh_installations))
-
-        # add in integrations that might have been set up for org
-        # by users w diff permissions
-        _integrations.extend(
-            [i for i in integrations if i.external_id not in allowed_gh_installations]
-        )
-
-        return [
-            {
-                "defaultAuthId": None,
-                "user": None,
-                "externalId": i.external_id,
-                "integrationId": str(i.id),
-                "linked": i.id in linked_integrations,
-            }
-            for i in _integrations
-        ]
-
     def link_auth(self, user, organization, data):
         integration_id = data["integration_id"]
 
-        try:
-            integration = Integration.objects.get(provider=self.auth_provider, id=integration_id)
-        except Integration.DoesNotExist:
+        integration = integration_service.get_integration(
+            integration_id=integration_id, provider=self.auth_provider
+        )
+        if not integration:
             raise PluginError("Invalid integration id")
 
         # check that user actually has access to add
@@ -480,7 +442,9 @@ class GitHubAppsRepositoryProvider(GitHubRepositoryProvider):
         if int(integration.external_id) not in allowed_gh_installations:
             raise PluginError("You do not have access to that integration")
 
-        integration.add_organization(organization)
+        integration_service.add_organization(
+            integration_id=integration.id, org_ids=[organization.id]
+        )
 
         for repo in self.get_repositories(integration):
             # TODO(jess): figure out way to migrate from github --> github apps
@@ -510,8 +474,10 @@ class GitHubAppsRepositoryProvider(GitHubRepositoryProvider):
         integration_id = repo.integration_id
         if integration_id is None:
             raise NotImplementedError("GitHub apps requires an integration id to fetch commits")
-
-        client = GitHubAppsClient(Integration.objects.get(id=integration_id))
+        integration = integration_service.get_integration(
+            integration_id=integration_id, provider=self.auth_provider
+        )
+        client = GithubPluginAppsClient(integration=integration)
 
         # use config name because that is kept in sync via webhooks
         name = repo.config["name"]
@@ -519,34 +485,35 @@ class GitHubAppsRepositoryProvider(GitHubRepositoryProvider):
             try:
                 res = client.get_last_commits(name, end_sha)
             except Exception as e:
-                raise self.raise_error(e)
+                self.raise_error(e)
             else:
                 return self._format_commits(repo, res[:10])
         else:
             try:
                 res = client.compare_commits(name, start_sha, end_sha)
             except Exception as e:
-                raise self.raise_error(e)
+                self.raise_error(e)
             else:
                 return self._format_commits(repo, res["commits"])
 
-    def get_installations(self, actor):
-        if not actor.is_authenticated:
+    def get_installations(self, user):
+        if not user.is_authenticated:
             raise PluginError(API_ERRORS[401])
-
-        auth = UserSocialAuth.objects.filter(user=actor, provider="github_apps").first()
+        auth = usersocialauth_service.get_one_or_none(
+            filter={"user_id": user.id, "provider": "github_apps"}
+        )
 
         if not auth:
             self.logger.warning("get_installations.no-linked-auth")
             return []
 
-        with GitHubClient(auth=auth) as client:
+        with GithubPluginClient(auth=auth) as client:
             res = client.get_installations()
 
         return [install["id"] for install in res["installations"]]
 
-    def get_repositories(self, integration):
-        client = GitHubAppsClient(integration)
+    def get_repositories(self, integration: RpcIntegration):
+        client = GithubPluginAppsClient(integration)
 
         res = client.get_repositories()
         return [

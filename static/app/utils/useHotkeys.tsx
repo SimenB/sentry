@@ -1,5 +1,7 @@
 import {useCallback, useEffect, useMemo} from 'react';
 
+import toArray from 'sentry/utils/array/toArray';
+
 import {getKeyCode} from './getKeyCode';
 
 const isKeyPressed = (key: string, evt: KeyboardEvent): boolean => {
@@ -18,6 +20,8 @@ const isKeyPressed = (key: string, evt: KeyboardEvent): boolean => {
   }
 };
 
+const modifiers = ['command', 'shift', 'ctrl', 'alt'];
+
 type Hotkey = {
   /**
    * The callback triggered when the matching key is pressed
@@ -25,6 +29,11 @@ type Hotkey = {
   callback: (e: KeyboardEvent) => void;
   /**
    * Defines the matching shortcuts.
+   *
+   * Multiple shortcuts may be passed as a list.
+   *
+   * The format for shorcuts is `<modifiers>+<key>` For example `shift+t` or
+   * `command+shift+t`.
    */
   match: string[] | string;
   /**
@@ -54,12 +63,15 @@ export function useHotkeys(hotkeys: Hotkey[], deps: React.DependencyList): void 
     (evt: KeyboardEvent) => {
       for (const hotkey of memoizedHotkeys) {
         const preventDefault = !hotkey.skipPreventDefault;
-        const keysets = Array.isArray(hotkey.match) ? hotkey.match : [hotkey.match];
+        const keysets = toArray(hotkey.match).map(keys => keys.toLowerCase());
 
         for (const keyset of keysets) {
           const keys = keyset.split('+');
+          const unusedModifiers = modifiers.filter(modifier => !keys.includes(modifier));
 
-          const allKeysPressed = keys.every(key => isKeyPressed(key, evt));
+          const allKeysPressed =
+            keys.every(key => isKeyPressed(key, evt)) &&
+            unusedModifiers.every(modifier => !isKeyPressed(modifier, evt));
 
           const inputHasFocus =
             !hotkey.includeInputs && evt.target instanceof HTMLElement

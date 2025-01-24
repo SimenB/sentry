@@ -1,14 +1,15 @@
 import {Fragment} from 'react';
-import {browserHistory} from 'react-router';
-import {Location} from 'history';
+import type {Location} from 'history';
 
-import {GridColumnOrder} from 'sentry/components/gridEditable';
-import {CursorHandler} from 'sentry/components/pagination';
-import {Organization, Project} from 'sentry/types';
-import EventView, {fromSorts} from 'sentry/utils/discover/eventView';
+import type {GridColumnOrder} from 'sentry/components/gridEditable';
+import type {CursorHandler} from 'sentry/components/pagination';
+import type {Organization} from 'sentry/types/organization';
+import type {Project} from 'sentry/types/project';
+import type EventView from 'sentry/utils/discover/eventView';
 import SegmentExplorerQuery from 'sentry/utils/performance/segmentExplorer/segmentExplorerQuery';
 import TagKeyHistogramQuery from 'sentry/utils/performance/segmentExplorer/tagKeyHistogramQuery';
-import {decodeScalar} from 'sentry/utils/queryString';
+import {decodeScalar, decodeSorts} from 'sentry/utils/queryString';
+import {useNavigate} from 'sentry/utils/useNavigate';
 
 import TagsHeatMap from './tagsHeatMap';
 import {TagValueTable} from './tagValueTable';
@@ -96,12 +97,13 @@ export const TAGS_TABLE_COLUMN_ORDER: TagsTableColumn[] = [
   },
 ];
 
-const TagsDisplay = (props: Props) => {
+function TagsDisplay(props: Props) {
+  const navigate = useNavigate();
   const {eventView: _eventView, location, organization, aggregateColumn, tagKey} = props;
   const eventView = _eventView.clone();
 
   const handleCursor: CursorHandler = (cursor, pathname, query) =>
-    browserHistory.push({
+    navigate({
       pathname,
       query: {...query, [TAG_PAGE_TABLE_CURSOR]: cursor},
     });
@@ -110,7 +112,7 @@ const TagsDisplay = (props: Props) => {
 
   const tagSort = getTagSortForTagsPage(location);
 
-  const tagSorts = fromSorts(tagSort);
+  const tagSorts = decodeSorts(tagSort);
 
   eventView.fields = TAGS_TABLE_COLUMN_ORDER;
 
@@ -198,6 +200,6 @@ const TagsDisplay = (props: Props) => {
       )}
     </Fragment>
   );
-};
+}
 
 export default TagsDisplay;

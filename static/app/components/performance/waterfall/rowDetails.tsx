@@ -1,17 +1,17 @@
+import type {Theme} from '@emotion/react';
 import styled from '@emotion/styled';
 
-import space from 'sentry/styles/space';
-import {Theme} from 'sentry/utils/theme';
+import {space} from 'sentry/styles/space';
 
 export const ErrorMessageTitle = styled('div')`
   display: flex;
   justify-content: space-between;
 `;
 
-export const ErrorMessageContent = styled('div')`
+export const ErrorMessageContent = styled('div')<{excludeLevel?: boolean}>`
   display: grid;
   align-items: center;
-  grid-template-columns: 16px 72px auto;
+  grid-template-columns: ${p => (p.excludeLevel ? '16px auto' : '16px 72px auto')};
   gap: ${space(0.75)};
   margin-top: ${space(0.75)};
 `;

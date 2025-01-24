@@ -1,16 +1,18 @@
 import {Component, Fragment} from 'react';
 import {components} from 'react-select';
 import styled from '@emotion/styled';
+import difference from 'lodash/difference';
 
-import Button from 'sentry/components/button';
+import {openProjectCreationModal} from 'sentry/actionCreators/modal';
+import {Button, LinkButton} from 'sentry/components/button';
 import SelectControl from 'sentry/components/forms/controls/selectControl';
-import FieldErrorReason from 'sentry/components/forms/field/fieldErrorReason';
+import FormField from 'sentry/components/forms/formField';
 import FormFieldControlState from 'sentry/components/forms/formField/controlState';
-import FormModel from 'sentry/components/forms/model';
-import {ProjectMapperType} from 'sentry/components/forms/types';
+import type FormModel from 'sentry/components/forms/model';
+import type {ProjectMapperType} from 'sentry/components/forms/types';
 import IdBadge from 'sentry/components/idBadge';
 import ExternalLink from 'sentry/components/links/externalLink';
-import {PanelAlert} from 'sentry/components/panels';
+import PanelAlert from 'sentry/components/panels/panelAlert';
 import {
   IconAdd,
   IconArrow,
@@ -20,11 +22,12 @@ import {
   IconVercel,
 } from 'sentry/icons';
 import {t} from 'sentry/locale';
-import space from 'sentry/styles/space';
+import {space} from 'sentry/styles/space';
+import removeAtArrayIndex from 'sentry/utils/array/removeAtArrayIndex';
 import {safeGetQsParam} from 'sentry/utils/integrationUtil';
-import {removeAtArrayIndex} from 'sentry/utils/removeAtArrayIndex';
 
-import InputField, {InputFieldProps} from './inputField';
+// XXX(epurkhiser): This is wrong, it should not be inheriting these props
+import type {InputFieldProps} from './inputField';
 
 export interface ProjectMapperProps extends Omit<InputFieldProps, 'type'> {}
 
@@ -57,6 +60,18 @@ export class RenderField extends Component<RenderProps, State> {
     selectedMappedValue: null,
   };
 
+  componentDidUpdate(prevProps: RenderProps) {
+    const projectIds = this.props.sentryProjects.map(project => project.id);
+    const prevProjectIds = prevProps.sentryProjects.map(project => project.id);
+    const newProjects = difference(projectIds, prevProjectIds);
+
+    if (newProjects.length === 1) {
+      this.setState({
+        selectedSentryProjectId: newProjects[0]!,
+      });
+    }
+  }
+
   render() {
     const {
       onChange,
@@ -68,7 +83,6 @@ export class RenderField extends Component<RenderProps, State> {
       iconType,
       model,
       id: formElementId,
-      error,
     } = this.props;
 
     const existingValues: Array<[number, MappedValue]> = incomingValues || [];
@@ -95,14 +109,46 @@ export class RenderField extends Component<RenderProps, State> {
     // prevent a single mapped item from being associated with multiple Sentry projects
     const mappedValuesUsed = new Set(existingValues.map(tuple => tuple[1]));
 
-    const projectOptions = sentryProjects.map(({slug, id}) => ({label: slug, value: id}));
+    const renderIdBadge = ({id, hideName}: {hideName: boolean; id: number | null}) => {
+      const project = sentryProjectsById[id || ''];
+      return (
+        <IdBadge
+          project={project}
+          avatarProps={{consistentWidth: true}}
+          avatarSize={16}
+          disableLink
+          hideName={hideName}
+        />
+      );
+    };
+
+    const sentryProjectOptions = sentryProjects.map(({slug, id}) => ({
+      label: slug,
+      value: id,
+      leadingItems: renderIdBadge({id, hideName: true}),
+    }));
+
+    const projectOptions = [
+      {label: t('Create a Project'), value: -1, leadingItems: <IconAdd isCircled />},
+      ...sentryProjectOptions,
+    ];
 
     const mappedItemsToShow = mappedDropdownItems.filter(
       item => !mappedValuesUsed.has(item.value)
     );
+    const mappedItemOptions = mappedItemsToShow.map(mappedItem => ({
+      ...mappedItem,
+      leadingItems: getIcon(iconType),
+    }));
 
     const handleSelectProject = ({value}: {value: number}) => {
-      this.setState({selectedSentryProjectId: value});
+      if (value === -1) {
+        openProjectCreationModal({
+          defaultCategory: iconType === 'vercel' ? 'browser' : 'popular',
+        });
+      } else {
+        this.setState({selectedSentryProjectId: value});
+      }
     };
 
     const handleSelectMappedValue = ({value}: {value: MappedValue}) => {
@@ -166,74 +212,10 @@ export class RenderField extends Component<RenderProps, State> {
               onClick={() => handleDelete(index)}
               icon={<IconDelete color="gray300" />}
               size="sm"
-              type="button"
               aria-label={t('Delete')}
             />
           </DeleteButtonWrapper>
         </Item>
-      );
-    };
-
-    const customValueContainer = containerProps => {
-      // if no value set, we want to return the default component that is rendered
-      const project = sentryProjectsById[selectedSentryProjectId || ''];
-      if (!project) {
-        return <components.ValueContainer {...containerProps} />;
-      }
-      return (
-        <components.ValueContainer {...containerProps}>
-          <IdBadge
-            project={project}
-            avatarSize={20}
-            displayName={project.slug}
-            avatarProps={{consistentWidth: true}}
-            disableLink
-          />
-        </components.ValueContainer>
-      );
-    };
-
-    const customOptionProject = projectProps => {
-      const project = sentryProjectsById[projectProps.value];
-      // Should never happen for a dropdown item
-      if (!project) {
-        return null;
-      }
-      return (
-        <components.Option {...projectProps}>
-          <IdBadge
-            project={project}
-            avatarSize={20}
-            displayName={project.slug}
-            avatarProps={{consistentWidth: true}}
-            disableLink
-          />
-        </components.Option>
-      );
-    };
-
-    const customMappedValueContainer = containerProps => {
-      // if no value set, we want to return the default component that is rendered
-      const mappedValue = mappedItemsByValue[selectedMappedValue || ''];
-      if (!mappedValue) {
-        return <components.ValueContainer {...containerProps} />;
-      }
-      return (
-        <components.ValueContainer {...containerProps}>
-          <IntegrationIconWrapper>{getIcon(iconType)}</IntegrationIconWrapper>
-          <OptionLabelWrapper>{mappedValue.label}</OptionLabelWrapper>
-        </components.ValueContainer>
-      );
-    };
-
-    const customOptionMappedValue = optionProps => {
-      return (
-        <components.Option {...optionProps}>
-          <OptionWrapper>
-            <IntegrationIconWrapper>{getIcon(iconType)}</IntegrationIconWrapper>
-            <OptionLabelWrapper>{optionProps.label}</OptionLabelWrapper>
-          </OptionWrapper>
-        </components.Option>
       );
     };
 
@@ -244,10 +226,18 @@ export class RenderField extends Component<RenderProps, State> {
           <SelectControl
             placeholder={mappedValuePlaceholder}
             name="mappedDropdown"
-            options={mappedItemsToShow}
+            options={mappedItemOptions}
             components={{
-              Option: customOptionMappedValue,
-              ValueContainer: customMappedValueContainer,
+              SingleValue: (containerProps: any) => {
+                return (
+                  <components.ValueContainer {...containerProps}>
+                    <MappedValueContainer>
+                      {containerProps.data.leadingItems}
+                      {containerProps.children}
+                    </MappedValueContainer>
+                  </components.ValueContainer>
+                );
+              },
             }}
             onChange={handleSelectMappedValue}
             value={selectedMappedValue}
@@ -258,15 +248,19 @@ export class RenderField extends Component<RenderProps, State> {
             name="project"
             options={projectOptions}
             components={{
-              Option: customOptionProject,
-              ValueContainer: customValueContainer,
+              SingleValue: (containerProps: any) => {
+                return (
+                  <components.ValueContainer {...containerProps}>
+                    {renderIdBadge({id: selectedSentryProjectId, hideName: false})}
+                  </components.ValueContainer>
+                );
+              },
             }}
             onChange={handleSelectProject}
             value={selectedSentryProjectId}
           />
           <AddProjectWrapper>
             <Button
-              type="button"
               disabled={!selectedSentryProjectId || !selectedMappedValue}
               size="sm"
               priority="primary"
@@ -277,10 +271,7 @@ export class RenderField extends Component<RenderProps, State> {
           </AddProjectWrapper>
           <FieldControlWrapper>
             {formElementId && (
-              <div>
-                <FormFieldControlState model={model} name={formElementId} />
-                {error ? <StyledFieldErrorReason>{error}</StyledFieldErrorReason> : null}
-              </div>
+              <FormFieldControlState model={model} name={formElementId} />
             )}
           </FieldControlWrapper>
         </Item>
@@ -288,11 +279,10 @@ export class RenderField extends Component<RenderProps, State> {
           <NextButtonPanelAlert type="muted">
             <NextButtonWrapper>
               {nextDescription ?? ''}
-              <Button
-                type="button"
+              <LinkButton
                 size="sm"
                 priority="primary"
-                icon={<IconOpen size="xs" />}
+                icon={<IconOpen />}
                 disabled={!existingValues.length}
                 href={nextUrl}
                 title={DISABLED_TOOLTIP_TEXT}
@@ -301,7 +291,7 @@ export class RenderField extends Component<RenderProps, State> {
                 }}
               >
                 {nextButtonText}
-              </Button>
+              </LinkButton>
             </NextButtonWrapper>
           </NextButtonPanelAlert>
         )}
@@ -312,14 +302,15 @@ export class RenderField extends Component<RenderProps, State> {
 
 function ProjectMapperField(props: InputFieldProps) {
   return (
-    <StyledInputField
+    <StyledFormField
       {...props}
       resetOnError
       inline={false}
       stacked={false}
       hideControlState
-      field={(renderProps: RenderProps) => <RenderField {...renderProps} />}
-    />
+    >
+      {(renderProps: RenderProps) => <RenderField {...renderProps} />}
+    </StyledFormField>
   );
 }
 
@@ -375,20 +366,11 @@ const AddProjectWrapper = styled('div')`
   grid-area: manage-project;
 `;
 
-const OptionLabelWrapper = styled('div')`
-  margin-left: ${space(0.5)};
-`;
-
-const StyledInputField = styled(InputField)`
+const StyledFormField = styled(FormField)`
   padding: 0;
 `;
 
 const StyledExternalLink = styled(ExternalLink)`
-  display: flex;
-`;
-
-const OptionWrapper = styled('div')`
-  align-items: center;
   display: flex;
 `;
 
@@ -411,4 +393,7 @@ const NextButtonWrapper = styled('div')`
   align-items: center;
 `;
 
-const StyledFieldErrorReason = styled(FieldErrorReason)``;
+const MappedValueContainer = styled('div')`
+  display: flex;
+  gap: ${space(1)};
+`;

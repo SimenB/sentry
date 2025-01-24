@@ -1,16 +1,34 @@
-import {forwardRef as reactForwardRef} from 'react';
+import {forwardRef as reactForwardRef, memo, useMemo, useRef, useState} from 'react';
+import {createPortal} from 'react-dom';
+import {usePopper} from 'react-popper';
 import isPropValid from '@emotion/is-prop-valid';
+import {type Theme, useTheme} from '@emotion/react';
 import styled from '@emotion/styled';
 
-import Tooltip, {InternalTooltipProps} from 'sentry/components/tooltip';
-import space from 'sentry/styles/space';
-import {defined} from 'sentry/utils';
-import {FormSize, Theme} from 'sentry/utils/theme';
+import InteractionStateLayer from 'sentry/components/interactionStateLayer';
+import {Overlay, PositionWrapper} from 'sentry/components/overlay';
+import type {TooltipProps} from 'sentry/components/tooltip';
+import {Tooltip} from 'sentry/components/tooltip';
+import {space} from 'sentry/styles/space';
+import domId from 'sentry/utils/domId';
+import mergeRefs from 'sentry/utils/mergeRefs';
+import type {FormSize} from 'sentry/utils/theme';
 
 /**
  * Menu item priority. Determines the text and background color.
  */
 type Priority = 'primary' | 'danger' | 'default';
+
+/**
+ * Leading/trailing items to be rendered alongside the main text label.
+ */
+type EdgeItems =
+  | React.ReactNode
+  | ((state: {
+      disabled: boolean;
+      isFocused: boolean;
+      isSelected: boolean;
+    }) => React.ReactNode);
 
 export type MenuListItemProps = {
   /**
@@ -28,14 +46,14 @@ export type MenuListItemProps = {
    * there are appropriate aria-labels.
    */
   label?: React.ReactNode;
-  /*
+  /**
    * Items to be added to the left of the label
    */
-  leadingItems?: React.ReactNode;
-  /*
-   * Whether leading items should be centered with respect to the entire
-   * height of the item. If false (default), they will be centered with
-   * respect to the first line of the label element.
+  leadingItems?: EdgeItems;
+  /**
+   * Whether leading items should be centered with respect to the entire height
+   * of the item. If false (default), they will be centered with respect to the
+   * first line of the label element.
    */
   leadingItemsSpanFullHeight?: boolean;
   /**
@@ -43,9 +61,9 @@ export type MenuListItemProps = {
    */
   priority?: Priority;
   /**
-   * Whether to show a line divider below this item
+   * Whether to show the details in an overlay when the item is hovered / focused.
    */
-  showDivider?: boolean;
+  showDetailsInOverlay?: boolean;
   /**
    * Determines the item's font sizes and internal paddings.
    */
@@ -59,15 +77,15 @@ export type MenuListItemProps = {
   /**
    * Additional props to be passed into <Tooltip />.
    */
-  tooltipOptions?: Omit<InternalTooltipProps, 'children' | 'title' | 'className'>;
-  /*
+  tooltipOptions?: Omit<TooltipProps, 'children' | 'title' | 'className'>;
+  /**
    * Items to be added to the right of the label.
    */
-  trailingItems?: React.ReactNode;
-  /*
+  trailingItems?: EdgeItems;
+  /**
    * Whether trailing items should be centered wrt/ the entire height of the
-   * item. If false (default), they will be centered wrt/ the first line of
-   * the label element.
+   * item. If false (default), they will be centered wrt/ the first line of the
+   * label element.
    */
   trailingItemsSpanFullHeight?: boolean;
 };
@@ -77,7 +95,10 @@ interface OtherProps {
   detailsProps?: object;
   innerWrapProps?: object;
   isFocused?: boolean;
+  isPressed?: boolean;
+  isSelected?: boolean;
   labelProps?: object;
+  showDivider?: boolean;
 }
 
 interface Props extends MenuListItemProps, OtherProps {
@@ -97,16 +118,31 @@ function BaseMenuListItem({
   trailingItems = false,
   trailingItemsSpanFullHeight = false,
   isFocused = false,
+  isSelected = false,
+  isPressed,
   innerWrapProps = {},
   labelProps = {},
   detailsProps = {},
+  showDetailsInOverlay = false,
   tooltip,
   tooltipOptions = {delay: 500},
   forwardRef,
   ...props
 }: Props) {
+  const itemRef = useRef<HTMLLIElement>(null);
+  const labelId = useMemo(() => domId('menuitem-label-'), []);
+  const detailId = useMemo(() => domId('menuitem-details-'), []);
+
   return (
-    <MenuItemWrap as={as} ref={forwardRef} {...props}>
+    <MenuItemWrap
+      role="menuitem"
+      aria-disabled={disabled}
+      aria-labelledby={labelId}
+      aria-describedby={detailId}
+      as={as}
+      ref={mergeRefs([forwardRef, itemRef])}
+      {...props}
+    >
       <Tooltip skipWrapper title={tooltip} {...tooltipOptions}>
         <InnerWrap
           isFocused={isFocused}
@@ -115,26 +151,34 @@ function BaseMenuListItem({
           size={size}
           {...innerWrapProps}
         >
+          <StyledInteractionStateLayer
+            isHovered={isFocused}
+            isPressed={isPressed}
+            higherOpacity={priority !== 'default'}
+          />
           {leadingItems && (
             <LeadingItems
               disabled={disabled}
               spanFullHeight={leadingItemsSpanFullHeight}
               size={size}
             >
-              {leadingItems}
+              {typeof leadingItems === 'function'
+                ? leadingItems({disabled, isFocused, isSelected})
+                : leadingItems}
             </LeadingItems>
           )}
-          <ContentWrap
-            isFocused={isFocused}
-            showDivider={defined(details) || showDivider}
-            size={size}
-          >
+          <ContentWrap isFocused={isFocused} showDivider={showDivider} size={size}>
             <LabelWrap>
-              <Label aria-hidden="true" {...labelProps}>
+              <Label id={labelId} data-test-id="menu-list-item-label" {...labelProps}>
                 {label}
               </Label>
-              {details && (
-                <Details disabled={disabled} priority={priority} {...detailsProps}>
+              {!showDetailsInOverlay && details && (
+                <Details
+                  id={detailId}
+                  disabled={disabled}
+                  priority={priority}
+                  {...detailsProps}
+                >
                   {details}
                 </Details>
               )}
@@ -144,21 +188,95 @@ function BaseMenuListItem({
                 disabled={disabled}
                 spanFullHeight={trailingItemsSpanFullHeight}
               >
-                {trailingItems}
+                {typeof trailingItems === 'function'
+                  ? trailingItems({disabled, isFocused, isSelected})
+                  : trailingItems}
               </TrailingItems>
             )}
           </ContentWrap>
         </InnerWrap>
       </Tooltip>
+      {showDetailsInOverlay && details && isFocused && (
+        <DetailsOverlay size={size} id={detailId} itemRef={itemRef}>
+          {details}
+        </DetailsOverlay>
+      )}
     </MenuItemWrap>
   );
 }
 
-const MenuListItem = reactForwardRef<HTMLLIElement, MenuListItemProps & OtherProps>(
-  (props, ref) => <BaseMenuListItem {...props} forwardRef={ref} />
+const MenuListItem = memo(
+  reactForwardRef<HTMLLIElement, MenuListItemProps & OtherProps>((props, ref) => (
+    <BaseMenuListItem {...props} forwardRef={ref} />
+  ))
 );
 
 export default MenuListItem;
+
+const POPPER_OPTIONS = {
+  placement: 'right-start' as const,
+  strategy: 'fixed' as const,
+  modifiers: [
+    {
+      name: 'offset',
+      options: {
+        offset: [-4, 8],
+      },
+    },
+  ],
+};
+
+function DetailsOverlay({
+  children,
+  size,
+  id,
+  itemRef,
+}: {
+  children: React.ReactNode;
+  id: string;
+  itemRef: React.RefObject<HTMLLIElement>;
+  size: Props['size'];
+}) {
+  const theme = useTheme();
+  const [overlayElement, setOverlayElement] = useState<HTMLDivElement | null>(null);
+
+  const popper = usePopper(itemRef.current, overlayElement, POPPER_OPTIONS);
+
+  return createPortal(
+    <StyledPositionWrapper
+      {...popper.attributes.popper}
+      ref={setOverlayElement}
+      zIndex={theme.zIndex.tooltip}
+      style={popper.styles.popper}
+    >
+      <StyledOverlay id={id} role="tooltip" placement="right-start" size={size}>
+        {children}
+      </StyledOverlay>
+    </StyledPositionWrapper>,
+    // Safari will clip the overlay if it is inside a scrollable container, even though it is positioned fixed.
+    // See https://bugs.webkit.org/show_bug.cgi?id=160953
+    // To work around this, we append the overlay to the body
+    document.body
+  );
+}
+
+const StyledPositionWrapper = styled(PositionWrapper)`
+  &[data-popper-reference-hidden='true'] {
+    opacity: 0;
+    pointer-events: none;
+  }
+`;
+
+const StyledOverlay = styled(Overlay)<{
+  size: Props['size'];
+}>`
+  padding: 4px;
+  font-size: ${p => p.theme.form[p.size ?? 'md'].fontSize};
+  cursor: auto;
+  user-select: contain;
+  max-height: 80vh;
+  overflow: auto;
+`;
 
 const MenuItemWrap = styled('li')`
   position: static;
@@ -166,6 +284,7 @@ const MenuItemWrap = styled('li')`
   margin: 0;
   padding: 0 ${space(0.5)};
   cursor: pointer;
+  scroll-margin: ${space(0.5)} 0;
 
   &:focus {
     outline: none;
@@ -198,18 +317,6 @@ function getTextColor({
   }
 }
 
-function getFocusBackground({theme, priority}: {priority: Priority; theme: Theme}) {
-  switch (priority) {
-    case 'primary':
-      return theme.purple100;
-    case 'danger':
-      return theme.red100;
-    case 'default':
-    default:
-      return theme.hover;
-  }
-}
-
 export const InnerWrap = styled('div', {
   shouldForwardProp: prop =>
     typeof prop === 'string' &&
@@ -235,33 +342,29 @@ export const InnerWrap = styled('div', {
   }
   ${p => p.disabled && `cursor: default;`}
 
+  &::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    z-index: -1;
+  }
+
   ${p =>
     p.isFocused &&
     `
       z-index: 1;
-
-      ::before, ::after {
-        content: '';
-        position: absolute;
-        top: 0;
-        left: 0;
-        width: 100%;
-        height: 100%;
-      }
-
       /* Background to hide the previous item's divider */
       ::before {
-        background: ${p.theme.background};
-        z-index: -1;
-      }
-
-      /* Hover/focus background */
-      ::after {
-        background: ${getFocusBackground(p)};
-        border-radius: inherit;
-        z-index: -1;
+        background: ${p.theme.backgroundElevated};
       }
     `}
+`;
+
+const StyledInteractionStateLayer = styled(InteractionStateLayer)`
+  z-index: -1;
 `;
 
 /**
@@ -297,7 +400,7 @@ const ContentWrap = styled('div')<{
     p.showDivider &&
     !p.isFocused &&
     `
-      ${MenuItemWrap}:not(:last-child) &::after {
+      li:not(:last-child) &::after {
         content: '';
         position: absolute;
         left: 0;
@@ -309,7 +412,7 @@ const ContentWrap = styled('div')<{
     `}
 `;
 
-const LeadingItems = styled('div')<{
+export const LeadingItems = styled('div')<{
   disabled: boolean;
   size: Props['size'];
   spanFullHeight: boolean;
@@ -320,6 +423,7 @@ const LeadingItems = styled('div')<{
   gap: ${space(1)};
   margin-top: ${p => getVerticalPadding(p.size)};
   margin-right: ${space(1)};
+  flex-shrink: 0;
 
   ${p => p.disabled && `opacity: 0.5;`}
   ${p => p.spanFullHeight && `height: 100%;`}
@@ -331,7 +435,7 @@ const LabelWrap = styled('div')`
   min-width: 0;
 `;
 
-const Label = styled('p')`
+const Label = styled('div')`
   margin-bottom: 0;
   line-height: 1.4;
   white-space: nowrap;
@@ -339,12 +443,11 @@ const Label = styled('p')`
   ${p => p.theme.overflowEllipsis}
 `;
 
-const Details = styled('p')<{disabled: boolean; priority: Priority}>`
+const Details = styled('div')<{disabled: boolean; priority: Priority}>`
   font-size: ${p => p.theme.fontSizeSmall};
   color: ${p => p.theme.subText};
   line-height: 1.2;
   margin-bottom: 0;
-  ${p => p.theme.overflowEllipsis}
 
   ${p => p.priority !== 'default' && `color: ${getTextColor(p)};`}
 `;

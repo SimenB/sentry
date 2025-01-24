@@ -1,9 +1,15 @@
-import {Fragment, useState} from 'react';
+import {useState} from 'react';
+import styled from '@emotion/styled';
 import omit from 'lodash/omit';
 
-import Input from 'sentry/components/input';
+import FormField from 'sentry/components/forms/formField';
+import FormFieldControlState from 'sentry/components/forms/formField/controlState';
+import type FormModel from 'sentry/components/forms/model';
+import {InputGroup} from 'sentry/components/inputGroup';
+import {t} from 'sentry/locale';
 
-import InputField, {InputFieldProps} from './inputField';
+// XXX(epurkhiser): This is wrong, it should not be inheriting these props
+import type {InputFieldProps} from './inputField';
 
 export interface FileFieldProps extends Omit<InputFieldProps, 'type' | 'accept'> {
   accept?: string[];
@@ -19,19 +25,30 @@ export interface FileFieldProps extends Omit<InputFieldProps, 'type' | 'accept'>
 // Until that is done though if you try to submit the form while this is uploading
 // you will just submit the form without the field.
 
-export default function FileField({accept, ...props}: FileFieldProps) {
-  const [isUploading, setUploading] = useState(false);
+export default function FileField({accept, hideControlState, ...props}: FileFieldProps) {
+  const [fileName, setFileName] = useState('');
+  const handleFile = (
+    model: FormModel,
+    name: string,
+    onChange: (value: any, e: React.ChangeEvent<HTMLInputElement>) => void,
+    e: React.ChangeEvent<HTMLInputElement>
+  ) => {
+    const file = e.target.files?.[0];
 
-  const handleFile = (onChange, e) => {
-    const file = e.target.files[0];
+    // No file selected
+    if (!file) {
+      onChange([], e);
+      return;
+    }
 
+    model.setSaving(name, true);
     const reader = new FileReader();
-    setUploading(true);
     reader.addEventListener(
       'load',
       () => {
+        setFileName(file.name);
         onChange([file.name, (reader.result as string).split(',')[1]], e);
-        setUploading(false);
+        model.setSaving(name, false);
       },
       false
     );
@@ -39,25 +56,62 @@ export default function FileField({accept, ...props}: FileFieldProps) {
   };
 
   return (
-    <InputField
-      {...props}
-      accept={accept?.join(', ')}
-      field={({onChange, ...fieldProps}) => {
+    <FormField {...props} hideControlState>
+      {({
+        children: _children,
+        onChange,
+        name,
+        model,
+        ...fieldProps
+      }: {
+        children: React.ReactNode;
+        model: FormModel;
+        name: string;
+        onChange: (value: any, event?: React.FormEvent<HTMLInputElement>) => void;
+      }) => {
         return (
-          <Fragment>
-            <Input
+          <InputGroup>
+            <InputGroup.LeadingItems disablePointerEvents>
+              <FileName hasFile={!!fileName}>
+                {fileName || t('No file selected')}
+              </FileName>
+            </InputGroup.LeadingItems>
+            <FileInput
               {...omit(fieldProps, 'value', 'onBlur', 'onKeyDown')}
               type="file"
-              onChange={e => handleFile(onChange, e)}
+              name={name}
+              accept={accept?.join(', ')}
+              onChange={e => handleFile(model, name, onChange, e)}
             />
-            {isUploading ? (
-              <div>This is a janky upload indicator. Wait to hit save!</div>
-            ) : (
-              ''
+            {!hideControlState && (
+              <InputGroup.TrailingItems disablePointerEvents>
+                <FormFieldControlState name={name} model={model} />
+                <BrowseIndicator>Browse</BrowseIndicator>
+              </InputGroup.TrailingItems>
             )}
-          </Fragment>
+          </InputGroup>
         );
       }}
-    />
+    </FormField>
   );
 }
+
+const FileName = styled('span')<{hasFile: boolean}>`
+  color: ${p => (p.hasFile ? p.theme.textColor : p.theme.subText)};
+`;
+
+const BrowseIndicator = styled('span')`
+  color: ${p => p.theme.activeText};
+`;
+
+const FileInput = styled(InputGroup.Input)`
+  cursor: pointer;
+  color: transparent;
+
+  ::file-selector-button {
+    display: none;
+  }
+  ::-webkit-file-upload-button {
+    display: none;
+  }
+`;

@@ -1,140 +1,186 @@
-import {Fragment} from 'react';
+import type {ComponentProps} from 'react';
+import {Fragment, useCallback, useState} from 'react';
 import {css} from '@emotion/react';
 import styled from '@emotion/styled';
 
-import {ModalRenderProps} from 'sentry/actionCreators/modal';
-import Button from 'sentry/components/button';
-import Buttonbar from 'sentry/components/buttonBar';
+import type {ModalRenderProps} from 'sentry/actionCreators/modal';
+import {Button, LinkButton} from 'sentry/components/button';
+import ButtonBar from 'sentry/components/buttonBar';
 import Confirm from 'sentry/components/confirm';
-import DateTime from 'sentry/components/dateTime';
-import {getRelativeTimeFromEventDateCreated} from 'sentry/components/events/contexts/utils';
-import NotAvailable from 'sentry/components/notAvailable';
-import {t} from 'sentry/locale';
-import space from 'sentry/styles/space';
-import {EventAttachment, Organization, Project} from 'sentry/types';
-import {Event} from 'sentry/types/event';
-import {defined, formatBytesBase2} from 'sentry/utils';
-import getDynamicText from 'sentry/utils/getDynamicText';
+import {Flex} from 'sentry/components/container/flex';
+import {DateTime} from 'sentry/components/dateTime';
+import KeyValueData from 'sentry/components/keyValueData';
+import {t, tct} from 'sentry/locale';
+import {space} from 'sentry/styles/space';
+import type {EventAttachment} from 'sentry/types/group';
+import type {Project} from 'sentry/types/project';
+import {defined} from 'sentry/utils';
+import {formatBytesBase2} from 'sentry/utils/bytes/formatBytesBase2';
+import {useHotkeys} from 'sentry/utils/useHotkeys';
+import useOrganization from 'sentry/utils/useOrganization';
 
 import ImageVisualization from './imageVisualization';
+import ScreenshotPagination from './screenshotPagination';
 
-type Props = ModalRenderProps & {
+export const MAX_SCREENSHOTS_PER_PAGE = 20;
+
+interface ScreenshotModalProps extends ModalRenderProps {
   downloadUrl: string;
   eventAttachment: EventAttachment;
-  onDelete: () => void;
-  onDownload: () => void;
-  orgSlug: Organization['slug'];
   projectSlug: Project['slug'];
-  event?: Event;
-};
+  /**
+   * Enables pagination of screenshots.
+   */
+  attachments?: EventAttachment[];
+  /**
+   * Enables navigation to the issue details page.
+   */
+  groupId?: string;
+  onDelete?: () => void;
+  onDownload?: () => void;
+}
 
-function Modal({
+export default function ScreenshotModal({
   eventAttachment,
-  orgSlug,
+  attachments = [],
   projectSlug,
   Header,
   Body,
   Footer,
-  event,
   onDelete,
   downloadUrl,
   onDownload,
-}: Props) {
-  const {dateCreated, size, mimetype} = eventAttachment;
+  groupId,
+}: ScreenshotModalProps) {
+  const organization = useOrganization();
+
+  const [currentEventAttachment, setCurrentAttachment] =
+    useState<EventAttachment>(eventAttachment);
+
+  const currentAttachmentIndex = attachments.findIndex(
+    attachment => attachment.id === currentEventAttachment.id
+  );
+  const paginateItems = useCallback(
+    (delta: number) => {
+      if (attachments.length) {
+        const newIndex = currentAttachmentIndex + delta;
+        if (newIndex >= 0 && newIndex < attachments.length) {
+          setCurrentAttachment(attachments[newIndex]!);
+        }
+      }
+    },
+    [attachments, currentAttachmentIndex]
+  );
+
+  useHotkeys(
+    [
+      {match: 'right', callback: () => paginateItems(1)},
+      {match: 'left', callback: () => paginateItems(-1)},
+    ],
+    [paginateItems]
+  );
+
+  const {dateCreated, size, mimetype} = currentEventAttachment;
+
+  let paginationProps: ComponentProps<typeof ScreenshotPagination> | null = null;
+  if (attachments.length > 1 && defined(currentAttachmentIndex)) {
+    paginationProps = {
+      previousDisabled: currentAttachmentIndex === 0,
+      nextDisabled: currentAttachmentIndex === attachments.length - 1,
+      onPrevious: () => {
+        paginateItems(-1);
+      },
+      onNext: () => {
+        paginateItems(1);
+      },
+      headerText: tct('[currentScreenshotIndex] of [totalScreenshotCount]', {
+        currentScreenshotIndex: currentAttachmentIndex + 1,
+        totalScreenshotCount: attachments.length,
+      }),
+    };
+  }
+
   return (
     <Fragment>
-      <Header closeButton>{t('Screenshot')}</Header>
+      <Header closeButton>
+        <h5>{t('Screenshot')}</h5>
+      </Header>
       <Body>
-        <GeralInfo>
-          <Label coloredBg>{t('Date Created')}</Label>
-          <Value coloredBg>
-            {dateCreated ? (
-              <Fragment>
-                <DateTime
-                  date={getDynamicText({
-                    value: dateCreated,
-                    fixed: new Date(1508208080000),
-                  })}
-                />
-                {event &&
-                  getRelativeTimeFromEventDateCreated(
-                    event.dateCreated ? event.dateCreated : event.dateReceived,
-                    dateCreated,
-                    false
-                  )}
-              </Fragment>
-            ) : (
-              <NotAvailable />
-            )}
-          </Value>
-
-          <Label>{t('Size')}</Label>
-          <Value>{defined(size) ? formatBytesBase2(size) : <NotAvailable />}</Value>
-
-          <Label coloredBg>{t('MIME Type')}</Label>
-          <Value coloredBg>{mimetype ?? <NotAvailable />}</Value>
-        </GeralInfo>
-
-        <StyledImageVisualization
-          attachment={eventAttachment}
-          orgId={orgSlug}
-          projectId={projectSlug}
-          eventId={eventAttachment.event_id}
-        />
+        <Flex column gap={space(1.5)}>
+          {defined(paginationProps) && <ScreenshotPagination {...paginationProps} />}
+          <StyledImageVisualization
+            attachment={currentEventAttachment}
+            orgSlug={organization.slug}
+            projectSlug={projectSlug}
+            eventId={currentEventAttachment.event_id}
+          />
+          <KeyValueData.Card
+            title={eventAttachment.name}
+            contentItems={[
+              {
+                item: {
+                  key: 'event',
+                  subject: t('Event ID'),
+                  value: currentEventAttachment.event_id,
+                  action: groupId
+                    ? {
+                        link: `/organizations/${organization.slug}/issues/${groupId}/events/${currentEventAttachment.event_id}/`,
+                      }
+                    : undefined,
+                },
+              },
+              {
+                item: {
+                  key: 'date',
+                  subject: t('Date Created'),
+                  value: <DateTime date={dateCreated} />,
+                },
+              },
+              {
+                item: {key: 'size', subject: t('Size'), value: formatBytesBase2(size)},
+              },
+              {
+                item: {
+                  key: 'mimetype',
+                  subject: t('MIME Type'),
+                  value: mimetype,
+                },
+              },
+            ]}
+          />
+        </Flex>
       </Body>
       <Footer>
-        <Buttonbar gap={1}>
-          <Confirm
-            confirmText={t('Delete')}
-            header={t(
-              'Screenshots help identify what the user saw when the event happened'
-            )}
-            message={t('Are you sure you wish to delete this screenshot?')}
-            priority="danger"
-            onConfirm={onDelete}
-          >
-            <Button priority="danger">{t('Delete')}</Button>
-          </Confirm>
-          <Button onClick={onDownload} href={downloadUrl}>
+        <ButtonBar gap={1}>
+          {onDelete && (
+            <Confirm
+              confirmText={t('Delete')}
+              message={<h6>{t('Are you sure you want to delete this screenshot?')}</h6>}
+              priority="danger"
+              onConfirm={onDelete}
+            >
+              <Button priority="danger">{t('Delete')}</Button>
+            </Confirm>
+          )}
+          <LinkButton onClick={onDownload} href={downloadUrl}>
             {t('Download')}
-          </Button>
-        </Buttonbar>
+          </LinkButton>
+        </ButtonBar>
       </Footer>
     </Fragment>
   );
 }
 
-export default Modal;
-
-const GeralInfo = styled('div')`
-  display: grid;
-  grid-template-columns: max-content 1fr;
-  margin-bottom: ${space(3)};
-`;
-
-const Label = styled('div')<{coloredBg?: boolean}>`
-  color: ${p => p.theme.textColor};
-  padding: ${space(1)} ${space(1.5)} ${space(1)} ${space(1)};
-  ${p => p.coloredBg && `background-color: ${p.theme.backgroundSecondary};`}
-`;
-
-const Value = styled(Label)`
-  white-space: pre-wrap;
-  word-break: break-all;
-  color: ${p => p.theme.subText};
-  padding: ${space(1)};
-  font-family: ${p => p.theme.text.familyMono};
-  ${p => p.coloredBg && `background-color: ${p.theme.backgroundSecondary};`}
-`;
-
 const StyledImageVisualization = styled(ImageVisualization)`
+  border-bottom: 0;
   img {
-    border-radius: ${p => p.theme.borderRadius};
+    max-height: calc(100vh - 300px);
   }
 `;
 
 export const modalCss = css`
   width: auto;
   height: 100%;
-  max-width: 100%;
+  max-width: 700px;
+  margin-top: 0 !important;
 `;

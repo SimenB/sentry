@@ -1,24 +1,24 @@
 import {Fragment} from 'react';
 import styled from '@emotion/styled';
-import {Location} from 'history';
+import type {Location} from 'history';
 import pick from 'lodash/pick';
 
-import Badge from 'sentry/components/badge';
-import Breadcrumbs from 'sentry/components/breadcrumbs';
-import Clipboard from 'sentry/components/clipboard';
+import Badge from 'sentry/components/badge/badge';
+import {Breadcrumbs} from 'sentry/components/breadcrumbs';
+import {CopyToClipboardButton} from 'sentry/components/copyToClipboardButton';
 import IdBadge from 'sentry/components/idBadge';
 import * as Layout from 'sentry/components/layouts/thirds';
 import ExternalLink from 'sentry/components/links/externalLink';
-import ListLink from 'sentry/components/links/listLink';
-import NavTabs from 'sentry/components/navTabs';
-import Tooltip from 'sentry/components/tooltip';
+import {TabList} from 'sentry/components/tabs';
+import {Tooltip} from 'sentry/components/tooltip';
 import Version from 'sentry/components/version';
 import {URL_PARAM} from 'sentry/constants/pageFilters';
-import {IconCopy, IconOpen} from 'sentry/icons';
+import {IconOpen} from 'sentry/icons';
 import {t} from 'sentry/locale';
-import space from 'sentry/styles/space';
-import {Organization, Release, ReleaseMeta, ReleaseProject} from 'sentry/types';
+import type {Organization} from 'sentry/types/organization';
+import type {Release, ReleaseMeta, ReleaseProject} from 'sentry/types/release';
 import {formatAbbreviatedNumber} from 'sentry/utils/formatters';
+import normalizeUrl from 'sentry/utils/url/normalizeUrl';
 
 import ReleaseActions from './releaseActions';
 
@@ -31,14 +31,14 @@ type Props = {
   releaseMeta: ReleaseMeta;
 };
 
-const ReleaseHeader = ({
+function ReleaseHeader({
   location,
   organization,
   release,
   project,
   releaseMeta,
   refetchData,
-}: Props) => {
+}: Props) {
   const {version, url} = release;
   const {commitCount, commitFilesChanged} = releaseMeta;
 
@@ -67,10 +67,11 @@ const ReleaseHeader = ({
     },
   ];
 
-  const getTabUrl = (path: string) => ({
-    pathname: releasePath + path,
-    query: pick(location.query, Object.values(URL_PARAM)),
-  });
+  const getTabUrl = (path: string) =>
+    normalizeUrl({
+      pathname: releasePath + path,
+      query: pick(location.query, Object.values(URL_PARAM)),
+    });
 
   const getActiveTabTo = () => {
     // We are not doing strict version check because there would be a tiny page shift when switching between releases with paginator
@@ -81,7 +82,7 @@ const ReleaseHeader = ({
       return activeTab.to;
     }
 
-    return tabs[0].to; // default to 'Overview'
+    return tabs[0]!.to; // default to 'Overview'
   };
 
   return (
@@ -98,26 +99,25 @@ const ReleaseHeader = ({
           ]}
         />
         <Layout.Title>
-          <ReleaseName>
-            <IdBadge project={project} avatarSize={28} hideName />
-            <StyledVersion version={version} anchor={false} truncate />
+          <IdBadge project={project} avatarSize={28} hideName />
+          <Version version={version} anchor={false} truncate />
+          <IconWrapper>
+            <CopyToClipboardButton
+              borderless
+              size="zero"
+              text={version}
+              title={version}
+            />
+          </IconWrapper>
+          {!!url && (
             <IconWrapper>
-              <Tooltip title={version} containerDisplayMode="flex">
-                <Clipboard value={version}>
-                  <IconCopy />
-                </Clipboard>
+              <Tooltip title={url}>
+                <ExternalLink href={url}>
+                  <IconOpen />
+                </ExternalLink>
               </Tooltip>
             </IconWrapper>
-            {!!url && (
-              <IconWrapper>
-                <Tooltip title={url}>
-                  <ExternalLink href={url}>
-                    <IconOpen />
-                  </ExternalLink>
-                </Tooltip>
-              </IconWrapper>
-            )}
-          </ReleaseName>
+          )}
         </Layout.Title>
       </Layout.HeaderContent>
 
@@ -132,35 +132,21 @@ const ReleaseHeader = ({
         />
       </Layout.HeaderActions>
 
-      <Fragment>
-        <StyledNavTabs>
+      <Layout.HeaderTabs value={getActiveTabTo()}>
+        <TabList hideBorder>
           {tabs.map(tab => (
-            <ListLink
-              key={tab.to}
-              to={getTabUrl(tab.to)}
-              isActive={() => getActiveTabTo() === tab.to}
-            >
+            <TabList.Item key={tab.to} to={getTabUrl(tab.to)}>
               {tab.title}
-            </ListLink>
+            </TabList.Item>
           ))}
-        </StyledNavTabs>
-      </Fragment>
+        </TabList>
+      </Layout.HeaderTabs>
     </Layout.Header>
   );
-};
-
-const ReleaseName = styled('div')`
-  display: flex;
-  align-items: center;
-`;
-
-const StyledVersion = styled(Version)`
-  margin-left: ${space(1)};
-`;
+}
 
 const IconWrapper = styled('span')`
   transition: color 0.3s ease-in-out;
-  margin-left: ${space(1)};
 
   &,
   a {
@@ -171,12 +157,6 @@ const IconWrapper = styled('span')`
       color: ${p => p.theme.textColor};
     }
   }
-`;
-
-const StyledNavTabs = styled(NavTabs)`
-  margin-bottom: 0;
-  /* Makes sure the tabs are pushed into another row */
-  width: 100%;
 `;
 
 const NavTabsBadge = styled(Badge)`

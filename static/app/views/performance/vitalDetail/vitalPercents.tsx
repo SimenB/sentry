@@ -1,9 +1,9 @@
 import styled from '@emotion/styled';
 
 import {t, tct} from 'sentry/locale';
-import space from 'sentry/styles/space';
+import {space} from 'sentry/styles/space';
 import {WebVital} from 'sentry/utils/fields';
-import {formatPercentage} from 'sentry/utils/formatters';
+import {formatPercentage} from 'sentry/utils/number/formatPercentage';
 
 import {VitalState, vitalStateIcons, webVitalMeh, webVitalPoor} from './utils';
 
@@ -20,21 +20,24 @@ type Props = {
   showVitalThresholds?: boolean;
 };
 
-function getVitalStateText(vital: WebVital | WebVital[], vitalState) {
+function getVitalStateText(vital: WebVital | WebVital[], vitalState: any) {
   const unit = !Array.isArray(vital) && vital !== WebVital.CLS ? 'ms' : '';
   switch (vitalState) {
     case VitalState.POOR:
       return Array.isArray(vital)
         ? t('Poor')
-        : tct('(>[threshold][unit])', {threshold: webVitalPoor[vital], unit});
+        : // @ts-expect-error TS(2551): Property 'measurements.ttfb' does not exist on typ... Remove this comment to see the full error message
+          tct('(>[threshold][unit])', {threshold: webVitalPoor[vital], unit});
     case VitalState.MEH:
       return Array.isArray(vital)
         ? t('Meh')
-        : tct('(>[threshold][unit])', {threshold: webVitalMeh[vital], unit});
+        : // @ts-expect-error TS(2551): Property 'measurements.ttfb' does not exist on typ... Remove this comment to see the full error message
+          tct('(>[threshold][unit])', {threshold: webVitalMeh[vital], unit});
     case VitalState.GOOD:
       return Array.isArray(vital)
         ? t('Good')
-        : tct('(<=[threshold][unit])', {threshold: webVitalMeh[vital], unit});
+        : // @ts-expect-error TS(2551): Property 'measurements.ttfb' does not exist on typ... Remove this comment to see the full error message
+          tct('(<=[threshold][unit])', {threshold: webVitalMeh[vital], unit});
     default:
       return null;
   }
@@ -46,7 +49,7 @@ export default function VitalPercents(props: Props) {
       {props.percents.map(pct => (
         <VitalStatus data-test-id="vital-status" key={pct.vitalState}>
           {vitalStateIcons[pct.vitalState]}
-          {props.showVitalPercentNames && t(`${pct.vitalState}`)}{' '}
+          {props.showVitalPercentNames && pct.vitalState}{' '}
           {formatPercentage(pct.percent, 0)}
           {props.showVitalThresholds && getVitalStateText(props.vital, pct.vitalState)}
         </VitalStatus>

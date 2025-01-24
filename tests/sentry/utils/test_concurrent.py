@@ -78,10 +78,7 @@ def test_future_broken_callback():
 
     callback = mock.Mock(side_effect=Exception("Boom!"))
 
-    try:
-        future_set.add_done_callback(callback)
-    except Exception:
-        assert False, "should not raise"
+    future_set.add_done_callback(callback)  # should not raise
 
     assert callback.call_count == 1
     assert callback.call_args == mock.call(future_set)
@@ -95,7 +92,7 @@ def timestamp(t):
 
 
 def test_timed_future_success():
-    future = TimedFuture()
+    future: TimedFuture[object] = TimedFuture()
     assert future.get_timing() == (None, None)
 
     expected_result = mock.sentinel.RESULT_VALUE
@@ -121,7 +118,7 @@ def test_timed_future_success():
 
 
 def test_time_is_not_overwritten_if_fail_to_set_result():
-    future = TimedFuture()
+    future: TimedFuture[int] = TimedFuture()
 
     with timestamp(1.0):
         future.set_running_or_notify_cancel()
@@ -140,7 +137,7 @@ def test_time_is_not_overwritten_if_fail_to_set_result():
 
 
 def test_timed_future_error():
-    future = TimedFuture()
+    future: TimedFuture[None] = TimedFuture()
     assert future.get_timing() == (None, None)
 
     start_time, finish_time = expected_timing = (1.0, 2.0)
@@ -165,7 +162,7 @@ def test_timed_future_error():
 
 
 def test_timed_future_cancel():
-    future = TimedFuture()
+    future: TimedFuture[None] = TimedFuture()
     assert future.get_timing() == (None, None)
 
     with timestamp(1.0):
@@ -191,16 +188,15 @@ def test_synchronous_executor():
 
     assert executor.submit(lambda: mock.sentinel.RESULT).result() is mock.sentinel.RESULT
 
+    class SentinelException(ValueError):
+        pass
+
     def callable():
-        raise Exception(mock.sentinel.EXCEPTION)
+        raise SentinelException
 
     future = executor.submit(callable)
-    try:
+    with pytest.raises(SentinelException):
         future.result()
-    except Exception as e:
-        assert e.args[0] == mock.sentinel.EXCEPTION
-    else:
-        assert False, "expected future to raise"
 
 
 def test_threaded_same_priority_Tasks():

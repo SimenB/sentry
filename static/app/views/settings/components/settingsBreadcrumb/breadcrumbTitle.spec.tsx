@@ -1,8 +1,11 @@
-import {BreadcrumbContextProvider} from 'sentry-test/providers/breadcrumbContextProvider';
+import {initializeOrg} from 'sentry-test/initializeOrg';
 import {render, screen} from 'sentry-test/reactTestingLibrary';
 
-import SettingsBreadcrumb from 'sentry/views/settings/components/settingsBreadcrumb';
-import BreadcrumbTitle from 'sentry/views/settings/components/settingsBreadcrumb/breadcrumbTitle';
+import BreadcrumbTitle from './breadcrumbTitle';
+import {BreadcrumbProvider} from './context';
+import SettingsBreadcrumb from '.';
+
+jest.unmock('sentry/utils/recreateRoute');
 
 describe('BreadcrumbTitle', function () {
   const testRoutes = [
@@ -12,11 +15,18 @@ describe('BreadcrumbTitle', function () {
   ];
 
   it('renders settings breadcrumbs and replaces title', function () {
+    const {router} = initializeOrg({
+      router: {
+        routes: testRoutes,
+      },
+    } as any);
+
     render(
-      <BreadcrumbContextProvider routes={testRoutes}>
+      <BreadcrumbProvider>
         <SettingsBreadcrumb routes={testRoutes} params={{}} route={{}} />
         <BreadcrumbTitle routes={testRoutes} title="Last Title" />
-      </BreadcrumbContextProvider>
+      </BreadcrumbProvider>,
+      {router}
     );
 
     const crumbs = screen.getAllByRole('link');
@@ -26,14 +36,21 @@ describe('BreadcrumbTitle', function () {
   });
 
   it('cleans up routes', () => {
+    const {router} = initializeOrg({
+      router: {
+        routes: testRoutes,
+      },
+    } as any);
+
     let upOneRoutes = testRoutes.slice(0, -1);
 
     const {rerender} = render(
-      <BreadcrumbContextProvider routes={testRoutes}>
+      <BreadcrumbProvider>
         <SettingsBreadcrumb routes={testRoutes} params={{}} route={{}} />
         <BreadcrumbTitle routes={upOneRoutes} title="Second Title" />
         <BreadcrumbTitle routes={testRoutes} title="Last Title" />
-      </BreadcrumbContextProvider>
+      </BreadcrumbProvider>,
+      {router}
     );
 
     const crumbs = screen.getAllByRole('link');
@@ -47,10 +64,10 @@ describe('BreadcrumbTitle', function () {
 
     // Simulate navigating up a level, trimming the last title
     rerender(
-      <BreadcrumbContextProvider routes={upOneRoutes}>
+      <BreadcrumbProvider>
         <SettingsBreadcrumb routes={upOneRoutes} params={{}} route={{}} />
         <BreadcrumbTitle routes={upOneRoutes} title="Second Title" />
-      </BreadcrumbContextProvider>
+      </BreadcrumbProvider>
     );
 
     const crumbsNext = screen.getAllByRole('link');

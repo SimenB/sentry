@@ -1,7 +1,8 @@
-import {Client} from 'sentry/api';
+import type {Client} from 'sentry/api';
 import {getInterval} from 'sentry/components/charts/utils';
 import {normalizeDateTimeParams} from 'sentry/components/organizations/pageFilters/parse';
-import {DateString, Organization, SessionApiResponse} from 'sentry/types';
+import type {DateString} from 'sentry/types/core';
+import type {Organization, SessionApiResponse} from 'sentry/types/organization';
 import {defined} from 'sentry/utils';
 
 export type DoSessionsRequestOptions = {
@@ -9,13 +10,15 @@ export type DoSessionsRequestOptions = {
   orgSlug: Organization['slug'];
   cursor?: string;
   end?: DateString;
-  environment?: Readonly<string[]>;
+  environment?: readonly string[];
   groupBy?: string[];
   includeAllArgs?: boolean;
+  includeSeries?: boolean;
+  includeTotals?: boolean;
   interval?: string;
   limit?: number;
   orderBy?: string;
-  project?: Readonly<number[]>;
+  project?: readonly number[];
   query?: string;
   start?: DateString;
   statsPeriod?: string | null;
@@ -36,6 +39,8 @@ export const doSessionsRequest = (
     orderBy,
     query,
     includeAllArgs = false,
+    includeSeries,
+    includeTotals,
     statsPeriodStart,
     statsPeriodEnd,
     limit,
@@ -62,6 +67,8 @@ export const doSessionsRequest = (
       statsPeriod,
       statsPeriodStart,
       statsPeriodEnd,
+      includeSeries: includeSeries === false ? '0' : '1',
+      includeTotals: includeTotals === false ? '0' : '1',
     }).filter(([, value]) => defined(value) && value !== '')
   );
 

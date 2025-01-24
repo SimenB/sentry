@@ -1,13 +1,14 @@
-import {isValidElement, useEffect, useRef, useState} from 'react';
-import {browserHistory, RouteComponentProps} from 'react-router';
+import {isValidElement, useCallback, useEffect, useRef, useState} from 'react';
 import styled from '@emotion/styled';
 
-import Button from 'sentry/components/button';
+import {Button} from 'sentry/components/button';
+import * as Layout from 'sentry/components/layouts/thirds';
 import {IconClose, IconMenu} from 'sentry/icons';
 import {t} from 'sentry/locale';
 import {fadeIn, slideInLeft} from 'sentry/styles/animations';
-import {PageContent} from 'sentry/styles/organization';
-import space from 'sentry/styles/space';
+import {space} from 'sentry/styles/space';
+import type {RouteComponentProps} from 'sentry/types/legacyReactRouter';
+import {useLocation} from 'sentry/utils/useLocation';
 
 import SettingsBreadcrumb from './settingsBreadcrumb';
 import SettingsHeader from './settingsHeader';
@@ -31,18 +32,20 @@ function SettingsLayout(props: Props) {
 
   const headerRef = useRef<HTMLDivElement>(null);
 
-  function toggleNav(visible: boolean) {
-    const bodyElement = document.getElementsByTagName('body')[0];
+  const location = useLocation();
+
+  const toggleNav = useCallback((visible: boolean) => {
+    const bodyElement = document.getElementsByTagName('body')[0]!;
 
     window.scrollTo?.(0, 0);
     bodyElement.classList[visible ? 'add' : 'remove']('scroll-lock');
 
     setMobileNavVisible(visible);
     setNavOffsetTop(headerRef.current?.getBoundingClientRect().bottom ?? 0);
-  }
+  }, []);
 
   // Close menu when navigating away
-  useEffect(() => browserHistory.listen(() => toggleNav(false)), []);
+  useEffect(() => toggleNav(false), [toggleNav, location.pathname]);
 
   const {renderNavigation, children, params, routes, route} = props;
 
@@ -77,7 +80,11 @@ function SettingsLayout(props: Props) {
 
       <MaxWidthContainer>
         {shouldRenderNavigation && (
-          <SidebarWrapper isVisible={isMobileNavVisible} offsetTop={navOffsetTop}>
+          <SidebarWrapper
+            aria-label={t('Settings Navigation')}
+            isVisible={isMobileNavVisible}
+            offsetTop={navOffsetTop}
+          >
             {renderNavigation({isMobileNavVisible})}
           </SidebarWrapper>
         )}
@@ -129,7 +136,7 @@ const MaxWidthContainer = styled('div')`
   flex: 1;
 `;
 
-const SidebarWrapper = styled('div')<{isVisible: boolean; offsetTop: number}>`
+const SidebarWrapper = styled('nav')<{isVisible: boolean; offsetTop: number}>`
   flex-shrink: 0;
   width: ${p => p.theme.settings.sidebarWidth};
   background: ${p => p.theme.background};
@@ -174,10 +181,10 @@ const Content = styled('div')`
   }
 
   /**
-   * PageContent is not normally used in settings but <PermissionDenied /> uses it under the hood.
-   * This prevents double padding.
+   * Layout.Page is not normally used in settings but <PermissionDenied /> uses
+   * it under the hood. This prevents double padding.
    */
-  ${PageContent} {
+  ${Layout.Page} {
     padding: 0;
   }
 `;

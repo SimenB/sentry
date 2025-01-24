@@ -1,13 +1,15 @@
-from base64 import b64encode
-
+import pytest
 from django.urls import reverse
 
-from sentry.models import ApiKey
-from sentry.testutils import APITestCase
-from sentry.testutils.silo import region_silo_test
+from sentry.models.apikey import ApiKey
+from sentry.silo.base import SiloMode
+from sentry.testutils.cases import APITestCase
+from sentry.testutils.silo import assume_test_silo_mode
+from sentry.testutils.skips import requires_snuba
+
+pytestmark = [pytest.mark.sentry_metrics, requires_snuba]
 
 
-@region_silo_test
 class OrganizationProjectsTestBase(APITestCase):
     endpoint = "sentry-api-0-organization-projects"
 
@@ -18,19 +20,21 @@ class OrganizationProjectsTestBase(APITestCase):
         ]
 
     def test_api_key(self):
-        key = ApiKey.objects.create(organization=self.organization, scope_list=["org:read"])
+        with assume_test_silo_mode(SiloMode.CONTROL):
+            key = ApiKey.objects.create(
+                organization_id=self.organization.id, scope_list=["org:read"]
+            )
 
         project = self.create_project(teams=[self.team])
 
         path = reverse(self.endpoint, args=[self.organization.slug])
         response = self.client.get(
             path,
-            HTTP_AUTHORIZATION=b"Basic " + b64encode(f"{key.key}:".encode()),
+            HTTP_AUTHORIZATION=self.create_basic_auth_header(key.key),
         )
         self.check_valid_response(response, [project])
 
 
-@region_silo_test
 class OrganizationProjectsTest(OrganizationProjectsTestBase):
     def setUp(self):
         super().setUp()
@@ -42,6 +46,22 @@ class OrganizationProjectsTest(OrganizationProjectsTestBase):
         response = self.get_success_response(self.organization.slug)
         self.check_valid_response(response, [project])
         assert self.client.session["activeorg"] == self.organization.slug
+
+    def test_superuser(self):
+        superuser = self.create_user(is_superuser=True)
+        self.login_as(user=superuser, superuser=True)
+        project = self.create_project(teams=[self.team])
+
+        response = self.get_success_response(self.organization.slug)
+        self.check_valid_response(response, [project])
+
+    def test_staff(self):
+        staff_user = self.create_user(is_staff=True)
+        self.login_as(user=staff_user, staff=True)
+        project = self.create_project(teams=[self.team])
+
+        response = self.get_success_response(self.organization.slug)
+        self.check_valid_response(response, [project])
 
     def test_with_stats(self):
         projects = [self.create_project(teams=[self.team])]
@@ -66,6 +86,70 @@ class OrganizationProjectsTest(OrganizationProjectsTestBase):
             self.organization.slug, qs_params={"statsPeriod": "48h"}, status_code=400
         )
 
+    def test_staff_with_stats(self):
+        projects = [self.create_project(teams=[self.team])]
+
+        # disable Open Membership
+        self.organization.flags.allow_joinleave = False
+        self.organization.save()
+
+        staff_user = self.create_user(is_staff=True)
+        self.login_as(user=staff_user, staff=True)
+
+        response = self.get_success_response(
+            self.organization.slug,
+            qs_params={"statsPeriod": "24h", "transactionStats": "1", "sessionStats": "1"},
+        )
+        self.check_valid_response(response, projects)
+
+        assert "stats" in response.data[0]
+        assert "transactionStats" in response.data[0]
+        assert "sessionStats" in response.data[0]
+
+    def test_superuser_with_stats(self):
+        projects = [self.create_project(teams=[self.team])]
+
+        # disable Open Membership
+        self.organization.flags.allow_joinleave = False
+        self.organization.save()
+
+        superuser = self.create_user(is_superuser=True)
+        self.login_as(user=superuser, superuser=True)
+
+        response = self.get_success_response(
+            self.organization.slug,
+            qs_params={"statsPeriod": "24h", "transactionStats": "1", "sessionStats": "1"},
+        )
+        self.check_valid_response(response, projects)
+
+        assert "stats" in response.data[0]
+        assert "transactionStats" in response.data[0]
+        assert "sessionStats" in response.data[0]
+
+    def test_no_stats_if_no_project_access(self):
+        projects = [self.create_project(teams=[self.team])]
+
+        # disable Open Membership
+        self.organization.flags.allow_joinleave = False
+        self.organization.save()
+
+        # user has no access to the first project
+        user_no_team = self.create_user(is_superuser=False)
+        self.create_member(
+            user=user_no_team, organization=self.organization, role="member", teams=[]
+        )
+        self.login_as(user_no_team)
+
+        response = self.get_success_response(
+            self.organization.slug,
+            qs_params={"statsPeriod": "24h", "transactionStats": "1", "sessionStats": "1"},
+        )
+        self.check_valid_response(response, projects)
+
+        assert "stats" not in response.data[0]
+        assert "transactionStats" not in response.data[0]
+        assert "sessionStats" not in response.data[0]
+
     def test_search(self):
         project = self.create_project(teams=[self.team], name="bar", slug="bar")
 
@@ -89,6 +173,13 @@ class OrganizationProjectsTest(OrganizationProjectsTestBase):
             self.organization.slug, qs_params={"query": f"id:{project_bar.id} id:{project_foo.id}"}
         )
         self.check_valid_response(response, [project_bar, project_foo])
+
+    def test_search_by_ids_invalid(self):
+        response = self.get_error_response(self.organization.slug, qs_params={"query": "id:"})
+        assert response.status_code == 400
+
+        response = self.get_error_response(self.organization.slug, qs_params={"query": "id:bababa"})
+        assert response.status_code == 400
 
     def test_search_by_slugs(self):
         project_bar = self.create_project(teams=[self.team], name="bar", slug="bar")
@@ -200,7 +291,7 @@ class OrganizationProjectsTest(OrganizationProjectsTestBase):
     def test_expand_context_options(self):
         self.project1 = self.create_project(slug="project-1", name="project 1", teams=[self.team])
         self.project2 = self.create_project(slug="project-2", name="project 2", teams=[self.team])
-        self.project1.update_option("sentry:spike_projection_config", True)
+        self.project1.update_option("quotas:spike-protection-disabled", True)
         self.project1.update_option("sentry:token", 1)
         self.project1.update_option("sentry:random", "hi")
 
@@ -211,18 +302,17 @@ class OrganizationProjectsTest(OrganizationProjectsTestBase):
         response = self.get_success_response(
             self.organization.slug,
             qs_params={
-                "options": ["sentry:spike_projection_config", "sentry:token", "sentry:random"]
+                "options": ["quotas:spike-protection-disabled", "sentry:token", "sentry:random"]
             },
         )
 
         assert response.data[0]["options"] == {
-            "sentry:spike_projection_config": True,
+            "quotas:spike-protection-disabled": True,
             "sentry:token": 1,
         }
         assert not response.data[1].get("options")
 
 
-@region_silo_test
 class OrganizationProjectsCountTest(APITestCase):
     endpoint = "sentry-api-0-organization-projects-count"
 

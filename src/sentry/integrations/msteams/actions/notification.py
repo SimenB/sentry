@@ -1,13 +1,18 @@
 from __future__ import annotations
 
-from django.db.models import QuerySet
-
+from sentry.eventstore.models import GroupEvent
+from sentry.integrations.messaging.metrics import (
+    MessagingInteractionEvent,
+    MessagingInteractionType,
+)
 from sentry.integrations.msteams.actions.form import MsTeamsNotifyServiceForm
 from sentry.integrations.msteams.card_builder.issues import MSTeamsIssueMessageBuilder
 from sentry.integrations.msteams.client import MsTeamsClient
+from sentry.integrations.msteams.spec import MsTeamsMessagingSpec
 from sentry.integrations.msteams.utils import get_channel_id
-from sentry.models import Integration
+from sentry.integrations.services.integration import RpcIntegration
 from sentry.rules.actions import IntegrationEventAction
+from sentry.shared_integrations.exceptions import ApiError
 from sentry.utils import metrics
 
 
@@ -29,29 +34,38 @@ class MsTeamsNotifyServiceAction(IntegrationEventAction):
             "channel": {"type": "string", "placeholder": "i.e. General, Jane Schmidt"},
         }
 
-    def get_integrations(self) -> QuerySet[Integration]:
+    def get_integrations(self) -> list[RpcIntegration]:
         # NOTE: We exclude installations of `tenant` type to NOT show up in the team choices dropdown in alert rule actions
         # as currently, there is no way to query the API for users or channels within a `tenant` to send alerts to.
-        return (
-            super().get_integrations().exclude(metadata__contains={"installation_type": "tenant"})
-        )
+        return [
+            a for a in super().get_integrations() if a.metadata.get("installation_type") != "tenant"
+        ]
 
-    def after(self, event, state):
+    def after(self, event: GroupEvent, notification_uuid: str | None = None):
         channel = self.get_option("channel_id")
 
-        try:
-            integration = self.get_integration()
-        except Integration.DoesNotExist:
+        integration = self.get_integration()
+        if not integration:
             return
 
         def send_notification(event, futures):
             rules = [f.rule for f in futures]
             card = MSTeamsIssueMessageBuilder(
                 event.group, event, rules, integration
-            ).build_group_card()
+            ).build_group_card(notification_uuid=notification_uuid)
 
             client = MsTeamsClient(integration)
-            client.send_card(channel, card)
+            with MessagingInteractionEvent(
+                interaction_type=MessagingInteractionType.SEND_ISSUE_ALERT_NOTIFICATION,
+                spec=MsTeamsMessagingSpec(),
+            ).capture() as lifecycle:
+                lifecycle.add_extras({"integration_id": integration.id, "channel": channel})
+                try:
+                    client.send_card(channel, card)
+                except ApiError as e:
+                    lifecycle.record_failure(e)
+            rule = rules[0] if rules else None
+            self.record_notification_sent(event, channel, rule, notification_uuid)
 
         key = f"msteams:{integration.id}:{channel}"
 

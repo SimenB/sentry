@@ -1,29 +1,37 @@
 import {forwardRef} from 'react';
 import {useTheme} from '@emotion/react';
 
-import {Aliases, Color, IconSize} from 'sentry/utils/theme';
+import type {Aliases, Color, IconSize} from 'sentry/utils/theme';
+
+import {useIconDefaults} from './useIconDefaults';
 
 export interface SVGIconProps extends React.SVGAttributes<SVGSVGElement> {
   className?: string;
-  color?: Color | keyof Aliases;
-  // TODO (Priscila): make size prop theme icon size only
-  size?: IconSize | string;
+  color?: Color | keyof Aliases | 'currentColor';
+  /**
+   * DO NOT USE THIS! Please use the `size` prop
+   *
+   * @deprecated
+   */
+  legacySize?: string;
+  size?: IconSize;
 }
 
-export const SvgIcon = forwardRef<SVGSVGElement, SVGIconProps>(function SvgIcon(
-  {
+export const SvgIcon = forwardRef<SVGSVGElement, SVGIconProps>((props, ref) => {
+  const {
     color: providedColor = 'currentColor',
     size: providedSize = 'sm',
     viewBox = '0 0 16 16',
-    ...props
-  },
-  ref
-) {
+    legacySize,
+    ...rest
+  } = useIconDefaults(props);
+
   const theme = useTheme();
+  // @ts-expect-error TS(7053): Element implicitly has an 'any' type because expre... Remove this comment to see the full error message
   const color = theme[providedColor] ?? providedColor;
-  const size = theme.iconSizes[providedSize] ?? providedSize;
+  const size = legacySize ?? theme.iconSizes[providedSize];
 
   return (
-    <svg {...props} viewBox={viewBox} fill={color} height={size} width={size} ref={ref} />
+    <svg {...rest} viewBox={viewBox} fill={color} height={size} width={size} ref={ref} />
   );
 });

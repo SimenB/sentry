@@ -4,23 +4,23 @@ import styled from '@emotion/styled';
 import {addErrorMessage, addSuccessMessage} from 'sentry/actionCreators/indicator';
 import {fetchOrganizationDetails} from 'sentry/actionCreators/organizations';
 import {joinTeam, leaveTeam} from 'sentry/actionCreators/teams';
-import {Client} from 'sentry/api';
-import Button from 'sentry/components/button';
+import type {Client} from 'sentry/api';
+import {Button} from 'sentry/components/button';
 import IdBadge from 'sentry/components/idBadge';
 import Link from 'sentry/components/links/link';
-import {PanelItem} from 'sentry/components/panels';
+import PanelItem from 'sentry/components/panels/panelItem';
 import {t, tct, tn} from 'sentry/locale';
 import TeamStore from 'sentry/stores/teamStore';
-import space from 'sentry/styles/space';
-import {Organization, Team} from 'sentry/types';
+import {space} from 'sentry/styles/space';
+import type {Organization, Team} from 'sentry/types/organization';
 import withApi from 'sentry/utils/withApi';
+import {getButtonHelpText} from 'sentry/views/settings/organizationTeams/utils';
 
 type Props = {
   api: Client;
   openMembership: boolean;
   organization: Organization;
   team: Team;
-  urlPrefix: string;
 };
 
 type State = {
@@ -168,10 +168,6 @@ class AllTeamsRow extends Component<Props, State> {
 
   getTeamRoleName = () => {
     const {organization, team} = this.props;
-    if (!organization.features.includes('team-roles') || !team.teamRole) {
-      return null;
-    }
-
     const {teamRoleList} = organization;
     const roleName = teamRoleList.find(r => r.id === team.teamRole)?.name;
 
@@ -179,7 +175,14 @@ class AllTeamsRow extends Component<Props, State> {
   };
 
   render() {
-    const {team, urlPrefix, openMembership} = this.props;
+    const {team, openMembership, organization} = this.props;
+    const urlPrefix = `/settings/${organization.slug}/teams/`;
+
+    // TODO(team-roles): team admins can also manage membership
+    // org:admin is a unique scope that only org owners have
+    const isIdpProvisioned = team.flags['idp:provisioned'];
+
+    const buttonHelpText = getButtonHelpText(isIdpProvisioned);
 
     const display = (
       <IdBadge
@@ -193,25 +196,33 @@ class AllTeamsRow extends Component<Props, State> {
     // for your role + org open membership
     const canViewTeam = team.hasAccess;
 
+    const teamRoleName = this.getTeamRoleName();
+    const isDisabled = isIdpProvisioned;
+
     return (
       <TeamPanelItem>
         <div>
           {canViewTeam ? (
-            <TeamLink data-test-id="team-link" to={`${urlPrefix}teams/${team.slug}/`}>
+            <TeamLink data-test-id="team-link" to={`${urlPrefix}${team.slug}/`}>
               {display}
             </TeamLink>
           ) : (
             display
           )}
         </div>
-        <div>{this.getTeamRoleName()}</div>
+        <DisplayRole isHidden={teamRoleName === null}>{teamRoleName}</DisplayRole>
         <div>
           {this.state.loading ? (
             <Button size="sm" disabled>
               ...
             </Button>
           ) : team.isMember ? (
-            <Button size="sm" onClick={this.handleLeaveTeam}>
+            <Button
+              size="sm"
+              onClick={this.handleLeaveTeam}
+              disabled={isDisabled}
+              title={buttonHelpText}
+            >
               {t('Leave Team')}
             </Button>
           ) : team.isPending ? (
@@ -225,11 +236,21 @@ class AllTeamsRow extends Component<Props, State> {
               {t('Request Pending')}
             </Button>
           ) : openMembership ? (
-            <Button size="sm" onClick={this.handleJoinTeam}>
+            <Button
+              size="sm"
+              onClick={this.handleJoinTeam}
+              disabled={isDisabled}
+              title={buttonHelpText}
+            >
               {t('Join Team')}
             </Button>
           ) : (
-            <Button size="sm" onClick={this.handleRequestAccess}>
+            <Button
+              size="sm"
+              onClick={this.handleRequestAccess}
+              disabled={isDisabled}
+              title={buttonHelpText}
+            >
               {t('Request Access')}
             </Button>
           )}
@@ -242,7 +263,7 @@ class AllTeamsRow extends Component<Props, State> {
 const TeamLink = styled(Link)`
   display: inline-block;
 
-  &.focus-visible {
+  &:focus-visible {
     margin: -${space(1)};
     padding: ${space(1)};
     background: #f2eff5;
@@ -254,13 +275,21 @@ const TeamLink = styled(Link)`
 export {AllTeamsRow};
 export default withApi(AllTeamsRow);
 
-const TeamPanelItem = styled(PanelItem)`
+export const GRID_TEMPLATE = `
   display: grid;
-  grid-template-columns: minmax(150px, 4fr) minmax(90px, 1fr) min-content;
-  gap: ${space(2)};
+  grid-template-columns: minmax(150px, 4fr) minmax(0px, 100px) 125px minmax(150px, 1fr);
+  gap: ${space(1)};
+`;
+
+const TeamPanelItem = styled(PanelItem)`
+  ${GRID_TEMPLATE}
   align-items: center;
 
   > div:last-child {
     margin-left: auto;
   }
+`;
+
+const DisplayRole = styled('div')<{isHidden: boolean}>`
+  display: ${props => (props.isHidden ? 'none' : 'block')};
 `;

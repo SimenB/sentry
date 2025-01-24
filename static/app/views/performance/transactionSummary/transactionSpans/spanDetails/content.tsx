@@ -1,25 +1,24 @@
-import {Fragment, useEffect} from 'react';
-import styled from '@emotion/styled';
-import {setTag} from '@sentry/react';
-import {Location} from 'history';
+import {Fragment} from 'react';
+import type {Location} from 'history';
 
 import Feature from 'sentry/components/acl/feature';
 import IdBadge from 'sentry/components/idBadge';
 import * as Layout from 'sentry/components/layouts/thirds';
-import space from 'sentry/styles/space';
-import {Organization, Project} from 'sentry/types';
-import trackAdvancedAnalyticsEvent from 'sentry/utils/analytics/trackAdvancedAnalyticsEvent';
+import type {Organization} from 'sentry/types/organization';
+import type {Project} from 'sentry/types/project';
 import DiscoverQuery from 'sentry/utils/discover/discoverQuery';
-import EventView from 'sentry/utils/discover/eventView';
-import SpanExamplesQuery, {
-  ChildrenProps as SpanExamplesProps,
-} from 'sentry/utils/performance/suspectSpans/spanExamplesQuery';
-import SuspectSpansQuery, {
-  ChildrenProps as SuspectSpansProps,
-} from 'sentry/utils/performance/suspectSpans/suspectSpansQuery';
-import {SpanSlug} from 'sentry/utils/performance/suspectSpans/types';
+import type EventView from 'sentry/utils/discover/eventView';
+import type {ChildrenProps as SpanExamplesProps} from 'sentry/utils/performance/suspectSpans/spanExamplesQuery';
+import SpanExamplesQuery from 'sentry/utils/performance/suspectSpans/spanExamplesQuery';
+import type {ChildrenProps as SuspectSpansProps} from 'sentry/utils/performance/suspectSpans/suspectSpansQuery';
+import SuspectSpansQuery from 'sentry/utils/performance/suspectSpans/suspectSpansQuery';
+import type {SpanSlug} from 'sentry/utils/performance/suspectSpans/types';
+import {setGroupedEntityTag} from 'sentry/utils/performanceForSentry';
 import {decodeScalar} from 'sentry/utils/queryString';
+import useRouteAnalyticsEventNames from 'sentry/utils/routeAnalytics/useRouteAnalyticsEventNames';
+import useRouteAnalyticsParams from 'sentry/utils/routeAnalytics/useRouteAnalyticsParams';
 import Breadcrumb from 'sentry/views/performance/breadcrumb';
+import SpanSummary from 'sentry/views/performance/transactionSummary/transactionSpans/spanSummary/content';
 import {getSelectedProjectPlatforms} from 'sentry/views/performance/utils';
 
 import Tab from '../../tabs';
@@ -46,14 +45,23 @@ export default function SpanDetailsContentWrapper(props: Props) {
   const minExclusiveTime = decodeScalar(location.query[ZoomKeys.MIN]);
   const maxExclusiveTime = decodeScalar(location.query[ZoomKeys.MAX]);
 
-  useEffect(() => {
-    if (project) {
-      trackAdvancedAnalyticsEvent('performance_views.span_summary.view', {
-        organization,
-        project_platforms: getSelectedProjectPlatforms(location, [project]),
-      });
-    }
-  }, [organization, project, location]);
+  // customize the route analytics event we send
+  useRouteAnalyticsEventNames(
+    'performance_views.span_summary.view',
+    'Performance Views: Span Summary page viewed'
+  );
+  useRouteAnalyticsParams({
+    project_platforms: project ? getSelectedProjectPlatforms(location, [project]) : '',
+  });
+
+  const hasNewSpansUIFlag =
+    organization.features.includes('performance-spans-new-ui') &&
+    organization.features.includes('insights-initial-modules');
+
+  // TODO: When this feature is rolled out to GA, we will no longer need the entire `spanDetails` directory and can switch to `spanSummary`
+  if (hasNewSpansUIFlag) {
+    return <SpanSummary {...props} />;
+  }
 
   return (
     <Fragment>
@@ -66,21 +74,19 @@ export default function SpanDetailsContentWrapper(props: Props) {
               project: project?.id ?? '',
               name: transactionName,
             }}
-            tab={Tab.Spans}
+            tab={Tab.SPANS}
             spanSlug={spanSlug}
           />
           <Layout.Title>
-            <TransactionName>
-              {project && (
-                <IdBadge
-                  project={project}
-                  avatarSize={28}
-                  hideName
-                  avatarProps={{hasTooltip: true, tooltip: project.slug}}
-                />
-              )}
-              {transactionName}
-            </TransactionName>
+            {project && (
+              <IdBadge
+                project={project}
+                avatarSize={28}
+                hideName
+                avatarProps={{hasTooltip: true, tooltip: project.slug}}
+              />
+            )}
+            {transactionName}
           </Layout.Title>
         </Layout.HeaderContent>
       </Layout.Header>
@@ -93,18 +99,13 @@ export default function SpanDetailsContentWrapper(props: Props) {
             referrer="api.performance.transaction-spans"
             cursor="0:0:1"
             noPagination
-            useEvents
           >
             {({tableData}) => {
               const totalCount: number | null =
                 (tableData?.data?.[0]?.['count()'] as number) ?? null;
 
               if (totalCount) {
-                setTag('spans.totalCount', totalCount);
-                const countGroup = [
-                  1, 5, 10, 20, 50, 100, 200, 300, 400, 500, 600, 700, 800, 900, 1000,
-                ].find(n => totalCount <= n);
-                setTag('spans.totalCount.grouped', `<=${countGroup}`);
+                setGroupedEntityTag('spans.totalCount', 1000, totalCount);
               }
 
               return (
@@ -155,13 +156,6 @@ export default function SpanDetailsContentWrapper(props: Props) {
   );
 }
 
-const TransactionName = styled('div')`
-  display: grid;
-  grid-template-columns: max-content 1fr;
-  grid-column-gap: ${space(1)};
-  align-items: center;
-`;
-
 type ContentProps = {
   eventView: EventView;
   location: Location;
@@ -194,7 +188,7 @@ function SpanDetailsContent(props: ContentProps) {
 
   return (
     <Fragment>
-      <Feature features={['performance-span-histogram-view']}>
+      <Feature features="performance-span-histogram-view">
         <SpanDetailsControls
           organization={organization}
           location={location}

@@ -1,10 +1,10 @@
 import {Component} from 'react';
 
-import {Client} from 'sentry/api';
+import type {Client} from 'sentry/api';
 import MiniBarChart from 'sentry/components/charts/miniBarChart';
 import LoadingError from 'sentry/components/loadingError';
 import LoadingIndicator from 'sentry/components/loadingIndicator';
-import {TimeseriesValue} from 'sentry/types';
+import type {TimeseriesValue} from 'sentry/types/core';
 import theme from 'sentry/utils/theme';
 import withApi from 'sentry/utils/withApi';
 
@@ -33,11 +33,11 @@ type State = {
 class ApiChart extends Component<Props, State> {
   state: State = initialState;
 
-  componentWillMount() {
+  UNSAFE_componentWillMount() {
     this.fetchData();
   }
 
-  componentWillReceiveProps(nextProps: Props) {
+  UNSAFE_componentWillReceiveProps(nextProps: Props) {
     if (this.props.since !== nextProps.since) {
       this.setState(initialState, this.fetchData);
     }
@@ -98,17 +98,17 @@ class ApiChart extends Component<Props, State> {
     return [
       {
         seriesName: '2xx',
-        data: this.processRawSeries(rawData['client-api.all-versions.responses.2xx']),
+        data: this.processRawSeries(rawData['client-api.all-versions.responses.2xx']!),
         color: theme.green200,
       },
       {
         seriesName: '4xx',
-        data: this.processRawSeries(rawData['client-api.all-versions.responses.4xx']),
+        data: this.processRawSeries(rawData['client-api.all-versions.responses.4xx']!),
         color: theme.blue300,
       },
       {
         seriesName: '5xx',
-        data: this.processRawSeries(rawData['client-api.all-versions.responses.5xx']),
+        data: this.processRawSeries(rawData['client-api.all-versions.responses.5xx']!),
         color: theme.red200,
       },
     ];

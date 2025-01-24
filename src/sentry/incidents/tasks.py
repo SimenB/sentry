@@ -1,114 +1,41 @@
+from __future__ import annotations
+
 import logging
-from urllib.parse import urlencode
+from typing import Any
 
-from django.urls import reverse
-
-from sentry.auth.access import from_user
-from sentry.incidents.models import (
-    INCIDENT_STATUS,
+from sentry.incidents.models.alert_rule import (
     AlertRuleStatus,
-    AlertRuleTrigger,
     AlertRuleTriggerAction,
+    AlertRuleTriggerActionMethod,
+)
+from sentry.incidents.models.incident import (
     Incident,
     IncidentActivity,
-    IncidentActivityType,
     IncidentStatus,
     IncidentStatusMethod,
 )
-from sentry.models import Project
+from sentry.incidents.utils.constants import (
+    INCIDENTS_SNUBA_SUBSCRIPTION_TYPE,
+    SUBSCRIPTION_METRICS_LOGGER,
+)
+from sentry.incidents.utils.types import QuerySubscriptionUpdate
+from sentry.models.project import Project
+from sentry.silo.base import SiloMode
 from sentry.snuba.dataset import Dataset
-from sentry.snuba.query_subscription_consumer import register_subscriber
+from sentry.snuba.models import QuerySubscription
+from sentry.snuba.query_subscriptions.consumer import register_subscriber
 from sentry.tasks.base import instrumented_task
 from sentry.utils import metrics
-from sentry.utils.email import MessageBuilder
-from sentry.utils.http import absolute_uri
 
 logger = logging.getLogger(__name__)
 
-INCIDENTS_SNUBA_SUBSCRIPTION_TYPE = "incidents"
-INCIDENT_SNAPSHOT_BATCH_SIZE = 50
-SUBSCRIPTION_METRICS_LOGGER = "subscription_metrics_logger"
-
-
-@instrumented_task(name="sentry.incidents.tasks.send_subscriber_notifications", queue="incidents")
-def send_subscriber_notifications(activity_id):
-    from sentry.incidents.logic import get_incident_subscribers, unsubscribe_from_incident
-
-    try:
-        activity = IncidentActivity.objects.select_related(
-            "incident", "user", "incident__organization"
-        ).get(id=activity_id)
-    except IncidentActivity.DoesNotExist:
-        return
-
-    # Only send notifications for specific activity types.
-    if activity.type not in (
-        IncidentActivityType.COMMENT.value,
-        IncidentActivityType.STATUS_CHANGE.value,
-    ):
-        return
-
-    # Check that the user still has access to at least one of the projects
-    # related to the incident. If not then unsubscribe them.
-    projects = list(activity.incident.projects.all())
-    for subscriber in get_incident_subscribers(activity.incident).select_related("user"):
-        user = subscriber.user
-        access = from_user(user, activity.incident.organization)
-        if not any(project for project in projects if access.has_project_access(project)):
-            unsubscribe_from_incident(activity.incident, user)
-        elif user != activity.user:
-            msg = generate_incident_activity_email(activity, user)
-            msg.send_async([user.email])
-
-
-def generate_incident_activity_email(activity, user):
-    incident = activity.incident
-    return MessageBuilder(
-        subject=f"Activity on Alert {incident.title} (#{incident.identifier})",
-        template="sentry/emails/incidents/activity.txt",
-        html_template="sentry/emails/incidents/activity.html",
-        type="incident.activity",
-        context=build_activity_context(activity, user),
-    )
-
-
-def build_activity_context(activity, user):
-    if activity.type == IncidentActivityType.COMMENT.value:
-        action = "left a comment"
-    else:
-        action = "changed status from {} to {}".format(
-            INCIDENT_STATUS[IncidentStatus(int(activity.previous_value))],
-            INCIDENT_STATUS[IncidentStatus(int(activity.value))],
-        )
-    incident = activity.incident
-
-    action = f"{action} on alert {incident.title} (#{incident.identifier})"
-
-    return {
-        "user_name": activity.user.name if activity.user else "Sentry",
-        "action": action,
-        "link": absolute_uri(
-            reverse(
-                "sentry-metric-alert",
-                kwargs={
-                    "organization_slug": incident.organization.slug,
-                    "incident_id": incident.identifier,
-                },
-            )
-        )
-        + "?"
-        + urlencode({"referrer": "incident_activity_email"}),
-        "comment": activity.comment,
-    }
-
 
 @register_subscriber(SUBSCRIPTION_METRICS_LOGGER)
-def handle_subscription_metrics_logger(subscription_update, subscription):
+def handle_subscription_metrics_logger(
+    subscription_update: QuerySubscriptionUpdate, subscription: QuerySubscription
+) -> None:
     """
     Logs results from a `QuerySubscription`.
-    :param subscription_update: dict formatted according to schemas in
-    sentry.snuba.json_schemas.SUBSCRIPTION_PAYLOAD_VERSIONS
-    :param subscription: The `QuerySubscription` that this update is for
     """
     from sentry.incidents.subscription_processor import SubscriptionProcessor
 
@@ -116,7 +43,7 @@ def handle_subscription_metrics_logger(subscription_update, subscription):
         if subscription.snuba_query.dataset == Dataset.Metrics.value:
             processor = SubscriptionProcessor(subscription)
             # XXX: Temporary hack so that we can extract these values without raising an exception
-            processor.reset_trigger_counts = lambda *arg, **kwargs: None
+            processor.reset_trigger_counts = lambda *arg, **kwargs: None  # type: ignore[method-assign]
             aggregation_value = processor.get_aggregation_value(subscription_update)
 
             logger.info(
@@ -134,12 +61,11 @@ def handle_subscription_metrics_logger(subscription_update, subscription):
 
 
 @register_subscriber(INCIDENTS_SNUBA_SUBSCRIPTION_TYPE)
-def handle_snuba_query_update(subscription_update, subscription):
+def handle_snuba_query_update(
+    subscription_update: QuerySubscriptionUpdate, subscription: QuerySubscription
+) -> None:
     """
     Handles a subscription update for a `QuerySubscription`.
-    :param subscription_update: dict formatted according to schemas in
-    sentry.snuba.json_schemas.SUBSCRIPTION_PAYLOAD_VERSIONS
-    :param subscription: The `QuerySubscription` that this update is for
     """
     from sentry.incidents.subscription_processor import SubscriptionProcessor
 
@@ -153,10 +79,17 @@ def handle_snuba_query_update(subscription_update, subscription):
     queue="incidents",
     default_retry_delay=60,
     max_retries=5,
+    silo_mode=SiloMode.REGION,
 )
-def handle_trigger_action(action_id, incident_id, project_id, method, metric_value=None, **kwargs):
-    from sentry.incidents.logic import CRITICAL_TRIGGER_LABEL, WARNING_TRIGGER_LABEL
-
+def handle_trigger_action(
+    action_id: int,
+    incident_id: int,
+    project_id: int,
+    method: AlertRuleTriggerActionMethod,
+    new_status: int,
+    metric_value: int | None = None,
+    **kwargs: Any,
+) -> None:
     try:
         action = AlertRuleTriggerAction.objects.select_related(
             "alert_rule_trigger", "alert_rule_trigger__alert_rule"
@@ -177,32 +110,26 @@ def handle_trigger_action(action_id, incident_id, project_id, method, metric_val
         metrics.incr("incidents.alert_rules.action.skipping_missing_project")
         return
 
+    incident_activity = (
+        IncidentActivity.objects.filter(incident=incident, value=new_status).order_by("-id").first()
+    )
+    notification_uuid = str(incident_activity.notification_uuid) if incident_activity else None
+    if notification_uuid is None:
+        metrics.incr("incidents.alert_rules.action.incident_activity_missing")
+
     metrics.incr(
         "incidents.alert_rules.action.{}.{}".format(
             AlertRuleTriggerAction.Type(action.type).name.lower(), method
         )
     )
-    if method == "resolve":
-        if (
-            action.alert_rule_trigger.label == CRITICAL_TRIGGER_LABEL
-            and AlertRuleTrigger.objects.filter(
-                alert_rule=action.alert_rule_trigger.alert_rule,
-                label=WARNING_TRIGGER_LABEL,
-            ).exists()
-        ):
-            # If we're resolving a critical trigger and a warning exists then we want to treat this
-            # as if firing a warning, rather than resolving this trigger
-            new_status = IncidentStatus.WARNING
-        else:
-            new_status = IncidentStatus.CLOSED
-    else:
-        if action.alert_rule_trigger.label == CRITICAL_TRIGGER_LABEL:
-            new_status = IncidentStatus.CRITICAL
-        else:
-            new_status = IncidentStatus.WARNING
 
     getattr(action, method)(
-        action, incident, project, metric_value=metric_value, new_status=new_status
+        action,
+        incident,
+        project,
+        metric_value=metric_value,
+        new_status=IncidentStatus(new_status),
+        notification_uuid=notification_uuid,
     )
 
 
@@ -211,10 +138,11 @@ def handle_trigger_action(action_id, incident_id, project_id, method, metric_val
     queue="incidents",
     default_retry_delay=60,
     max_retries=2,
+    silo_mode=SiloMode.REGION,
 )
-def auto_resolve_snapshot_incidents(alert_rule_id, **kwargs):
+def auto_resolve_snapshot_incidents(alert_rule_id: int, **kwargs: Any) -> None:
     from sentry.incidents.logic import update_incident_status
-    from sentry.incidents.models import AlertRule
+    from sentry.incidents.models.alert_rule import AlertRule
 
     try:
         alert_rule = AlertRule.objects_with_snapshots.get(id=alert_rule_id)
@@ -235,7 +163,6 @@ def auto_resolve_snapshot_incidents(alert_rule_id, **kwargs):
             update_incident_status(
                 incident,
                 IncidentStatus.CLOSED,
-                comment="This alert has been auto-resolved because the rule that triggered it has been modified or deleted.",
                 status_method=IncidentStatusMethod.RULE_UPDATED,
             )
 

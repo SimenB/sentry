@@ -1,20 +1,26 @@
 import logging
 import time
 from base64 import b64encode
+from urllib.parse import urlencode
 
-from django.http import HttpResponse, HttpResponseRedirect
-from django.utils.translation import ugettext as _
-from rest_framework.request import Request
-from rest_framework.response import Response
+from django.http import HttpRequest, HttpResponse, HttpResponseRedirect
+from django.urls import reverse
+from django.utils import timezone
+from django.utils.translation import gettext as _
 
 from sentry import options
 from sentry import ratelimits as ratelimiter
 from sentry.auth.authenticators.sms import SMSRateLimitExceeded
 from sentry.auth.authenticators.u2f import U2fInterface
-from sentry.models import Authenticator
+from sentry.silo.base import control_silo_function
+from sentry.users.models.authenticator import Authenticator
 from sentry.utils import auth, json
+from sentry.utils.email import MessageBuilder
+from sentry.utils.geo import geo_by_addr
+from sentry.utils.http import absolute_uri
+from sentry.web.client_config import get_client_config
 from sentry.web.forms.accounts import TwoFactorForm
-from sentry.web.frontend.base import BaseView
+from sentry.web.frontend.base import BaseView, control_silo_view
 from sentry.web.helpers import render_to_response
 
 COOKIE_NAME = "s2fai"
@@ -22,11 +28,42 @@ COOKIE_MAX_AGE = 60 * 60 * 24 * 31
 
 logger = logging.getLogger(__name__)
 
+MFA_RATE_LIMITS = {
+    "auth-2fa:user:{user_id}": {
+        "limit": 5,
+        "window": 20,
+    },
+    "auth-2fa-long:user:{user_id}": {
+        "limit": 20,
+        "window": 60 * 60,
+    },
+}
 
+
+def is_rate_limited(user_id: int) -> bool:
+    result = False
+    for key_template, rl in MFA_RATE_LIMITS.items():
+        result = result or ratelimiter.backend.is_limited(
+            key_template.format(user_id=user_id),
+            limit=rl["limit"],
+            window=rl["window"],
+        )
+    return result
+
+
+def reset_2fa_rate_limits(user_id: int):
+    for key_template, rl in MFA_RATE_LIMITS.items():
+        ratelimiter.backend.reset(
+            key_template.format(user_id=user_id),
+            window=rl["window"],
+        )
+
+
+@control_silo_view
 class TwoFactorAuthView(BaseView):
     auth_required = False
 
-    def perform_signin(self, request: Request, user, interface=None):
+    def perform_signin(self, request: HttpRequest, user, interface=None):
         assert auth.login(request, user, passed_2fa=True)
         rv = HttpResponseRedirect(auth.get_login_redirect(request))
         if interface is not None:
@@ -34,18 +71,18 @@ class TwoFactorAuthView(BaseView):
             if not interface.is_backup_interface:
                 rv.set_cookie(
                     COOKIE_NAME,
-                    str(interface.type).encode("utf-8"),
+                    str(interface.type),
                     max_age=COOKIE_MAX_AGE,
                     path="/",
                 )
         return rv
 
-    def fail_signin(self, request: Request, user, form):
+    def fail_signin(self, request: HttpRequest, user, form):
         # Ladies and gentlemen: the world's second-worst bruteforce prevention.
         time.sleep(2.0)
         form.errors["__all__"] = [_("Invalid confirmation code. Try again.")]
 
-    def negotiate_interface(self, request: Request, interfaces):
+    def negotiate_interface(self, request: HttpRequest, interfaces):
         # If there is only one interface, just pick that one.
         if len(interfaces) == 1:
             return interfaces[0]
@@ -106,7 +143,31 @@ class TwoFactorAuthView(BaseView):
             ):
                 return interface
 
-    def handle(self, request: Request) -> Response:
+    def send_notification_email(self, email, ip_address):
+        recover_uri = "{path}?{query}".format(
+            path=reverse("sentry-account-recover"), query=urlencode({"email": email})
+        )
+        context = {
+            "datetime": timezone.now(),
+            "email": email,
+            "geo": geo_by_addr(ip_address),
+            "ip_address": ip_address,
+            "url": absolute_uri(reverse("sentry-account-settings-security")),
+            "recover_url": absolute_uri(recover_uri),
+        }
+
+        subject = "Suspicious Activity Detected"
+        template = "mfa-too-many-attempts"
+        msg = MessageBuilder(
+            subject="{}{}".format(options.get("mail.subject-prefix"), subject),
+            template=f"sentry/emails/{template}.txt",
+            html_template=f"sentry/emails/{template}.html",
+            type="user.mfa-too-many-attempts",
+            context=context,
+        )
+        msg.send_async([email])
+
+    def handle(self, request: HttpRequest) -> HttpResponse:
         user = auth.get_pending_2fa_user(request)
         if user is None:
             return HttpResponseRedirect(auth.get_login_url())
@@ -121,11 +182,15 @@ class TwoFactorAuthView(BaseView):
         challenge = activation = None
         interface = self.negotiate_interface(request, interfaces)
 
-        if request.method == "POST" and ratelimiter.is_limited(
-            f"auth-2fa:user:{user.id}", limit=5, window=60
-        ):
-            # TODO: Maybe email the account owner or do something to notify someone
-            # This would probably be good for them to know.
+        if request.method == "POST" and is_rate_limited(user.id):
+            # prevent spamming due to failed 2FA attempts
+            if not ratelimiter.backend.is_limited(
+                f"auth-2fa-failed-notification:user:{user.id}", limit=1, window=30 * 60
+            ):
+                self.send_notification_email(
+                    email=user.username, ip_address=request.META["REMOTE_ADDR"]
+                )
+
             return HttpResponse(
                 "You have made too many 2FA attempts. Please try again later.",
                 content_type="text/plain",
@@ -185,12 +250,14 @@ class TwoFactorAuthView(BaseView):
                 "interface": interface,
                 "other_interfaces": self.get_other_interfaces(interface, interfaces),
                 "activation": activation,
+                "react_config": get_client_config(request, self.active_organization),
             },
             request,
             status=200,
         )
 
 
+@control_silo_function
 def u2f_appid(request):
     facets = options.get("u2f.facets")
     if not facets:

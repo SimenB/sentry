@@ -1,13 +1,15 @@
-from typing import List
-
+from django.contrib.auth.models import AnonymousUser
 from rest_framework import serializers
 from rest_framework.request import Request
 
 from sentry import analytics
+from sentry.api.api_owners import ApiOwner
+from sentry.api.api_publish_status import ApiPublishStatus
 from sentry.api.base import region_silo_endpoint
 from sentry.api.bases.organization import OrganizationEndpoint
 from sentry.api.serializers.rest_framework.base import CamelSnakeSerializer
-from sentry.models import Organization, User
+from sentry.models.organization import Organization
+from sentry.users.models.user import User
 from sentry.utils.email import MessageBuilder
 from sentry.utils.strings import oxfordize_list
 
@@ -18,11 +20,13 @@ class OnboardingContinuationSerializer(CamelSnakeSerializer):
     )
 
 
-def get_request_builder_args(user: User, organization: Organization, platforms: List[str]):
+def get_request_builder_args(user: User, organization: Organization, platforms: list[str]):
     num_platforms = len(platforms)
     context = {
         "recipient_name": user.get_display_name(),
-        "onboarding_link": f"/onboarding/{organization.slug}/?referrer=onboarding_continuation-email",
+        "onboarding_link": organization.absolute_url(
+            f"/onboarding/{organization.slug}/", query="referrer=onboarding_continuation-email"
+        ),
         "organization_name": organization.name,
         "num_platforms": num_platforms,
         "platforms": oxfordize_list(platforms),
@@ -38,7 +42,10 @@ def get_request_builder_args(user: User, organization: Organization, platforms: 
 
 @region_silo_endpoint
 class OrganizationOnboardingContinuationEmail(OrganizationEndpoint):
-    private = True
+    publish_status = {
+        "POST": ApiPublishStatus.PRIVATE,
+    }
+    owner = ApiOwner.TELEMETRY_EXPERIENCE
     # let anyone in the org use this endpoint
     permission_classes = ()
 
@@ -46,6 +53,8 @@ class OrganizationOnboardingContinuationEmail(OrganizationEndpoint):
         serializer = OnboardingContinuationSerializer(data=request.data)
         if not serializer.is_valid():
             return self.respond(serializer.errors, status=400)
+        if isinstance(request.user, AnonymousUser):
+            return self.respond(status=401)
 
         msg = MessageBuilder(
             **get_request_builder_args(

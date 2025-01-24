@@ -1,4 +1,5 @@
-import {Reducer, ReducerAction, useReducer} from 'react';
+import type {Reducer, ReducerAction} from 'react';
+import {useReducer} from 'react';
 
 type ReducersObject<S = any, A = any> = {
   [K in keyof S]: Reducer<S, A>;
@@ -18,26 +19,26 @@ type ReducerFromReducersObject<M> = M extends {
     : never
   : never;
 
-type AllReducerAction<M> = M extends ReducersObject
+type ReducerActions<M> = M extends ReducersObject
   ? ReducerAction<ReducerFromReducersObject<M>>
   : never;
 
 type CombinedState<S> = {} & S;
 export type CombinedReducer<M extends ReducersObject> = Reducer<
   CombinedState<ReducersState<M>>,
-  AllReducerAction<M>
+  ReducerActions<M>
 >;
 
 export function makeCombinedReducers<M extends ReducersObject>(
   reducers: M
 ): CombinedReducer<M> {
-  const keys: (keyof M)[] = Object.keys(reducers);
+  const keys: Array<keyof M> = Object.keys(reducers);
 
   return (state, action) => {
     const nextState = {} as ReducersState<M>;
 
     for (const key of keys) {
-      nextState[key] = reducers[key](state[key], action);
+      nextState[key] = reducers[key]!(state[key], action);
     }
 
     return nextState;
@@ -47,6 +48,6 @@ export function makeCombinedReducers<M extends ReducersObject>(
 export function useCombinedReducer<M extends ReducersObject>(
   reducers: M,
   initialState: CombinedState<ReducersState<M>>
-): [CombinedState<ReducersState<M>>, React.Dispatch<AllReducerAction<M>>] {
+): [CombinedState<ReducersState<M>>, React.Dispatch<ReducerActions<M>>] {
   return useReducer(makeCombinedReducers(reducers), initialState);
 }

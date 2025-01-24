@@ -1,7 +1,17 @@
-import GroupStore from 'sentry/stores/groupStore';
-import {Group, GroupStats, TimeseriesValue} from 'sentry/types';
+import {ActorFixture} from 'sentry-fixture/actor';
+import {GroupFixture} from 'sentry-fixture/group';
+import {ProjectFixture} from 'sentry-fixture/project';
 
-const g = (id: string, params?: Partial<Group>) => TestStubs.Group({id, ...params});
+import GroupStore from 'sentry/stores/groupStore';
+import type {TimeseriesValue} from 'sentry/types/core';
+import type {Group, GroupStats} from 'sentry/types/group';
+import {GroupActivityType} from 'sentry/types/group';
+
+const MOCK_PROJECT = ProjectFixture();
+
+const g = (id: string, params?: Partial<Group>): Group => {
+  return GroupFixture({id, project: MOCK_PROJECT, ...params});
+};
 
 describe('GroupStore', function () {
   beforeEach(function () {
@@ -19,10 +29,12 @@ describe('GroupStore', function () {
     it('should update matching existing entries', function () {
       GroupStore.items = [g('1'), g('2')];
 
-      GroupStore.add([{id: '1', foo: 'bar'}, g('3')]);
+      GroupStore.add([g('1', {count: '1337'}), g('3')]);
 
       expect(GroupStore.getAllItemIds()).toEqual(['1', '2', '3']);
-      expect(GroupStore.items[0]).toEqual(expect.objectContaining({id: '1', foo: 'bar'}));
+      expect(GroupStore.items[0]).toEqual(
+        expect.objectContaining({id: '1', count: '1337'})
+      );
     });
 
     it('should attempt to preserve order of ids', function () {
@@ -42,10 +54,10 @@ describe('GroupStore', function () {
     it('should update matching existing entries', function () {
       GroupStore.items = [g('1'), g('2')];
 
-      GroupStore.addToFront([{id: '1', foo: 'bar'}, g('3')]);
+      GroupStore.addToFront([g('1', {count: '1337'}), g('3')]);
 
       expect(GroupStore.getAllItems()).toEqual([
-        expect.objectContaining({id: '1', foo: 'bar'}),
+        expect.objectContaining({id: '1', count: '1337'}),
         g('3'),
         g('2'),
       ]);
@@ -98,16 +110,14 @@ describe('GroupStore', function () {
   });
 
   describe('onPopulateStats()', function () {
-    let triggerSpy: jest.SpyInstance;
-
     const stats: Record<string, TimeseriesValue[]> = {auto: [[1611576000, 10]]};
 
-    beforeAll(function () {
-      triggerSpy = jest.spyOn(GroupStore, 'trigger');
-    });
     beforeEach(function () {
-      triggerSpy.mockReset();
+      jest.spyOn(GroupStore, 'trigger');
       GroupStore.items = [g('1'), g('2'), g('3')];
+    });
+    afterEach(() => {
+      jest.restoreAllMocks();
     });
 
     it('should merge stats into existing groups', function () {
@@ -154,18 +164,21 @@ describe('GroupStore', function () {
     });
   });
 
+  describe('getState()', function () {
+    it('returns a stable reference', () => {
+      GroupStore.add([g('1'), g('2')]);
+      const state = GroupStore.getState();
+      expect(Object.is(state, GroupStore.getState())).toBe(true);
+    });
+  });
+
   describe('update methods', function () {
-    let triggerSpy: jest.SpyInstance;
-
-    beforeAll(function () {
-      triggerSpy = jest.spyOn(GroupStore, 'trigger');
-    });
     beforeEach(function () {
-      triggerSpy.mockReset();
-    });
-
-    beforeEach(function () {
+      jest.spyOn(GroupStore, 'trigger');
       GroupStore.items = [g('1'), g('2'), g('3')];
+    });
+    afterEach(() => {
+      jest.restoreAllMocks();
     });
 
     describe('onUpdate()', function () {
@@ -214,6 +227,38 @@ describe('GroupStore', function () {
 
         expect(GroupStore.trigger).toHaveBeenCalledTimes(1);
         expect(GroupStore.trigger).toHaveBeenCalledWith(new Set(['1', '2', '3']));
+      });
+    });
+
+    describe('onAssignToSuccess()', function () {
+      it("should treat undefined itemIds argument as 'all'", function () {
+        GroupStore.items = [g('1')];
+        const assignedGroup = g('1', {assignedTo: ActorFixture()});
+        GroupStore.onAssignToSuccess('1337', '1', assignedGroup);
+
+        expect(GroupStore.trigger).toHaveBeenCalledTimes(1);
+        expect(GroupStore.trigger).toHaveBeenCalledWith(new Set(['1']));
+        expect(GroupStore.items[0]).toEqual(assignedGroup);
+      });
+    });
+
+    describe('updateActivity()', function () {
+      it("should update activity data text'", function () {
+        GroupStore.items = [
+          g('1', {
+            activity: [
+              {
+                id: '1',
+                type: GroupActivityType.NOTE,
+                dateCreated: '',
+                project: ProjectFixture(),
+                data: {text: 'Orginal Text'},
+              },
+            ],
+          }),
+        ];
+        GroupStore.updateActivity('1', '1', {text: 'Updated Text'});
+        expect(GroupStore.items[0]!.activity[0]!.data).toEqual({text: 'Updated Text'});
       });
     });
   });

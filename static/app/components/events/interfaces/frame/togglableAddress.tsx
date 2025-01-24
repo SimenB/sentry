@@ -1,11 +1,11 @@
+import type {Theme} from '@emotion/react';
 import styled from '@emotion/styled';
 
-import Tooltip from 'sentry/components/tooltip';
+import {Tooltip} from 'sentry/components/tooltip';
 import {SLOW_TOOLTIP_DELAY} from 'sentry/constants';
 import {IconFilter} from 'sentry/icons';
 import {t} from 'sentry/locale';
-import space from 'sentry/styles/space';
-import {Theme} from 'sentry/utils/theme';
+import {space} from 'sentry/styles/space';
 
 import {formatAddress, parseAddress} from '../utils';
 
@@ -79,7 +79,7 @@ function TogglableAddress({
           containerDisplayMode="inline-flex"
           delay={tooltipDelay}
         >
-          <AddressToggleIcon onClick={onToggle} size="xs" color="purple300" />
+          <AddressToggleIcon onClick={onToggle} size="xs" color="activeText" />
         </AddressIconTooltip>
       )}
       <Tooltip

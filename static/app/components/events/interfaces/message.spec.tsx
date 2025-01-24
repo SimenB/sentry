@@ -1,23 +1,14 @@
-import {initializeOrg} from 'sentry-test/initializeOrg';
+import {DataScrubbingRelayPiiConfigFixture} from 'sentry-fixture/dataScrubbingRelayPiiConfig';
+import {EventFixture} from 'sentry-fixture/event';
+
 import {render, screen, userEvent} from 'sentry-test/reactTestingLibrary';
 import {textWithMarkupMatcher} from 'sentry-test/utils';
 
 import {Message} from 'sentry/components/events/interfaces/message';
-import {OrganizationContext} from 'sentry/views/organizationContext';
-import {RouteContext} from 'sentry/views/routeContext';
 
 describe('Message entry', function () {
   it('display redacted data', async function () {
-    const {organization, router} = initializeOrg({
-      ...initializeOrg(),
-      organization: {
-        ...initializeOrg().organization,
-        relayPiiConfig: JSON.stringify(TestStubs.DataScrubbingRelayPiiConfig()),
-      },
-    });
-
-    const event = {
-      ...TestStubs.Event(),
+    const event = EventFixture({
       entries: [
         {
           type: 'message',
@@ -35,30 +26,21 @@ describe('Message entry', function () {
           },
         },
       },
-    };
-    render(
-      <OrganizationContext.Provider value={organization}>
-        <RouteContext.Provider
-          value={{
-            router,
-            location: router.location,
-            params: {},
-            routes: [],
-          }}
-        >
-          <Message data={{formatted: null}} event={event} />
-        </RouteContext.Provider>
-      </OrganizationContext.Provider>
-    );
+    });
+    render(<Message data={{formatted: null}} event={event} />, {
+      organization: {
+        relayPiiConfig: JSON.stringify(DataScrubbingRelayPiiConfigFixture()),
+      },
+    });
 
     expect(screen.getByText(/redacted/)).toBeInTheDocument();
 
-    userEvent.hover(screen.getByText(/redacted/));
+    await userEvent.hover(screen.getByText(/redacted/));
 
     expect(
       await screen.findByText(
         textWithMarkupMatcher(
-          'Removed because of the PII rule [Replace] [Password fields] with [Scrubbed] from [password] in the settings of the organization org-slug'
+          "Removed because of the data scrubbing rule [Replace] [Password fields] with [Scrubbed] from [password] in your organization's settings"
         )
       )
     ).toBeInTheDocument(); // tooltip description
@@ -72,9 +54,9 @@ describe('Message entry', function () {
       '/settings/org-slug/security-and-privacy/advanced-data-scrubbing/0/'
     );
 
-    expect(screen.getByRole('link', {name: 'org-slug'})).toHaveAttribute(
+    expect(screen.getByRole('link', {name: "organization's settings"})).toHaveAttribute(
       'href',
-      '/settings/org-slug/'
+      '/settings/org-slug/security-and-privacy/'
     );
   });
 });

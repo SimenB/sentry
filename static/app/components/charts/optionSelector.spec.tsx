@@ -1,12 +1,12 @@
 import {useState} from 'react';
+import {OrganizationFixture} from 'sentry-fixture/organization';
 
 import {initializeOrg} from 'sentry-test/initializeOrg';
-import {render, screen, userEvent, within} from 'sentry-test/reactTestingLibrary';
+import {render, screen, userEvent} from 'sentry-test/reactTestingLibrary';
 
 import OptionSelector from 'sentry/components/charts/optionSelector';
-import {t} from 'sentry/locale';
 
-describe('EventsV2 > OptionSelector (Multiple)', function () {
+describe('Charts > OptionSelector (Multiple)', function () {
   const features = ['discover-basic'];
   const yAxisValue = ['count()', 'failure_count()'];
   const yAxisOptions = [
@@ -16,7 +16,7 @@ describe('EventsV2 > OptionSelector (Multiple)', function () {
     {label: 'avg(transaction.duration)', value: 'avg(transaction.duration)'},
   ];
   const onChangeStub = jest.fn();
-  const organization = TestStubs.Organization({
+  const organization = OrganizationFixture({
     features: [...features],
   });
 
@@ -24,14 +24,14 @@ describe('EventsV2 > OptionSelector (Multiple)', function () {
     jest.resetAllMocks();
   });
 
-  const TestComponent = () => {
+  function TestComponent() {
     const [currentSelected, setCurrentSelected] = useState([...yAxisValue]);
 
     return (
       <OptionSelector
         multiple
         isOpen
-        title={t('Y-Axis')}
+        title={'Y-Axis'}
         selected={currentSelected}
         options={yAxisOptions}
         onChange={newSelected => {
@@ -40,7 +40,7 @@ describe('EventsV2 > OptionSelector (Multiple)', function () {
         }}
       />
     );
-  };
+  }
 
   const renderComponent = () => {
     // Start off with an invalid view (empty is invalid)
@@ -49,42 +49,43 @@ describe('EventsV2 > OptionSelector (Multiple)', function () {
       router: {
         location: {query: {query: 'tag:value'}},
       },
-      project: 1,
       projects: [],
     });
 
-    return render(<TestComponent />, {context: initialData.routerContext});
+    return render(<TestComponent />, {router: initialData.router});
   };
 
-  it('renders yAxisOptions with yAxisValue selected', function () {
+  it('renders yAxisOptions with yAxisValue selected', async function () {
     renderComponent();
-    expect(
-      within(screen.getByTestId('count()')).getByTestId('icon-check-mark')
-    ).toBeInTheDocument();
-    expect(
-      within(screen.getByTestId('failure_count()')).getByTestId('icon-check-mark')
-    ).toBeInTheDocument();
-    expect(
-      // eslint-disable-next-line testing-library/prefer-presence-queries
-      within(screen.getByTestId('count_unique(user)')).queryByTestId('icon-check-mark')
-    ).not.toBeInTheDocument();
+    expect(await screen.findByRole('option', {name: 'count()'})).toHaveAttribute(
+      'aria-selected',
+      'true'
+    );
+    expect(screen.getByRole('option', {name: 'failure_count()'})).toHaveAttribute(
+      'aria-selected',
+      'true'
+    );
+    expect(screen.getByRole('option', {name: 'count_unique(user)'})).toHaveAttribute(
+      'aria-selected',
+      'false'
+    );
   });
 
-  it('calls onChange prop with new checkbox option state', function () {
+  it('calls onChange prop with new checkbox option state', async function () {
     renderComponent();
-    userEvent.click(screen.getByTestId('count()'));
+    await userEvent.click(screen.getByRole('option', {name: 'count()'}));
     expect(onChangeStub).toHaveBeenCalledWith(['failure_count()']);
     onChangeStub.mockClear();
-    userEvent.click(screen.getByTestId('count()'));
-    expect(onChangeStub).toHaveBeenCalledWith(['failure_count()', 'count()']);
-    onChangeStub.mockClear();
-    userEvent.click(screen.getByTestId('failure_count()'));
-    expect(onChangeStub).toHaveBeenCalledWith(['count()']);
-    onChangeStub.mockClear();
-    userEvent.click(screen.getByTestId('failure_count()'));
+    await userEvent.click(screen.getByRole('option', {name: 'count()'}));
     expect(onChangeStub).toHaveBeenCalledWith(['count()', 'failure_count()']);
     onChangeStub.mockClear();
-    userEvent.click(screen.getByTestId('count_unique(user)'));
+    await userEvent.click(screen.getByRole('option', {name: 'failure_count()'}));
+    expect(onChangeStub).toHaveBeenCalledWith(['count()']);
+    onChangeStub.mockClear();
+    await userEvent.click(screen.getByRole('option', {name: 'failure_count()'}));
+    expect(onChangeStub).toHaveBeenCalledWith(['count()', 'failure_count()']);
+    onChangeStub.mockClear();
+    await userEvent.click(screen.getByRole('option', {name: 'count_unique(user)'}));
     expect(onChangeStub).toHaveBeenCalledWith([
       'count()',
       'failure_count()',
@@ -92,24 +93,26 @@ describe('EventsV2 > OptionSelector (Multiple)', function () {
     ]);
   });
 
-  it('does not uncheck options when clicked if only one option is currently selected', function () {
+  it('does not uncheck options when clicked if only one option is currently selected', async function () {
     renderComponent();
-    userEvent.click(screen.getByTestId('count()'));
+    await userEvent.click(screen.getByRole('option', {name: 'count()'}));
     expect(onChangeStub).toHaveBeenCalledWith(['failure_count()']);
-    userEvent.click(screen.getByTestId('failure_count()'));
+    await userEvent.click(screen.getByRole('option', {name: 'failure_count()'}));
     expect(onChangeStub).toHaveBeenCalledWith(['failure_count()']);
   });
 
-  it('only allows up to 3 options to be checked at one time', function () {
+  it('only allows up to 3 options to be checked at one time', async function () {
     renderComponent();
-    userEvent.click(screen.getByTestId('count_unique(user)'));
+    await userEvent.click(screen.getByRole('option', {name: 'count_unique(user)'}));
     expect(onChangeStub).toHaveBeenCalledWith([
       'count()',
       'failure_count()',
       'count_unique(user)',
     ]);
     onChangeStub.mockClear();
-    userEvent.click(screen.getByTestId('avg(transaction.duration)'));
+    await userEvent.click(
+      screen.getByRole('option', {name: 'avg(transaction.duration)'})
+    );
     expect(onChangeStub).not.toHaveBeenCalledWith([
       'count()',
       'failure_count()',
@@ -117,10 +120,10 @@ describe('EventsV2 > OptionSelector (Multiple)', function () {
       'avg(transaction.duration)',
     ]);
     onChangeStub.mockClear();
-    userEvent.click(screen.getByTestId('count_unique(user)'));
+    await userEvent.click(screen.getByRole('option', {name: 'count_unique(user)'}));
     expect(onChangeStub).toHaveBeenCalledWith(['count()', 'failure_count()']);
     onChangeStub.mockClear();
-    userEvent.click(screen.getByTestId('count_unique(user)'));
+    await userEvent.click(screen.getByRole('option', {name: 'count_unique(user)'}));
     expect(onChangeStub).toHaveBeenCalledWith([
       'count()',
       'failure_count()',

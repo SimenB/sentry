@@ -1,24 +1,15 @@
-import {initializeOrg} from 'sentry-test/initializeOrg';
+import {DataScrubbingRelayPiiConfigFixture} from 'sentry-fixture/dataScrubbingRelayPiiConfig';
+import {EventFixture} from 'sentry-fixture/event';
+
 import {render, screen, userEvent} from 'sentry-test/reactTestingLibrary';
 import {textWithMarkupMatcher} from 'sentry-test/utils';
 
 import {Csp} from 'sentry/components/events/interfaces/csp';
 import {EntryType} from 'sentry/types/event';
-import {OrganizationContext} from 'sentry/views/organizationContext';
-import {RouteContext} from 'sentry/views/routeContext';
 
 describe('Csp report entry', function () {
   it('display redacted data', async function () {
-    const {organization, router} = initializeOrg({
-      ...initializeOrg(),
-      organization: {
-        ...initializeOrg().organization,
-        relayPiiConfig: JSON.stringify(TestStubs.DataScrubbingRelayPiiConfig()),
-      },
-    });
-
-    const event = {
-      ...TestStubs.Event(),
+    const event = EventFixture({
       entries: [{type: EntryType.CSP, data: {effective_directive: ''}}],
       _meta: {
         entries: {
@@ -29,30 +20,21 @@ describe('Csp report entry', function () {
           },
         },
       },
-    };
-    render(
-      <OrganizationContext.Provider value={organization}>
-        <RouteContext.Provider
-          value={{
-            router,
-            location: router.location,
-            params: {},
-            routes: [],
-          }}
-        >
-          <Csp data={event.entries[0].data} event={event} />
-        </RouteContext.Provider>
-      </OrganizationContext.Provider>
-    );
+    });
+    render(<Csp data={event.entries[0]!.data} event={event} />, {
+      organization: {
+        relayPiiConfig: JSON.stringify(DataScrubbingRelayPiiConfigFixture()),
+      },
+    });
 
     expect(screen.getByText(/redacted/)).toBeInTheDocument();
 
-    userEvent.hover(screen.getByText(/redacted/));
+    await userEvent.hover(screen.getByText(/redacted/));
 
     expect(
       await screen.findByText(
         textWithMarkupMatcher(
-          'Removed because of the PII rule [Mask] [Credit card numbers] from [$message] in the settings of the organization org-slug'
+          "Removed because of the data scrubbing rule [Mask] [Credit card numbers] from [$message] in your organization's settings"
         )
       )
     ).toBeInTheDocument(); // tooltip description

@@ -1,14 +1,17 @@
+from __future__ import annotations
+
 from datetime import timedelta
 from enum import Enum
 
 from django.db import models
 from django.utils import timezone
 
+from sentry.backup.scopes import RelocationScope
 from sentry.db.models import (
     BoundedPositiveIntegerField,
     FlexibleForeignKey,
     Model,
-    region_silo_only_model,
+    region_silo_model,
     sane_repr,
 )
 from sentry.utils import metrics
@@ -21,9 +24,9 @@ class ReleaseStages(str, Enum):
     REPLACED = "replaced"
 
 
-@region_silo_only_model
+@region_silo_model
 class ReleaseProjectEnvironment(Model):
-    __include_in_export__ = False
+    __relocation_scope__ = RelocationScope.Excluded
 
     release = FlexibleForeignKey("sentry.Release")
     project = FlexibleForeignKey("sentry.Project")
@@ -39,9 +42,9 @@ class ReleaseProjectEnvironment(Model):
     class Meta:
         app_label = "sentry"
         db_table = "sentry_releaseprojectenvironment"
-        index_together = (
-            ("project", "adopted", "environment"),
-            ("project", "unadopted", "environment"),
+        indexes = (
+            models.Index(fields=("project", "adopted", "environment")),
+            models.Index(fields=("project", "unadopted", "environment")),
         )
         unique_together = (("project", "release", "environment"),)
 

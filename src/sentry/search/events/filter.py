@@ -1,28 +1,28 @@
 from __future__ import annotations
 
+from collections.abc import Callable, Sequence
 from datetime import datetime
 from functools import reduce
-from typing import Callable, List, Mapping, Optional, Sequence, Tuple, Union
+from typing import Any, TypedDict, Union
 
-from parsimonious.exceptions import ParseError
-from sentry_relay import parse_release as parse_release_relay
+import orjson
 from sentry_relay.consts import SPAN_STATUS_NAME_TO_CODE
+from sentry_relay.processing import parse_release as parse_release_relay
 
-from sentry import eventstore
 from sentry.api.event_search import (
     AggregateFilter,
     ParenExpression,
-    SearchBoolean,
     SearchFilter,
     SearchKey,
     SearchValue,
-    parse_search_query,
 )
 from sentry.api.release_search import INVALID_SEMVER_MESSAGE
 from sentry.constants import SEMVER_FAKE_PACKAGE
 from sentry.exceptions import InvalidSearchQuery
-from sentry.models import Project, Release, SemverFilter
 from sentry.models.group import Group
+from sentry.models.project import Project
+from sentry.models.release import Release
+from sentry.models.releases.util import SemverFilter
 from sentry.search.events.constants import (
     ARRAY_FIELDS,
     EQUALITY_OPERATORS,
@@ -46,16 +46,17 @@ from sentry.search.events.constants import (
     TRANSACTION_STATUS_ALIAS,
     USER_DISPLAY_ALIAS,
 )
-from sentry.search.events.fields import FIELD_ALIASES, FUNCTIONS, resolve_field
+from sentry.search.events.fields import FIELD_ALIASES
 from sentry.search.utils import parse_release
-from sentry.utils.dates import to_timestamp
-from sentry.utils.snuba import FUNCTION_TO_OPERATOR, OPERATOR_TO_FUNCTION, SNUBA_AND, SNUBA_OR
 from sentry.utils.strings import oxfordize_list
 from sentry.utils.validators import INVALID_ID_DETAILS, INVALID_SPAN_ID, WILDCARD_NOT_ALLOWED
 
 
-def is_condition(term):
-    return isinstance(term, (tuple, list)) and len(term) == 3 and term[1] in OPERATOR_TO_FUNCTION
+class FilterConvertParams(TypedDict, total=False):
+    organization_id: int
+    project_id: list[int]
+    environment: list[str]
+    environment_id: list[int] | None
 
 
 def translate_transaction_status(val: str) -> str:
@@ -67,75 +68,19 @@ def translate_transaction_status(val: str) -> str:
     return SPAN_STATUS_NAME_TO_CODE[val]
 
 
-def to_list(value: Union[List[str], str]) -> List[str]:
+def to_list[T](value: list[T] | T) -> list[T]:
     if isinstance(value, list):
         return value
     return [value]
 
 
-def convert_condition_to_function(cond):
-    if len(cond) != 3:
-        return cond
-    function = OPERATOR_TO_FUNCTION.get(cond[1])
-    if not function:
-        # It's hard to make this error more specific without exposing internals to the end user
-        raise InvalidSearchQuery(f"Operator {cond[1]} is not a valid condition operator.")
-
-    return [function, [cond[0], cond[2]]]
-
-
-def convert_array_to_tree(operator, terms):
-    """
-    Convert an array of conditions into a binary tree joined by the operator.
-    """
-    if len(terms) == 1:
-        return terms[0]
-    elif len(terms) == 2:
-        return [operator, terms]
-    elif terms[1] in ["IN", "NOT IN"]:
-        return terms
-
-    return [operator, [terms[0], convert_array_to_tree(operator, terms[1:])]]
-
-
-def convert_aggregate_filter_to_snuba_query(aggregate_filter, params):
-    name = aggregate_filter.key.name
-    value = aggregate_filter.value.value
-
-    if params is not None and name in params.get("aliases", {}):
-        return params["aliases"][name].converter(aggregate_filter)
-
-    value = (
-        int(to_timestamp(value)) if isinstance(value, datetime) and name != "timestamp" else value
-    )
-
-    if aggregate_filter.operator in ("=", "!=") and aggregate_filter.value.value == "":
-        return [["isNull", [name]], aggregate_filter.operator, 1]
-
-    function = resolve_field(name, params, functions_acl=FUNCTIONS.keys())
-    if function.aggregate is not None:
-        name = function.aggregate[-1]
-
-    return [name, aggregate_filter.operator, value]
-
-
-def convert_function_to_condition(func):
-    if len(func) != 2:
-        return func
-    operator = FUNCTION_TO_OPERATOR.get(func[0])
-    if not operator:
-        return [func, "=", 1]
-
-    return [func[1][0], operator, func[1][1]]
-
-
 def _environment_filter_converter(
     search_filter: SearchFilter,
     name: str,
-    params: Optional[Mapping[str, Union[int, str, datetime]]],
+    params: FilterConvertParams | None,
 ):
     # conditions added to env_conditions are OR'd
-    env_conditions = []
+    env_conditions: list[list[object]] = []
     value = search_filter.value.value
     values = set(value if isinstance(value, (list, tuple)) else [value])
     # the "no environment" environment is null in snuba
@@ -155,7 +100,7 @@ def _environment_filter_converter(
 def _message_filter_converter(
     search_filter: SearchFilter,
     name: str,
-    params: Optional[Mapping[str, Union[int, str, datetime]]],
+    params: FilterConvertParams | None,
 ):
     value = search_filter.value.value
     if search_filter.value.is_wildcard():
@@ -192,7 +137,7 @@ def _message_filter_converter(
 def _transaction_status_filter_converter(
     search_filter: SearchFilter,
     name: str,
-    params: Optional[Mapping[str, Union[int, str, datetime]]],
+    params: FilterConvertParams | None,
 ):
     # Handle "has" queries
     if search_filter.value.raw_value == "":
@@ -211,7 +156,7 @@ def _transaction_status_filter_converter(
 def _issue_id_filter_converter(
     search_filter: SearchFilter,
     name: str,
-    params: Optional[Mapping[str, Union[int, str, datetime]]],
+    params: FilterConvertParams | None,
 ):
     value = search_filter.value.value
     # Handle "has" queries
@@ -238,7 +183,7 @@ def _issue_id_filter_converter(
 def _user_display_filter_converter(
     search_filter: SearchFilter,
     name: str,
-    params: Optional[Mapping[str, Union[int, str, datetime]]],
+    params: FilterConvertParams | None,
 ):
     value = search_filter.value.value
     user_display_expr = FIELD_ALIASES[USER_DISPLAY_ALIAS].get_expression(params)
@@ -258,7 +203,7 @@ def _user_display_filter_converter(
 def _error_unhandled_filter_converter(
     search_filter: SearchFilter,
     name: str,
-    params: Optional[Mapping[str, Union[int, str, datetime]]],
+    params: FilterConvertParams | None,
 ):
     value = search_filter.value.value
     # This field is the inversion of error.handled, otherwise the logic is the same.
@@ -277,7 +222,7 @@ def _error_unhandled_filter_converter(
 def _error_handled_filter_converter(
     search_filter: SearchFilter,
     name: str,
-    params: Optional[Mapping[str, Union[int, str, datetime]]],
+    params: FilterConvertParams | None,
 ):
     value = search_filter.value.value
     # Treat has filter as equivalent to handled
@@ -295,7 +240,7 @@ def _error_handled_filter_converter(
 def _team_key_transaction_filter_converter(
     search_filter: SearchFilter,
     name: str,
-    params: Optional[Mapping[str, Union[int, str, datetime]]],
+    params: FilterConvertParams | None,
 ):
     value = search_filter.value.value
     key_transaction_expr = FIELD_ALIASES[TEAM_KEY_TRANSACTION_ALIAS].get_field(params)
@@ -319,8 +264,8 @@ def _flip_field_sort(field: str):
 def _release_stage_filter_converter(
     search_filter: SearchFilter,
     name: str,
-    params: Optional[Mapping[str, Union[int, str, datetime]]],
-) -> Tuple[str, str, Sequence[str]]:
+    params: FilterConvertParams | None,
+) -> list[Any]:
     """
     Parses a release stage search and returns a snuba condition to filter to the
     requested releases.
@@ -331,9 +276,9 @@ def _release_stage_filter_converter(
     if not params or "organization_id" not in params:
         raise ValueError("organization_id is a required param")
 
-    organization_id: int = params["organization_id"]
-    project_ids: Optional[list[int]] = params.get("project_id")
-    environments: Optional[list[int]] = params.get("environment")
+    organization_id = params["organization_id"]
+    project_ids = params.get("project_id")
+    environments = params.get("environment")
     qs = (
         Release.objects.filter_by_stage(
             organization_id,
@@ -358,8 +303,8 @@ def _release_stage_filter_converter(
 def _semver_filter_converter(
     search_filter: SearchFilter,
     name: str,
-    params: Optional[Mapping[str, Union[int, str, datetime]]],
-) -> Tuple[str, str, Sequence[str]]:
+    params: FilterConvertParams | None,
+) -> list[Any]:
     """
     Parses a semver query search and returns a snuba condition to filter to the
     requested releases.
@@ -379,7 +324,7 @@ def _semver_filter_converter(
         raise ValueError("organization_id is a required param")
 
     organization_id: int = params["organization_id"]
-    project_ids: Optional[list[int]] = params.get("project_id")
+    project_ids: list[int] | None = params.get("project_id")
     # We explicitly use `raw_value` here to avoid converting wildcards to shell values
     version: str = search_filter.value.raw_value
     operator: str = search_filter.operator
@@ -432,8 +377,8 @@ def _semver_filter_converter(
 def _semver_package_filter_converter(
     search_filter: SearchFilter,
     name: str,
-    params: Optional[Mapping[str, Union[int, str, datetime]]],
-) -> Tuple[str, str, Sequence[str]]:
+    params: FilterConvertParams | None,
+) -> list[Any]:
     """
     Applies a semver package filter to the search. Note that if the query returns more than
     `MAX_SEARCH_RELEASES` here we arbitrarily return a subset of the releases.
@@ -442,9 +387,8 @@ def _semver_package_filter_converter(
         raise ValueError("organization_id is a required param")
 
     organization_id: int = params["organization_id"]
-    project_ids: Optional[list[int]] = params.get("project_id")
-    package: str = search_filter.value.raw_value
-
+    project_ids: list[int] | None = params.get("project_id")
+    package: str | list[str] = search_filter.value.raw_value
     versions = list(
         Release.objects.filter_by_semver(
             organization_id,
@@ -463,8 +407,8 @@ def _semver_package_filter_converter(
 def _semver_build_filter_converter(
     search_filter: SearchFilter,
     name: str,
-    params: Optional[Mapping[str, Union[int, str, datetime]]],
-) -> Tuple[str, str, Sequence[str]]:
+    params: FilterConvertParams | None,
+) -> list[Any]:
     """
     Applies a semver build filter to the search. Note that if the query returns more than
     `MAX_SEARCH_RELEASES` here we arbitrarily return a subset of the releases.
@@ -473,7 +417,7 @@ def _semver_build_filter_converter(
         raise ValueError("organization_id is a required param")
 
     organization_id: int = params["organization_id"]
-    project_ids: Optional[list[int]] = params.get("project_id")
+    project_ids: list[int] | None = params.get("project_id")
     build: str = search_filter.value.raw_value
 
     operator, negated = handle_operator_negation(search_filter.operator)
@@ -499,7 +443,7 @@ def _semver_build_filter_converter(
     return ["release", "IN", versions]
 
 
-def handle_operator_negation(operator: str) -> Tuple[str, bool]:
+def handle_operator_negation(operator: str) -> tuple[str, bool]:
     negated = False
     if operator == "!=":
         negated = True
@@ -507,7 +451,7 @@ def handle_operator_negation(operator: str) -> Tuple[str, bool]:
     return operator, negated
 
 
-def parse_semver(version, operator) -> Optional[SemverFilter]:
+def parse_semver(version, operator) -> SemverFilter:
     """
     Attempts to parse a release version using our semver syntax. version should be in
     format `<package_name>@<version>` or `<version>`, where package_name is a string and
@@ -526,7 +470,7 @@ def parse_semver(version, operator) -> Optional[SemverFilter]:
         raise InvalidSearchQuery("Invalid operation 'IN' for semantic version filter.")
 
     version = version if "@" in version else f"{SEMVER_FAKE_PACKAGE}@{version}"
-    parsed = parse_release_relay(version)
+    parsed = parse_release_relay(version, json_loads=orjson.loads)
     parsed_version = parsed.get("version_parsed")
     if parsed_version:
         # Convert `pre` to always be a string
@@ -565,9 +509,8 @@ def parse_semver(version, operator) -> Optional[SemverFilter]:
         return SemverFilter("exact", version_parts, package, negated)
 
 
-key_conversion_map: Mapping[
-    str,
-    Callable[[SearchFilter, str, Mapping[str, Union[int, str, datetime]]], Optional[Sequence[any]]],
+key_conversion_map: dict[
+    str, Callable[[SearchFilter, str, FilterConvertParams], Sequence[Any] | None]
 ] = {
     "environment": _environment_filter_converter,
     "message": _message_filter_converter,
@@ -586,11 +529,12 @@ key_conversion_map: Mapping[
 
 def convert_search_filter_to_snuba_query(
     search_filter: SearchFilter,
-    key: Optional[str] = None,
-    params: Optional[Mapping[str, Union[int, str, datetime]]] = None,
-) -> Optional[Sequence[any]]:
+    key: str | None = None,
+    params: FilterConvertParams | None = None,
+) -> Sequence[Any] | None:
     name = search_filter.key.name if key is None else key
     value = search_filter.value.value
+    params = params or {}
 
     # We want to use group_id elsewhere so shouldn't be removed from the dataset
     # but if a user has a tag with the same name we want to make sure that works
@@ -598,12 +542,13 @@ def convert_search_filter_to_snuba_query(
         name = f"tags[{name}]"
 
     if name in NO_CONVERSION_FIELDS:
-        return
+        return None
     elif name in key_conversion_map:
         return key_conversion_map[name](search_filter, name, params)
     elif name in ARRAY_FIELDS and search_filter.value.is_wildcard():
         # Escape and convert meta characters for LIKE expressions.
         raw_value = search_filter.value.raw_value
+        assert isinstance(raw_value, str), raw_value
         # TODO: There are rare cases where this chaining don't
         # work. For example, a wildcard like '\**' will incorrectly
         # be replaced with '\%%'.
@@ -637,7 +582,7 @@ def convert_search_filter_to_snuba_query(
             "timestamp.to_hour",
             "timestamp.to_day",
         }:
-            value = int(to_timestamp(value)) * 1000
+            value = int(value.timestamp()) * 1000
 
         if name in {"trace.span", "trace.parent_span"}:
             if search_filter.value.is_wildcard():
@@ -656,7 +601,7 @@ def convert_search_filter_to_snuba_query(
         # most field aliases are handled above but timestamp.to_{hour,day} are
         # handled here
         if name in FIELD_ALIASES:
-            name = FIELD_ALIASES[name].get_expression(params)
+            name = FIELD_ALIASES[name].get_field(params)
 
         # Tags are never null, but promoted tags are columns and so can be null.
         # To handle both cases, use `ifNull` to convert to an empty string and
@@ -702,250 +647,6 @@ def convert_search_filter_to_snuba_query(
             return condition
 
 
-def flatten_condition_tree(tree, condition_function):
-    """
-    Take a binary tree of conditions, and flatten all of the terms using the condition function.
-    E.g. f( and(and(b, c), and(d, e)), and ) -> [b, c, d, e]
-    """
-    stack = [tree]
-    flattened = []
-    while len(stack) > 0:
-        item = stack.pop(0)
-        if item[0] == condition_function:
-            stack.extend(item[1])
-        else:
-            flattened.append(item)
-
-    return flattened
-
-
-def convert_snuba_condition_to_function(term, params=None):
-    if isinstance(term, ParenExpression):
-        return convert_search_boolean_to_snuba_query(term.children, params)
-
-    group_ids = []
-    projects_to_filter = []
-    if isinstance(term, SearchFilter):
-        conditions, projects_to_filter, group_ids = format_search_filter(term, params)
-        group_ids = group_ids if group_ids else []
-        if conditions:
-            conditions_to_and = []
-            for cond in conditions:
-                if is_condition(cond):
-                    conditions_to_and.append(convert_condition_to_function(cond))
-                else:
-                    conditions_to_and.append(
-                        convert_array_to_tree(
-                            SNUBA_OR, [convert_condition_to_function(c) for c in cond]
-                        )
-                    )
-
-            condition_tree = None
-            if len(conditions_to_and) == 1:
-                condition_tree = conditions_to_and[0]
-            elif len(conditions_to_and) > 1:
-                condition_tree = convert_array_to_tree(SNUBA_AND, conditions_to_and)
-            return condition_tree, None, projects_to_filter, group_ids
-    elif isinstance(term, AggregateFilter):
-        converted_filter = convert_aggregate_filter_to_snuba_query(term, params)
-        return None, convert_condition_to_function(converted_filter), projects_to_filter, group_ids
-
-    return None, None, projects_to_filter, group_ids
-
-
-def convert_search_boolean_to_snuba_query(terms, params=None):
-    if len(terms) == 1:
-        return convert_snuba_condition_to_function(terms[0], params)
-
-    # Filter out any ANDs since we can assume anything without an OR is an AND. Also do some
-    # basic sanitization of the query: can't have two operators next to each other, and can't
-    # start or end a query with an operator.
-    prev = None
-    new_terms = []
-    term = None
-
-    for term in terms:
-        if prev:
-            if SearchBoolean.is_operator(prev) and SearchBoolean.is_operator(term):
-                raise InvalidSearchQuery(
-                    f"Missing condition in between two condition operators: '{prev} {term}'"
-                )
-        else:
-            if SearchBoolean.is_operator(term):
-                raise InvalidSearchQuery(
-                    f"Condition is missing on the left side of '{term}' operator"
-                )
-
-        if term != SearchBoolean.BOOLEAN_AND:
-            new_terms.append(term)
-        prev = term
-    if term is not None and SearchBoolean.is_operator(term):
-        raise InvalidSearchQuery(f"Condition is missing on the right side of '{term}' operator")
-    terms = new_terms
-
-    # We put precedence on AND, which sort of counter-intuitively means we have to split the query
-    # on ORs first, so the ANDs are grouped together. Search through the query for ORs and split the
-    # query on each OR.
-    # We want to maintain a binary tree, so split the terms on the first OR we can find and recurse on
-    # the two sides. If there is no OR, split the first element out to AND
-    index = None
-    lhs, rhs = None, None
-    operator = None
-    try:
-        index = terms.index(SearchBoolean.BOOLEAN_OR)
-        lhs, rhs = terms[:index], terms[index + 1 :]
-        operator = SNUBA_OR
-    except Exception:
-        lhs, rhs = terms[:1], terms[1:]
-        operator = SNUBA_AND
-
-    (
-        lhs_condition,
-        lhs_having,
-        projects_to_filter,
-        group_ids,
-    ) = convert_search_boolean_to_snuba_query(lhs, params)
-    (
-        rhs_condition,
-        rhs_having,
-        rhs_projects_to_filter,
-        rhs_group_ids,
-    ) = convert_search_boolean_to_snuba_query(rhs, params)
-
-    projects_to_filter.extend(rhs_projects_to_filter)
-    group_ids.extend(rhs_group_ids)
-
-    if operator == SNUBA_OR and (lhs_condition or rhs_condition) and (lhs_having or rhs_having):
-        raise InvalidSearchQuery(
-            "Having an OR between aggregate filters and normal filters is invalid."
-        )
-
-    condition, having = None, None
-    if lhs_condition or rhs_condition:
-        args = list(filter(None, [lhs_condition, rhs_condition]))
-        if not args:
-            condition = None
-        elif len(args) == 1:
-            condition = args[0]
-        else:
-            condition = [operator, args]
-
-    if lhs_having or rhs_having:
-        args = list(filter(None, [lhs_having, rhs_having]))
-        if not args:
-            having = None
-        elif len(args) == 1:
-            having = args[0]
-        else:
-            having = [operator, args]
-
-    return condition, having, projects_to_filter, group_ids
-
-
-def get_filter(query=None, params=None, parser_config_overrides=None):
-    """
-    Returns an eventstore filter given the search text provided by the user and
-    URL params
-    """
-    # NOTE: this function assumes project permissions check already happened
-    parsed_terms = []
-    if query is not None:
-        try:
-            parsed_terms = parse_search_query(
-                query, params=params, config_overrides=parser_config_overrides
-            )
-        except ParseError as e:
-            raise InvalidSearchQuery(f"Parse error: {e.expr.name} (column {e.column():d})")
-
-    kwargs = {
-        "start": None,
-        "end": None,
-        "conditions": [],
-        "having": [],
-        "user_id": None,
-        "organization_id": None,
-        "team_id": [],
-        "project_ids": [],
-        "group_ids": [],
-        "condition_aggregates": [],
-        "aliases": params.get("aliases", {}) if params is not None else {},
-    }
-
-    projects_to_filter = []
-    if any(
-        isinstance(term, ParenExpression) or SearchBoolean.is_operator(term)
-        for term in parsed_terms
-    ):
-        (
-            condition,
-            having,
-            found_projects_to_filter,
-            group_ids,
-        ) = convert_search_boolean_to_snuba_query(parsed_terms, params)
-
-        if condition:
-            and_conditions = flatten_condition_tree(condition, SNUBA_AND)
-            for func in and_conditions:
-                kwargs["conditions"].append(convert_function_to_condition(func))
-        if having:
-            kwargs["condition_aggregates"] = [
-                term.key.name for term in parsed_terms if isinstance(term, AggregateFilter)
-            ]
-            and_having = flatten_condition_tree(having, SNUBA_AND)
-            for func in and_having:
-                kwargs["having"].append(convert_function_to_condition(func))
-        if found_projects_to_filter:
-            projects_to_filter = list(set(found_projects_to_filter))
-        if group_ids is not None:
-            kwargs["group_ids"].extend(list(set(group_ids)))
-    else:
-        projects_to_filter = set()
-        for term in parsed_terms:
-            if isinstance(term, SearchFilter):
-                conditions, found_projects_to_filter, group_ids = format_search_filter(term, params)
-                if len(conditions) > 0:
-                    kwargs["conditions"].extend(conditions)
-                if found_projects_to_filter:
-                    projects_to_filter.update(found_projects_to_filter)
-                if group_ids is not None:
-                    kwargs["group_ids"].extend(group_ids)
-            elif isinstance(term, AggregateFilter):
-                converted_filter = convert_aggregate_filter_to_snuba_query(term, params)
-                kwargs["condition_aggregates"].append(term.key.name)
-                if converted_filter:
-                    kwargs["having"].append(converted_filter)
-        projects_to_filter = list(projects_to_filter)
-
-    # Keys included as url params take precedent if same key is included in search
-    # They are also considered safe and to have had access rules applied unlike conditions
-    # from the query string.
-    if params:
-        for key in ("start", "end"):
-            kwargs[key] = params.get(key, None)
-        if "user_id" in params:
-            kwargs["user_id"] = params["user_id"]
-        if "organization_id" in params:
-            kwargs["organization_id"] = params["organization_id"]
-        if "team_id" in params:
-            kwargs["team_id"] = params["team_id"]
-        # OrganizationEndpoint.get_filter() uses project_id, but eventstore.Filter uses project_ids
-        if "project_id" in params:
-            if projects_to_filter:
-                kwargs["project_ids"] = projects_to_filter
-            else:
-                kwargs["project_ids"] = params["project_id"]
-        if "environment" in params:
-            term = SearchFilter(SearchKey("environment"), "=", SearchValue(params["environment"]))
-            kwargs["conditions"].append(convert_search_filter_to_snuba_query(term))
-        if "group_ids" in params:
-            kwargs["group_ids"] = to_list(params["group_ids"])
-        # Deprecated alias, use `group_ids` instead
-        if ISSUE_ID_ALIAS in params:
-            kwargs["group_ids"] = to_list(params["issue.id"])
-
-    return eventstore.Filter(**kwargs)
-
-
 def format_search_filter(term, params):
     projects_to_filter = []  # Used to avoid doing multiple conditions on project ID
     conditions = []
@@ -961,10 +662,12 @@ def format_search_filter(term, params):
             for p in Project.objects.filter(id__in=params.get("project_id", []), slug__in=slugs)
         }
         missing = [slug for slug in slugs if slug not in projects]
-        if missing and term.operator in EQUALITY_OPERATORS:
-            raise InvalidSearchQuery(
-                f"Invalid query. Project(s) {oxfordize_list(missing)} do not exist or are not actively selected."
-            )
+        if missing:
+            if term.operator in EQUALITY_OPERATORS:
+                raise InvalidSearchQuery(
+                    f"Invalid query. Project(s) {oxfordize_list(missing)} do not exist or are not actively selected."
+                )
+
         project_ids = list(sorted(projects.values()))
         if project_ids:
             # Create a new search filter with the correct values
@@ -979,7 +682,7 @@ def format_search_filter(term, params):
                     projects_to_filter = project_ids
                 conditions.append(converted_filter)
     elif name == ISSUE_ID_ALIAS and value != "":
-        # A blank term value means that this is a has filter
+        # A blank term value means that this is a 'has' filter
         if term.operator in EQUALITY_OPERATORS:
             group_ids = to_list(value)
         else:
@@ -1051,5 +754,10 @@ def format_search_filter(term, params):
 
 
 # Not a part of search.events.types to avoid a circular loop
-ParsedTerm = Union[SearchFilter, AggregateFilter]
+ParsedTerm = Union[
+    SearchFilter,
+    AggregateFilter,
+    ParenExpression,
+    str,
+]
 ParsedTerms = Sequence[ParsedTerm]

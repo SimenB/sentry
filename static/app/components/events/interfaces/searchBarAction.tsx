@@ -1,21 +1,19 @@
 import styled from '@emotion/styled';
 
-import CompactSelect from 'sentry/components/compactSelect';
+import type {SelectOption, SelectOptionOrSection} from 'sentry/components/compactSelect';
+import {CompactSelect} from 'sentry/components/compactSelect';
 import DropdownButton from 'sentry/components/dropdownButton';
 import SearchBar from 'sentry/components/searchBar';
 import {t, tn} from 'sentry/locale';
-import space from 'sentry/styles/space';
-
-type FilterOption = React.ComponentProps<typeof CompactSelect>['options'][0];
 
 type Props = {
   onChange: (value: string) => void;
   placeholder: string;
   query: string;
   className?: string;
-  filterOptions?: FilterOption[];
-  filterSelections?: FilterOption[];
-  onFilterChange?: (options: FilterOption[]) => void;
+  filterOptions?: Array<SelectOptionOrSection<string>>;
+  filterSelections?: Array<SelectOption<string>>;
+  onFilterChange?: (options: Array<SelectOption<string>>) => void;
 };
 
 function SearchBarAction({
@@ -27,8 +25,12 @@ function SearchBarAction({
   onFilterChange,
   className,
 }: Props) {
-  const trigger: React.ComponentProps<typeof CompactSelect>['trigger'] = props => (
+  const trigger: React.ComponentProps<typeof CompactSelect>['trigger'] = (
+    props,
+    isOpen
+  ) => (
     <StyledTrigger
+      isOpen={isOpen}
       size="sm"
       priority={filterSelections && filterSelections.length > 0 ? 'primary' : 'default'}
       {...props}
@@ -70,17 +72,12 @@ const Wrapper = styled('div')`
   width: 100%;
   justify-content: flex-end;
 
-  @media (max-width: ${p => p.theme.breakpoints.small}) {
-    margin-top: ${space(1)};
-    flex-direction: column;
-  }
-
   @media (min-width: ${p => p.theme.breakpoints.medium}) {
-    width: 400px;
+    width: 350px;
   }
 
   @media (min-width: ${p => p.theme.breakpoints.xlarge}) {
-    width: 600px;
+    width: 500px;
   }
 `;
 
@@ -95,20 +92,8 @@ const StyledSearchBar = styled(SearchBar)<{blendWithFilter?: boolean}>`
         border-left-width: 0;
       }
     `}
-
-  @media (max-width: ${p => p.theme.breakpoints.small}) {
-    input {
-      border-radius: ${p => p.theme.borderRadius};
-      border-left-width: 1px;
-    }
-  }
 `;
 
 const StyledTrigger = styled(DropdownButton)`
   border-radius: ${p => p.theme.borderRadiusLeft};
-
-  @media (max-width: ${p => p.theme.breakpoints.small}) {
-    border-radius: ${p => p.theme.borderRadius};
-    margin-bottom: ${space(1)};
-  }
 `;
