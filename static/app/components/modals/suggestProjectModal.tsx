@@ -1,4 +1,4 @@
-import {Component, Fragment} from 'react';
+import {Fragment, useState} from 'react';
 import styled from '@emotion/styled';
 import * as qs from 'query-string';
 
@@ -9,19 +9,19 @@ import {
   addLoadingMessage,
   addSuccessMessage,
 } from 'sentry/actionCreators/indicator';
-import {ModalRenderProps} from 'sentry/actionCreators/modal';
-import {Client} from 'sentry/api';
+import type {ModalRenderProps} from 'sentry/actionCreators/modal';
+import type {Client} from 'sentry/api';
 import Access from 'sentry/components/acl/access';
-import Button from 'sentry/components/button';
+import {Button, LinkButton} from 'sentry/components/button';
 import ButtonBar from 'sentry/components/buttonBar';
 import EmailField from 'sentry/components/forms/fields/emailField';
 import Form from 'sentry/components/forms/form';
 import List from 'sentry/components/list';
 import ListItem from 'sentry/components/list/listItem';
 import {t, tct} from 'sentry/locale';
-import space from 'sentry/styles/space';
-import {Organization} from 'sentry/types';
-import trackAdvancedAnalyticsEvent from 'sentry/utils/analytics/trackAdvancedAnalyticsEvent';
+import {space} from 'sentry/styles/space';
+import type {Organization} from 'sentry/types/organization';
+import {trackAnalytics} from 'sentry/utils/analytics';
 import withApi from 'sentry/utils/withApi';
 
 type Props = ModalRenderProps & {
@@ -30,68 +30,59 @@ type Props = ModalRenderProps & {
   organization: Organization;
 };
 
-type State = {
-  askTeammate: boolean;
-};
+function SuggestProjectModal(props: Props) {
+  const [askTeammate, setAskTeammate] = useState<boolean>(false);
+  const {matchedUserAgentString, organization, closeModal, Body, Header, Footer} = props;
 
-class SuggestProjectModal extends Component<Props, State> {
-  state: State = {
-    askTeammate: false,
-  };
-
-  handleGetStartedClick = () => {
-    const {matchedUserAgentString, organization} = this.props;
-    trackAdvancedAnalyticsEvent('growth.clicked_mobile_prompt_setup_project', {
+  const handleGetStartedClick = () => {
+    trackAnalytics('growth.clicked_mobile_prompt_setup_project', {
       matchedUserAgentString,
       organization,
     });
   };
 
-  handleAskTeammate = () => {
-    const {matchedUserAgentString, organization} = this.props;
-    this.setState({askTeammate: true});
-    trackAdvancedAnalyticsEvent('growth.clicked_mobile_prompt_ask_teammate', {
+  const handleAskTeammate = () => {
+    setAskTeammate(true);
+    trackAnalytics('growth.clicked_mobile_prompt_ask_teammate', {
       matchedUserAgentString,
       organization,
     });
   };
 
-  goBack = () => {
-    this.setState({askTeammate: false});
+  const goBack = () => {
+    setAskTeammate(false);
   };
 
-  handleSubmitSuccess = () => {
-    const {matchedUserAgentString, organization, closeModal} = this.props;
+  const handleSubmitSuccess = () => {
     addSuccessMessage('Notified teammate successfully');
-    trackAdvancedAnalyticsEvent('growth.submitted_mobile_prompt_ask_teammate', {
+    trackAnalytics('growth.submitted_mobile_prompt_ask_teammate', {
       matchedUserAgentString,
       organization,
     });
     closeModal();
   };
 
-  handlePreSubmit = () => {
+  const handlePreSubmit = () => {
     addLoadingMessage(t('Submitting\u2026'));
   };
 
-  handleSubmitError = () => {
+  const handleSubmitError = () => {
     addErrorMessage(t('Error notifying teammate'));
   };
 
-  renderAskTeammate() {
-    const {Body, organization} = this.props;
+  const renderAskTeammate = () => {
     return (
       <Body>
         <Form
           apiEndpoint={`/organizations/${organization.slug}/request-project-creation/`}
           apiMethod="POST"
           submitLabel={t('Send')}
-          onSubmitSuccess={this.handleSubmitSuccess}
-          onSubmitError={this.handleSubmitError}
-          onPreSubmit={this.handlePreSubmit}
+          onSubmitSuccess={handleSubmitSuccess}
+          onSubmitError={handleSubmitError}
+          onPreSubmit={handlePreSubmit}
           extraButton={
             <BackWrapper>
-              <StyledBackButton onClick={this.goBack}>{t('Back')}</StyledBackButton>
+              <StyledBackButton onClick={goBack}>{t('Back')}</StyledBackButton>
             </BackWrapper>
           }
         >
@@ -109,11 +100,9 @@ class SuggestProjectModal extends Component<Props, State> {
         </Form>
       </Body>
     );
-  }
+  };
 
-  renderMain() {
-    const {Body, Footer, organization} = this.props;
-
+  const renderMain = () => {
     const paramString = qs.stringify({
       referrer: 'suggest_project',
       category: 'mobile',
@@ -162,23 +151,23 @@ class SuggestProjectModal extends Component<Props, State> {
           </ModalContainer>
         </Body>
         <Footer>
-          <Access organization={organization} access={['project:write']}>
+          <Access access={['project:write']}>
             {({hasAccess}) => (
               <ButtonBar gap={1}>
                 <Button
                   priority={hasAccess ? 'default' : 'primary'}
-                  onClick={this.handleAskTeammate}
+                  onClick={handleAskTeammate}
                 >
                   {t('Tell a Teammate')}
                 </Button>
                 {hasAccess && (
-                  <Button
+                  <LinkButton
                     href={newProjectLink}
-                    onClick={this.handleGetStartedClick}
+                    onClick={handleGetStartedClick}
                     priority="primary"
                   >
                     {t('Get Started')}
-                  </Button>
+                  </LinkButton>
                 )}
               </ButtonBar>
             )}
@@ -186,22 +175,18 @@ class SuggestProjectModal extends Component<Props, State> {
         </Footer>
       </Fragment>
     );
-  }
+  };
 
-  render() {
-    const {Header} = this.props;
-    const {askTeammate} = this.state;
-    const header = askTeammate ? t('Tell a Teammate') : t('Try Sentry for Mobile');
-    return (
-      <Fragment>
-        <Header>
-          <PatternHeader />
-          <Title>{header}</Title>
-        </Header>
-        {this.state.askTeammate ? this.renderAskTeammate() : this.renderMain()}
-      </Fragment>
-    );
-  }
+  const header = askTeammate ? t('Tell a Teammate') : t('Try Sentry for Mobile');
+  return (
+    <Fragment>
+      <Header>
+        <PatternHeader />
+        <Title>{header}</Title>
+      </Header>
+      {askTeammate ? renderAskTeammate() : renderMain()}
+    </Fragment>
+  );
 }
 
 const ModalContainer = styled('div')`

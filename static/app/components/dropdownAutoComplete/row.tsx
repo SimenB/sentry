@@ -1,10 +1,11 @@
 import {memo, useEffect, useMemo} from 'react';
 import styled from '@emotion/styled';
 
-import AutoComplete from 'sentry/components/autoComplete';
-import space from 'sentry/styles/space';
+import type AutoComplete from 'sentry/components/autoComplete';
+import InteractionStateLayer from 'sentry/components/interactionStateLayer';
+import {space} from 'sentry/styles/space';
 
-import {Item} from './types';
+import type {Item} from './types';
 
 type ItemSize = 'zero' | 'small';
 type AutoCompleteChildrenArgs<T extends Item> = Parameters<
@@ -13,7 +14,7 @@ type AutoCompleteChildrenArgs<T extends Item> = Parameters<
 
 type Props<T extends Item> = Pick<
   AutoCompleteChildrenArgs<T>,
-  'getItemProps' | 'registerVisibleItem' | 'inputValue'
+  'getItemProps' | 'registerVisibleItem'
 > &
   Omit<Parameters<AutoCompleteChildrenArgs<T>['getItemProps']>[0], 'index'> & {
     /**
@@ -35,7 +36,6 @@ function Row<T extends Item>({
   style,
   itemSize,
   isHighlighted,
-  inputValue,
   getItemProps,
   registerVisibleItem,
 }: Props<T>) {
@@ -51,7 +51,7 @@ function Row<T extends Item>({
   if (item.groupLabel) {
     return (
       <LabelWithBorder style={style}>
-        {item.label && <GroupLabel>{item.label}</GroupLabel>}
+        {item.label && <GroupLabel>{item.label as string}</GroupLabel>}
       </LabelWithBorder>
     );
   }
@@ -64,7 +64,8 @@ function Row<T extends Item>({
       style={style}
       {...itemProps}
     >
-      {typeof item.label === 'function' ? item.label({inputValue}) : item.label}
+      <InteractionStateLayer isHovered={isHighlighted} />
+      {item.label}
     </AutoCompleteItem>
   );
 }
@@ -122,7 +123,6 @@ const AutoCompleteItem = styled('div')<{
   scroll-margin: 20px 0;
 
   font-size: ${p => p.theme.fontSizeMedium};
-  background-color: ${p => (p.isHighlighted ? p.theme.hover : 'transparent')};
   color: ${p => (p.isHighlighted ? p.theme.textColor : 'inherit')};
   padding: ${p => getItemPaddingForSize(p.itemSize)};
   cursor: ${p => (p.disabled ? 'not-allowed' : 'pointer')};
@@ -130,10 +130,5 @@ const AutoCompleteItem = styled('div')<{
 
   :last-child {
     border-bottom: none;
-  }
-
-  :hover {
-    color: ${p => p.theme.textColor};
-    background-color: ${p => p.theme.hover};
   }
 `;

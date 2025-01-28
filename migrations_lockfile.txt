@@ -5,6 +5,22 @@ ahead of you.
 To resolve this, rebase against latest master and regenerate your migration. This file
 will then be regenerated, and you should be able to merge without conflicts.
 
+feedback: 0004_index_together
+
+hybridcloud: 0018_add_alert_and_member_invite_scopes_to_sentry_apps
+
 nodestore: 0002_nodestore_no_dictfield
-sentry: 0324_set_auto_assignments_true_by_default
-social_auth: 0001_initial
+
+remote_subscriptions: 0003_drop_remote_subscription
+
+replays: 0004_index_together
+
+sentry: 0822_alert_rule_always_organization
+
+social_auth: 0002_default_auto_field
+
+tempest: 0001_create_tempest_credentials_model
+
+uptime: 0024_add_status_to_project_uptime_subscription
+
+workflow_engine: 0027_drop_org_detector_req_action

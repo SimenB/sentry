@@ -1,9 +1,9 @@
 import {Flamegraph} from 'sentry/utils/profiling/flamegraph';
-import {Rect} from 'sentry/utils/profiling/gl/utils';
 import {EventedProfile} from 'sentry/utils/profiling/profile/eventedProfile';
 import {createFrameIndex} from 'sentry/utils/profiling/profile/utils';
+import {Rect} from 'sentry/utils/profiling/speedscope';
 
-const makeEmptyEventedTrace = (): EventedProfile => {
+const makeEmptyEventedTrace = (type?: 'flamegraph' | 'flamechart'): EventedProfile => {
   return EventedProfile.FromProfile(
     {
       name: 'profile',
@@ -14,20 +14,37 @@ const makeEmptyEventedTrace = (): EventedProfile => {
       threadID: 0,
       events: [],
     },
-    createFrameIndex('mobile', [])
+    createFrameIndex('mobile', []),
+    {type: type ?? 'flamechart'}
   );
 };
 
 describe('flamegraph', () => {
+  it('throws if we are trying to construct call order flamegraph', () => {
+    expect(() => {
+      return new Flamegraph(makeEmptyEventedTrace('flamegraph'), {
+        inverted: false,
+        sort: 'call order',
+      });
+    }).toThrow();
+  });
+  it('throws if we are trying to construct alphabetic order flamechart', () => {
+    expect(() => {
+      return new Flamegraph(makeEmptyEventedTrace('flamechart'), {
+        inverted: false,
+        sort: 'alphabetical',
+      });
+    }).toThrow();
+  });
   it('sets default timeline for empty flamegraph', () => {
-    const flamegraph = new Flamegraph(makeEmptyEventedTrace(), 0, {
+    const flamegraph = new Flamegraph(makeEmptyEventedTrace(), {
       inverted: false,
-      leftHeavy: false,
+      sort: 'call order',
     });
 
     expect(flamegraph.configSpace.equals(new Rect(0, 0, 1_000_000, 0))).toBe(true);
     expect(flamegraph.inverted).toBe(false);
-    expect(flamegraph.leftHeavy).toBe(false);
+    expect(flamegraph.sort).toBe('call order');
   });
 
   it('initializes formatter', () => {
@@ -49,12 +66,12 @@ describe('flamegraph', () => {
     const flamegraph = new Flamegraph(
       EventedProfile.FromProfile(
         trace,
-        createFrameIndex('mobile', [{name: 'f0'}, {name: 'f1'}])
+        createFrameIndex('mobile', [{name: 'f0'}, {name: 'f1'}]),
+        {type: 'flamechart'}
       ),
-      10,
       {
         inverted: true,
-        leftHeavy: true,
+        sort: 'left heavy',
       }
     );
     expect(flamegraph.formatter(1000)).toBe('1.00s');
@@ -80,18 +97,17 @@ describe('flamegraph', () => {
     const flamegraph = new Flamegraph(
       EventedProfile.FromProfile(
         trace,
-        createFrameIndex('mobile', [{name: 'f0'}, {name: 'f1'}])
+        createFrameIndex('mobile', [{name: 'f0'}, {name: 'f1'}]),
+        {type: 'flamechart'}
       ),
-      10,
       {
         inverted: true,
-        leftHeavy: true,
+        sort: 'left heavy',
       }
     );
 
     expect(flamegraph.inverted).toBe(true);
-    expect(flamegraph.leftHeavy).toBe(true);
-    expect(flamegraph.profileIndex).toBe(10);
+    expect(flamegraph.sort).toBe('left heavy');
   });
 
   it('creates a call order graph', () => {
@@ -115,19 +131,19 @@ describe('flamegraph', () => {
     const flamegraph = new Flamegraph(
       EventedProfile.FromProfile(
         trace,
-        createFrameIndex('mobile', [{name: 'f0'}, {name: 'f1'}, {name: 'f2'}])
+        createFrameIndex('mobile', [{name: 'f0'}, {name: 'f1'}, {name: 'f2'}]),
+        {type: 'flamechart'}
       ),
-      10,
       {
         inverted: false,
-        leftHeavy: false,
+        sort: 'call order',
       }
     );
 
-    const order = ['f0', 'f1', 'f2'];
+    const order = ['f0', 'f1', 'f2'].reverse();
     for (let i = 0; i < order.length; i++) {
-      expect(flamegraph.frames[i].frame.name).toBe(order[i]);
-      expect(flamegraph.frames[i].depth).toBe(i);
+      expect(flamegraph.frames[i]!.frame.name).toBe(order[i]);
+      expect(flamegraph.frames[i]!.depth).toBe(order.length - i - 1);
     }
   });
 
@@ -150,15 +166,15 @@ describe('flamegraph', () => {
     const flamegraph = new Flamegraph(
       EventedProfile.FromProfile(
         trace,
-        createFrameIndex('mobile', [{name: 'f0'}, {name: 'f1'}])
+        createFrameIndex('mobile', [{name: 'f0'}, {name: 'f1'}]),
+        {type: 'flamechart'}
       ),
-      10,
       {
         inverted: false,
-        leftHeavy: false,
+        sort: 'call order',
       }
     );
-    expect(flamegraph.frames.length).toBe(1);
+    expect(flamegraph.frames).toHaveLength(1);
     expect(flamegraph.frames.every(f => f.frame.name !== 'f1')).toBe(true);
   });
 
@@ -183,12 +199,12 @@ describe('flamegraph', () => {
     const flamegraph = new Flamegraph(
       EventedProfile.FromProfile(
         trace,
-        createFrameIndex('mobile', [{name: 'f0'}, {name: 'f1'}])
+        createFrameIndex('mobile', [{name: 'f0'}, {name: 'f1'}]),
+        {type: 'flamechart'}
       ),
-      10,
       {
         inverted: false,
-        leftHeavy: false,
+        sort: 'call order',
       }
     );
 
@@ -215,18 +231,18 @@ describe('flamegraph', () => {
         new Flamegraph(
           EventedProfile.FromProfile(
             trace,
-            createFrameIndex('mobile', [{name: 'f0'}, {name: 'f1'}])
+            createFrameIndex('mobile', [{name: 'f0'}, {name: 'f1'}]),
+            {type: 'flamechart'}
           ),
-          10,
           {
             inverted: false,
-            leftHeavy: false,
+            sort: 'call order',
           }
         )
     ).toThrow('Unbalanced append order stack');
   });
 
-  it('creates leftHeavy graph', () => {
+  it('creates left heavy graph', () => {
     const trace: Profiling.EventedProfile = {
       name: 'profile',
       startValue: 0,
@@ -245,24 +261,24 @@ describe('flamegraph', () => {
     const flamegraph = new Flamegraph(
       EventedProfile.FromProfile(
         trace,
-        createFrameIndex('mobile', [{name: 'f0'}, {name: 'f1'}])
+        createFrameIndex('mobile', [{name: 'f0'}, {name: 'f1'}]),
+        {type: 'flamechart'}
       ),
-      10,
       {
         inverted: false,
-        leftHeavy: true,
+        sort: 'left heavy',
       }
     );
 
-    expect(flamegraph.frames[0].frame.name).toBe('f0');
-    expect(flamegraph.frames[0].frame.totalWeight).toBe(1);
-    expect(flamegraph.frames[0].start).toBe(2);
-    expect(flamegraph.frames[0].end).toBe(3);
+    expect(flamegraph.frames[1]!.frame.name).toBe('f0');
+    expect(flamegraph.frames[1]!.frame.totalWeight).toBe(1);
+    expect(flamegraph.frames[1]!.start).toBe(2);
+    expect(flamegraph.frames[1]!.end).toBe(3);
 
-    expect(flamegraph.frames[1].frame.name).toBe('f1');
-    expect(flamegraph.frames[1].frame.totalWeight).toBe(2);
-    expect(flamegraph.frames[1].start).toBe(0);
-    expect(flamegraph.frames[1].end).toBe(2);
+    expect(flamegraph.frames[0]!.frame.name).toBe('f1');
+    expect(flamegraph.frames[0]!.frame.totalWeight).toBe(2);
+    expect(flamegraph.frames[0]!.start).toBe(0);
+    expect(flamegraph.frames[0]!.end).toBe(2);
   });
 
   it('updates startTime and endTime of left heavy children graph', () => {
@@ -286,16 +302,16 @@ describe('flamegraph', () => {
     const flamegraph = new Flamegraph(
       EventedProfile.FromProfile(
         trace,
-        createFrameIndex('mobile', [{name: 'f0'}, {name: 'f1'}, {name: 'f2'}])
+        createFrameIndex('mobile', [{name: 'f0'}, {name: 'f1'}, {name: 'f2'}]),
+        {type: 'flamechart'}
       ),
-      10,
       {
         inverted: false,
-        leftHeavy: true,
+        sort: 'left heavy',
       }
     );
 
-    expect(flamegraph.frames[0].frame.name).toBe('f0');
+    expect(flamegraph.frames[2]!.frame.name).toBe('f0');
   });
 
   it('From', () => {
@@ -319,32 +335,24 @@ describe('flamegraph', () => {
     const flamegraph = new Flamegraph(
       EventedProfile.FromProfile(
         trace,
-        createFrameIndex('mobile', [{name: 'f0'}, {name: 'f1'}, {name: 'f2'}])
+        createFrameIndex('mobile', [{name: 'f0'}, {name: 'f1'}, {name: 'f2'}]),
+        {type: 'flamechart'}
       ),
-      10,
       {
         inverted: false,
-        leftHeavy: true,
+        sort: 'left heavy',
       }
     );
 
     expect(
       Flamegraph.From(flamegraph, {
         inverted: false,
-        leftHeavy: false,
+        sort: 'call order',
       }).configSpace.equals(flamegraph.configSpace)
     ).toBe(true);
   });
 
   it('Empty', () => {
     expect(Flamegraph.Empty().configSpace.equals(new Rect(0, 0, 1_000, 0))).toBe(true);
-  });
-
-  it('setConfigSpace', () => {
-    expect(
-      Flamegraph.Empty()
-        .setConfigSpace(new Rect(0, 0, 10, 5))
-        .configSpace.equals(new Rect(0, 0, 10, 5))
-    ).toBe(true);
   });
 });

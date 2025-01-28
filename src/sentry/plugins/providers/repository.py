@@ -1,15 +1,20 @@
-from logging import getLogger
+from __future__ import annotations
 
-from django.db import IntegrityError, transaction
+from logging import getLogger
+from typing import ClassVar
+
+from django.db import IntegrityError, router, transaction
 from django.urls import reverse
 from rest_framework.request import Request
 from rest_framework.response import Response
 
 from sentry.api.serializers import serialize
 from sentry.exceptions import PluginError
-from sentry.models import Repository
+from sentry.integrations.services.integration import integration_service
+from sentry.models.repository import Repository
 from sentry.plugins.config import ConfigValidator
 from sentry.signals import repo_linked
+from sentry.users.services.usersocialauth.service import usersocialauth_service
 
 from .base import ProviderMixin
 
@@ -20,14 +25,39 @@ class RepositoryProvider(ProviderMixin):
     """
     Plugin Repository Provider
     Includes all plugins such as those in sentry-plugins repo
-    as well as any outside plugin repositories (i.e. Trello, Youtrack).
+    as well as any outside plugin repositories (i.e. Trello, Asana).
     Does not include the integrations in the sentry repository.
     """
 
-    name = None
+    name: ClassVar[str]
 
     def __init__(self, id):
         self.id = id
+
+    def needs_auth(self, user, **kwargs):
+        """
+        Return ``True`` if the authenticated user needs to associate an auth
+        service before performing actions with this provider.
+        """
+        if self.auth_provider is None:
+            return False
+
+        organization = kwargs.get("organization")
+        if organization:
+            ois = integration_service.get_organization_integrations(
+                providers=[self.auth_provider], organization_id=organization.id
+            )
+            has_auth = len(ois) > 0
+            if has_auth:
+                return False
+
+        if not user.is_authenticated:
+            return True
+
+        auths = usersocialauth_service.get_many(
+            filter={"user_id": user.id, "provider": self.auth_provider}
+        )
+        return len(auths) == 0
 
     def dispatch(self, request: Request, organization, **kwargs):
         if self.needs_auth(request.user):
@@ -66,7 +96,7 @@ class RepositoryProvider(ProviderMixin):
             return Response({"errors": {"__all__": str(e)}}, status=400)
 
         try:
-            with transaction.atomic():
+            with transaction.atomic(router.db_for_write(Repository)):
                 repo = Repository.objects.create(
                     organization_id=organization.id,
                     name=result["name"],

@@ -1,32 +1,41 @@
-import selectEvent from 'react-select-event';
+import {LocationFixture} from 'sentry-fixture/locationFixture';
 
 import {initializeOrg} from 'sentry-test/initializeOrg';
 import {render, screen, userEvent, waitFor} from 'sentry-test/reactTestingLibrary';
+import selectEvent from 'sentry-test/selectEvent';
 
-import {ModalRenderProps} from 'sentry/actionCreators/modal';
+import type {ModalRenderProps} from 'sentry/actionCreators/modal';
 import AddToDashboardModal from 'sentry/components/modals/widgetBuilder/addToDashboardModal';
+import type {DashboardDetails, DashboardListItem} from 'sentry/views/dashboards/types';
 import {
-  DashboardDetails,
-  DashboardListItem,
   DashboardWidgetSource,
   DisplayType,
-} from 'sentry/views/dashboardsV2/types';
+  WidgetType,
+} from 'sentry/views/dashboards/types';
 
 const stubEl = (props: {children?: React.ReactNode}) => <div>{props.children}</div>;
+
+jest.mock('sentry/components/lazyRender', () => ({
+  LazyRender: ({children}: {children: React.ReactNode}) => children,
+}));
 
 const mockWidgetAsQueryParams = {
   defaultTableColumns: ['field1', 'field2'],
   defaultTitle: 'Default title',
   defaultWidgetQuery: '',
   displayType: DisplayType.LINE,
+  end: undefined,
   environment: [],
-  project: [],
+  project: [1],
   source: DashboardWidgetSource.DISCOVERV2,
+  start: undefined,
+  statsPeriod: '1h',
+  utc: undefined,
 };
 
 describe('add to dashboard modal', () => {
-  let eventsStatsMock;
-  let initialData;
+  let eventsStatsMock!: jest.Mock;
+  let initialData!: ReturnType<typeof initializeOrg>;
 
   const testDashboardListItem: DashboardListItem = {
     id: '1',
@@ -42,6 +51,7 @@ describe('add to dashboard modal', () => {
     createdBy: undefined,
     dateCreated: '2020-01-01T00:00:00.000Z',
     widgets: [],
+    environment: [],
     projects: [1],
     period: '1h',
     filters: {release: ['abc@v1.2.0']},
@@ -75,9 +85,7 @@ describe('add to dashboard modal', () => {
   };
 
   beforeEach(() => {
-    initialData = initializeOrg({
-      ...initializeOrg(),
-    });
+    initialData = initializeOrg();
 
     MockApiClient.addMockResponse({
       url: '/organizations/org-slug/dashboards/',
@@ -89,10 +97,20 @@ describe('add to dashboard modal', () => {
       body: testDashboard,
     });
 
+    MockApiClient.addMockResponse({
+      url: '/organizations/org-slug/releases/stats/',
+      body: [],
+    });
+
     eventsStatsMock = MockApiClient.addMockResponse({
       url: '/organizations/org-slug/events-stats/',
       body: [],
     });
+  });
+
+  afterEach(() => {
+    MockApiClient.clearMockResponses();
+    jest.clearAllMocks();
   });
 
   it('renders with the widget title and description', async function () {
@@ -108,7 +126,7 @@ describe('add to dashboard modal', () => {
         selection={defaultSelection}
         router={initialData.router}
         widgetAsQueryParams={mockWidgetAsQueryParams}
-        location={TestStubs.location()}
+        location={LocationFixture()}
       />
     );
 
@@ -120,10 +138,10 @@ describe('add to dashboard modal', () => {
     expect(screen.getByText('Select Dashboard')).toBeInTheDocument();
     expect(
       screen.getByText(
-        'This is a preview of how the widget will appear in your dashboard.'
+        /This is a preview of how the widget will appear in your dashboard./
       )
     ).toBeInTheDocument();
-    expect(screen.getByRole('button', {name: 'Add + Stay in Discover'})).toBeDisabled();
+    expect(screen.getByRole('button', {name: 'Add + Stay on this Page'})).toBeDisabled();
     expect(screen.getByRole('button', {name: 'Open in Widget Builder'})).toBeDisabled();
   });
 
@@ -140,7 +158,7 @@ describe('add to dashboard modal', () => {
         selection={defaultSelection}
         router={initialData.router}
         widgetAsQueryParams={mockWidgetAsQueryParams}
-        location={TestStubs.location()}
+        location={LocationFixture()}
       />
     );
 
@@ -148,12 +166,12 @@ describe('add to dashboard modal', () => {
       expect(screen.getByText('Select Dashboard')).toBeEnabled();
     });
 
-    expect(screen.getByRole('button', {name: 'Add + Stay in Discover'})).toBeDisabled();
+    expect(screen.getByRole('button', {name: 'Add + Stay on this Page'})).toBeDisabled();
     expect(screen.getByRole('button', {name: 'Open in Widget Builder'})).toBeDisabled();
 
     await selectEvent.select(screen.getByText('Select Dashboard'), 'Test Dashboard');
 
-    expect(screen.getByRole('button', {name: 'Add + Stay in Discover'})).toBeEnabled();
+    expect(screen.getByRole('button', {name: 'Add + Stay on this Page'})).toBeEnabled();
     expect(screen.getByRole('button', {name: 'Open in Widget Builder'})).toBeEnabled();
   });
 
@@ -170,7 +188,7 @@ describe('add to dashboard modal', () => {
         selection={defaultSelection}
         router={initialData.router}
         widgetAsQueryParams={mockWidgetAsQueryParams}
-        location={TestStubs.location()}
+        location={LocationFixture()}
       />
     );
 
@@ -178,16 +196,12 @@ describe('add to dashboard modal', () => {
       expect(screen.getByText('Select Dashboard')).toBeEnabled();
     });
 
-    selectEvent.openMenu(screen.getByText('Select Dashboard'));
+    await selectEvent.openMenu(screen.getByText('Select Dashboard'));
     expect(screen.getByText('+ Create New Dashboard')).toBeInTheDocument();
     expect(screen.getByText('Test Dashboard')).toBeInTheDocument();
   });
 
   it('applies dashboard saved filters to visualization', async function () {
-    initialData.organization = {
-      ...initialData.organization,
-      features: ['dashboards-top-level-filter'],
-    };
     render(
       <AddToDashboardModal
         Header={stubEl}
@@ -200,7 +214,7 @@ describe('add to dashboard modal', () => {
         selection={defaultSelection}
         router={initialData.router}
         widgetAsQueryParams={mockWidgetAsQueryParams}
-        location={TestStubs.location()}
+        location={LocationFixture()}
       />
     );
 
@@ -229,11 +243,11 @@ describe('add to dashboard modal', () => {
       expect.objectContaining({
         query: expect.objectContaining({
           environment: [],
-          interval: '5m',
+          interval: '1m',
           orderby: '',
           partial: '1',
           project: [1],
-          query: ' release:abc@v1.2.0 ',
+          query: ' release:"abc@v1.2.0" ',
           statsPeriod: '1h',
           yAxis: ['count()'],
         }),
@@ -254,7 +268,7 @@ describe('add to dashboard modal', () => {
         selection={defaultSelection}
         router={initialData.router}
         widgetAsQueryParams={mockWidgetAsQueryParams}
-        location={TestStubs.location()}
+        location={LocationFixture()}
       />
     );
 
@@ -290,7 +304,7 @@ describe('add to dashboard modal', () => {
         selection={defaultSelection}
         router={initialData.router}
         widgetAsQueryParams={mockWidgetAsQueryParams}
-        location={TestStubs.location()}
+        location={LocationFixture()}
       />
     );
 
@@ -299,7 +313,7 @@ describe('add to dashboard modal', () => {
     });
     await selectEvent.select(screen.getByText('Select Dashboard'), 'Test Dashboard');
 
-    userEvent.click(screen.getByText('Open in Widget Builder'));
+    await userEvent.click(screen.getByText('Open in Widget Builder'));
     expect(initialData.router.push).toHaveBeenCalledWith({
       pathname: '/organizations/org-slug/dashboard/1/widget/new/',
       query: mockWidgetAsQueryParams,
@@ -307,11 +321,6 @@ describe('add to dashboard modal', () => {
   });
 
   it('navigates to the widget builder with saved filters', async () => {
-    initialData.organization = {
-      ...initialData.organization,
-      features: ['dashboards-top-level-filter'],
-    };
-
     render(
       <AddToDashboardModal
         Header={stubEl}
@@ -324,7 +333,7 @@ describe('add to dashboard modal', () => {
         selection={defaultSelection}
         router={initialData.router}
         widgetAsQueryParams={mockWidgetAsQueryParams}
-        location={TestStubs.location()}
+        location={LocationFixture()}
       />
     );
 
@@ -333,7 +342,7 @@ describe('add to dashboard modal', () => {
     });
     await selectEvent.select(screen.getByText('Select Dashboard'), 'Test Dashboard');
 
-    userEvent.click(screen.getByText('Open in Widget Builder'));
+    await userEvent.click(screen.getByText('Open in Widget Builder'));
     expect(initialData.router.push).toHaveBeenCalledWith({
       pathname: '/organizations/org-slug/dashboard/1/widget/new/',
       query: expect.objectContaining({
@@ -366,11 +375,11 @@ describe('add to dashboard modal', () => {
         CloseButton={stubEl}
         closeModal={() => undefined}
         organization={initialData.organization}
-        widget={widget}
+        widget={{...widget, widgetType: WidgetType.ERRORS}}
         selection={defaultSelection}
         router={initialData.router}
         widgetAsQueryParams={mockWidgetAsQueryParams}
-        location={TestStubs.location()}
+        location={LocationFixture()}
       />
     );
 
@@ -379,7 +388,7 @@ describe('add to dashboard modal', () => {
     });
     await selectEvent.select(screen.getByText('Select Dashboard'), 'Test Dashboard');
 
-    userEvent.click(screen.getByText('Add + Stay in Discover'));
+    await userEvent.click(screen.getByText('Add + Stay on this Page'));
     expect(dashboardDetailGetMock).toHaveBeenCalled();
 
     // mocked widgets response is an empty array, assert this new widget
@@ -387,7 +396,11 @@ describe('add to dashboard modal', () => {
     await waitFor(() => {
       expect(dashboardDetailPutMock).toHaveBeenCalledWith(
         '/organizations/org-slug/dashboards/1/',
-        expect.objectContaining({data: expect.objectContaining({widgets: [widget]})})
+        expect.objectContaining({
+          data: expect.objectContaining({
+            widgets: [{...widget, widgetType: WidgetType.ERRORS}],
+          }),
+        })
       );
     });
   });
@@ -428,7 +441,7 @@ describe('add to dashboard modal', () => {
         selection={defaultSelection}
         router={initialData.router}
         widgetAsQueryParams={mockWidgetAsQueryParams}
-        location={TestStubs.location()}
+        location={LocationFixture()}
       />
     );
 
@@ -437,7 +450,7 @@ describe('add to dashboard modal', () => {
     });
     await selectEvent.select(screen.getByText('Select Dashboard'), 'Test Dashboard');
 
-    userEvent.click(screen.getByText('Add + Stay in Discover'));
+    await userEvent.click(screen.getByText('Add + Stay on this Page'));
     expect(dashboardDetailGetMock).toHaveBeenCalled();
 
     // mocked widgets response is an empty array, assert this new widget
@@ -509,7 +522,7 @@ describe('add to dashboard modal', () => {
         selection={defaultSelection}
         router={initialData.router}
         widgetAsQueryParams={mockWidgetAsQueryParams}
-        location={TestStubs.location()}
+        location={LocationFixture()}
       />
     );
 
@@ -518,7 +531,7 @@ describe('add to dashboard modal', () => {
     });
     await selectEvent.select(screen.getByText('Select Dashboard'), 'Test Dashboard');
 
-    userEvent.click(screen.getByText('Add + Stay in Discover'));
+    await userEvent.click(screen.getByText('Add + Stay on this Page'));
     expect(dashboardDetailGetMock).toHaveBeenCalled();
 
     // mocked widgets response is an empty array, assert this new widget
@@ -567,7 +580,7 @@ describe('add to dashboard modal', () => {
         selection={defaultSelection}
         router={initialData.router}
         widgetAsQueryParams={mockWidgetAsQueryParams}
-        location={TestStubs.location()}
+        location={LocationFixture()}
       />
     );
 
@@ -579,7 +592,7 @@ describe('add to dashboard modal', () => {
       '+ Create New Dashboard'
     );
 
-    expect(screen.getByRole('button', {name: 'Add + Stay in Discover'})).toBeDisabled();
+    expect(screen.getByRole('button', {name: 'Add + Stay on this Page'})).toBeDisabled();
     expect(screen.getByRole('button', {name: 'Open in Widget Builder'})).toBeEnabled();
   });
 });

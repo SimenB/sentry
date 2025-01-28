@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from typing import Any, Mapping
+from collections.abc import Mapping
+from typing import Any
 
 import requests
 from django.utils.functional import cached_property
@@ -31,7 +32,11 @@ class BaseApiResponse:
     def json(self) -> Any:
         raise NotImplementedError
 
-    @cached_property  # type: ignore
+    @property
+    def body(self) -> Any:
+        return self.json
+
+    @cached_property
     def rel(self) -> Mapping[str, str]:
         link_header = (self.headers or {}).get("Link", "")
         parsed_links = requests.utils.parse_header_links(link_header)

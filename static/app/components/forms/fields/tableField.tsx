@@ -1,19 +1,21 @@
 import {Component, Fragment} from 'react';
 import styled from '@emotion/styled';
-import flatten from 'lodash/flatten';
 
-import Alert from 'sentry/components/alert';
-import Button from 'sentry/components/button';
+import {Alert} from 'sentry/components/alert';
+import {Button} from 'sentry/components/button';
 import Confirm from 'sentry/components/confirm';
-import {TableType} from 'sentry/components/forms/types';
+import FormField from 'sentry/components/forms/formField';
+import type {TableType} from 'sentry/components/forms/types';
 import Input from 'sentry/components/input';
 import {IconAdd, IconDelete} from 'sentry/icons';
 import {t} from 'sentry/locale';
-import space from 'sentry/styles/space';
-import {defined, objectIsEmpty} from 'sentry/utils';
+import {space} from 'sentry/styles/space';
+import {defined} from 'sentry/utils';
 import {singleLineRenderer} from 'sentry/utils/marked';
+import {isEmptyObject} from 'sentry/utils/object/isEmptyObject';
 
-import InputField, {InputFieldProps} from './inputField';
+// XXX(epurkhiser): This is wrong, it should not be inheriting these props
+import type {InputFieldProps} from './inputField';
 
 interface DefaultProps {
   /**
@@ -39,7 +41,7 @@ const DEFAULT_PROPS: DefaultProps = {
 export default class TableField extends Component<InputFieldProps> {
   static defaultProps = DEFAULT_PROPS;
 
-  hasValue = value => defined(value) && !objectIsEmpty(value);
+  hasValue = (value: any) => defined(value) && !isEmptyObject(value);
 
   renderField = (props: RenderProps) => {
     const {
@@ -63,9 +65,11 @@ export default class TableField extends Component<InputFieldProps> {
       onChange?.(nextValue, []);
 
       // nextValue is an array of ObservableObjectAdministration objects
-      const validValues = !flatten(Object.values(nextValue).map(Object.entries)).some(
-        ([key, val]) => key !== 'id' && !val // don't allow empty values except if it's the ID field
-      );
+      const validValues = !Object.values(nextValue)
+        .flatMap(Object.entries)
+        .some(
+          ([key, val]) => key !== 'id' && !val // don't allow empty values except if it's the ID field
+        );
 
       if (allowEmpty || validValues) {
         // TOOD: add debouncing or use a form save button
@@ -77,7 +81,7 @@ export default class TableField extends Component<InputFieldProps> {
       saveChanges([...value, emptyValue]);
     };
 
-    const removeRow = rowIndex => {
+    const removeRow = (rowIndex: any) => {
       const newValue = [...value];
       newValue.splice(rowIndex, 1);
       saveChanges(newValue);
@@ -99,12 +103,7 @@ export default class TableField extends Component<InputFieldProps> {
     const disabled = typeof rawDisabled === 'function' ? false : rawDisabled;
 
     const button = (
-      <Button
-        icon={<IconAdd size="xs" isCircled />}
-        onClick={addRow}
-        size="xs"
-        disabled={disabled}
-      >
+      <Button icon={<IconAdd isCircled />} onClick={addRow} size="xs" disabled={disabled}>
         {addButtonText}
       </Button>
     );
@@ -136,7 +135,9 @@ export default class TableField extends Component<InputFieldProps> {
         <HeaderContainer>
           {mappedKeys.map((fieldKey, i) => (
             <Header key={fieldKey}>
-              <HeaderLabel>{columnLabels?.[fieldKey]}</HeaderLabel>
+              <HeaderLabel>
+                {columnLabels?.[fieldKey as keyof typeof columnLabels]}
+              </HeaderLabel>
               {i === mappedKeys.length - 1 && button}
             </Header>
           ))}
@@ -182,12 +183,13 @@ export default class TableField extends Component<InputFieldProps> {
     // change within the toast. Just turn off displaying the from/to portion of
     // the message
     return (
-      <InputField
+      <FormField
         {...this.props}
         formatMessageValue={false}
-        inline={({model}) => !this.hasValue(model.getValue(this.props.name))}
-        field={this.renderField}
-      />
+        inline={({model}: any) => !this.hasValue(model.getValue(this.props.name))}
+      >
+        {this.renderField}
+      </FormField>
     );
   }
 }

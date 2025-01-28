@@ -1,4 +1,4 @@
-import Alert from 'sentry/components/alert';
+import {Alert} from 'sentry/components/alert';
 import {t} from 'sentry/locale';
 
 type Props = {
@@ -6,7 +6,7 @@ type Props = {
 };
 
 function NoStackTraceMessage({message}: Props) {
-  return <Alert type="error">{message ?? t('No or unknown stacktrace')}</Alert>;
+  return <Alert type="muted">{message ?? t('No stacktrace found.')}</Alert>;
 }
 
 export default NoStackTraceMessage;

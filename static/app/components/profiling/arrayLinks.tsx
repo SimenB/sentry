@@ -1,14 +1,15 @@
 import {useState} from 'react';
-import {Link} from 'react-router';
 import styled from '@emotion/styled';
-import {LocationDescriptor} from 'history';
+import type {LocationDescriptor} from 'history';
 
+import Link from 'sentry/components/links/link';
 import {t} from 'sentry/locale';
-import space from 'sentry/styles/space';
+import {space} from 'sentry/styles/space';
 
 type Item = {
   target: LocationDescriptor;
   value: string;
+  onClick?: () => void;
 };
 
 interface ArrayLinksProps {
@@ -41,7 +42,9 @@ function ArrayLinks({items}: ArrayLinksProps) {
 function LinkedItem({item}: {item: Item}) {
   return (
     <ArrayItem>
-      <Link to={item.target}>{item.value}</Link>
+      <Link to={item.target} onClick={item?.onClick}>
+        {item.value}
+      </Link>
     </ArrayItem>
   );
 }
@@ -68,7 +71,7 @@ const ButtonContainer = styled('div')`
     outline: none;
     padding: 0;
     cursor: pointer;
-    color: ${p => p.theme.blue300};
+    color: ${p => p.theme.linkColor};
     margin-left: ${space(0.5)};
   }
 `;

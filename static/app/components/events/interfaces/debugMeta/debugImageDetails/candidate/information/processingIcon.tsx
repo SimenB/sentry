@@ -1,11 +1,9 @@
 import * as Sentry from '@sentry/react';
 
-import Tooltip from 'sentry/components/tooltip';
+import {Tooltip} from 'sentry/components/tooltip';
 import {IconCheckmark, IconClose, IconWarning} from 'sentry/icons';
-import {
-  CandidateProcessingInfo,
-  CandidateProcessingStatus,
-} from 'sentry/types/debugImage';
+import type {CandidateProcessingInfo} from 'sentry/types/debugImage';
+import {CandidateProcessingStatus} from 'sentry/types/debugImage';
 
 type Props = {
   processingInfo: CandidateProcessingInfo;
@@ -14,12 +12,12 @@ type Props = {
 function ProcessingIcon({processingInfo}: Props) {
   switch (processingInfo.status) {
     case CandidateProcessingStatus.OK:
-      return <IconCheckmark color="green300" size="xs" />;
+      return <IconCheckmark color="successText" size="xs" />;
     case CandidateProcessingStatus.ERROR: {
       const {details} = processingInfo;
       return (
         <Tooltip title={details} disabled={!details}>
-          <IconClose color="red300" size="xs" />
+          <IconClose color="dangerText" size="xs" />
         </Tooltip>
       );
     }
@@ -27,7 +25,7 @@ function ProcessingIcon({processingInfo}: Props) {
       const {details} = processingInfo;
       return (
         <Tooltip title={details} disabled={!details}>
-          <IconWarning color="yellow300" size="xs" />
+          <IconWarning color="warningText" size="xs" />
         </Tooltip>
       );
     }

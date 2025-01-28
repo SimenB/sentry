@@ -37,7 +37,7 @@ function tryParseStorage<T>(jsonEncodedValue: string): T | null {
 }
 
 function makeTypeExceptionString(instance: string) {
-  return `useLocalStorage: Native serialization of ${instance} is not supported. You are attempting to serialize a ${instance} instance this data will be lost. For more info, see how ${instance.toLowerCase()}s are serialized https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/JSON/stringify#examples`;
+  return `useLocalStorage: Native serialization of ${instance} is not supported. You are attempting to serialize a ${instance} instance, this data will be lost. For more info, see how ${instance.toLowerCase()}s are serialized https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/JSON/stringify#examples`;
 }
 
 function strictReplacer<T>(_key: string, value: T): T {
@@ -73,7 +73,7 @@ function defaultOrInitializer<S>(
 ): S {
   if (typeof defaultValueOrInitializeFn === 'function') {
     // https://github.com/microsoft/TypeScript/issues/37663#issuecomment-759728342
-    // @ts-expect-error
+    // @ts-expect-error TS(2349): This expression is not callable.
     return defaultValueOrInitializeFn(value, rawValue);
   }
   return value === undefined ? defaultValueOrInitializeFn : (value as S);
@@ -119,7 +119,7 @@ function initializeStorage<S>(
 export function useLocalStorageState<S>(
   key: string,
   initialState: S | ((value?: unknown, rawValue?: unknown) => S)
-): [S, (value: S) => void] {
+): [S, (value: S | ((prevState: S) => S)) => void] {
   const [value, setValue] = useState(() => {
     return initializeStorage<S>(key, initialState);
   });
@@ -140,18 +140,31 @@ export function useLocalStorageState<S>(
   }, [key]);
 
   const setStoredValue = useCallback(
-    (newValue: S) => {
+    (newValue: S | ((prevState: S) => S)) => {
       if (typeof key !== 'string') {
         throw new TypeError('useLocalStorage: key must be a string');
       }
 
-      setValue(newValue);
-
-      // Not critical and we dont want to block anything after this, so fire microtask
-      // and allow this to eventually be in sync.
-      scheduleMicroTask(() => {
-        localStorageWrapper.setItem(key, stringifyForStorage(newValue));
-      });
+      if (typeof newValue === 'function') {
+        setValue(p => {
+          // should be storing functions in state...
+          // Not critical and we dont want to block anything after this, so fire microtask
+          // and allow this to eventually be in sync.
+          // @ts-expect-error TS(2349): This expression is not callable.
+          const newlyComputedValue = newValue(p);
+          scheduleMicroTask(() => {
+            localStorageWrapper.setItem(key, stringifyForStorage(newlyComputedValue));
+          });
+          return newlyComputedValue;
+        });
+      } else {
+        setValue(newValue);
+        // Not critical and we dont want to block anything after this, so fire microtask
+        // and allow this to eventually be in sync.
+        scheduleMicroTask(() => {
+          localStorageWrapper.setItem(key, stringifyForStorage(newValue));
+        });
+      }
     },
     [key]
   );

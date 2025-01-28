@@ -7,22 +7,30 @@
 
 {% block auth_container %}
   {% if banner %}
-    <h4>{{ banner }}</h4>
+    <h2 class="m-t-1 m-l-1 m-b-0">{{ banner }}</h2>
   {% endif %}
 
   <div class="auth-container p-t-1 border-bottom">
     <h3>{% trans "Sign in to continue" %}</h3>
     <ul class="nav nav-tabs auth-toggle m-b-0">
-      <li{% if op == "login" %} class="active"{% endif %}>
-        <a href="#login" data-toggle="tab">{% trans "Sign In" %}</a>
+       <!-- Sign In Tab -->
+      {% url 'sentry-login' as login_url %}
+      <li{% if request.path == login_url %} class="active"{% endif %}>
+        <a href="{{ login_url }}">{% trans "Single In" %}</a>
       </li>
+
+      <!-- Register Tab -->
       {% if CAN_REGISTER %}
-        <li{% if op == "register" %} class="active"{% endif %}>
-          <a href="#register" data-toggle="tab">{% trans "Register" %}</a>
+        {% url 'sentry-register' as register_url %}
+        <li{% if request.path == register_url %} class="active"{% endif %}>
+          <a href="{{ register_url }}">{% trans "Register" %}</a>
         </li>
       {% endif %}
-      <li{% if op == "sso" %} class="active"{% endif %}>
-        <a href="#sso" data-toggle="tab">{% trans "Single Sign-On" %}</a>
+
+      <!-- Single Sign-On Tab -->
+      {% url 'sentry-auth-sso' as sso_url %}
+      <li{% if request.path == sso_url %} class="active"{% endif %}>
+        <a href="{{ sso_url }}">{% trans "Single Sign-On" %}</a>
       </li>
     </ul>
   </div>
@@ -117,6 +125,35 @@
             </div>
           </form>
         </div>
+        {% if request.get_host == "pri-sentry.sentry.io" %}
+          {% if github_login_link or vsts_login_link or google_login_link %}
+            <div class="auth-provider-column">
+            {% if google_login_link %}
+              <p>
+                <a class="btn btn-default btn-login-google" href="{{ google_login_link }}" style="display: block">
+                  <span class="provider-logo google"></span> Sign up with Google
+                </a>
+              </p>
+            {% endif %}
+
+            {% if github_login_link %}
+              <p>
+                <a class="btn btn-default btn-login-github" href="{{ github_login_link }}" style="display: block">
+                  <span class="provider-logo github"></span> Sign up with GitHub
+                </a>
+              </p>
+            {% endif %}
+
+            {% if vsts_login_link %}
+              <p>
+                <a class="btn btn-default btn-login-vsts" href="{{ vsts_login_link }}" style="display: block">
+                  <span class="provider-logo vsts"></span> Sign up with Azure DevOps
+                </a>
+              </p>
+            {% endif %}
+          </div>
+          {% endif %}
+        {% endif %}
       </div>
     </div>
     <div class="tab-pane{% if op == "sso" %} active{% endif %}" id="sso">
@@ -131,7 +168,7 @@
               <div class="controls">
                 <label class="control-label">{% trans "Organization ID" %}</label>
                 <input type="text" class="form-control" name="organization" placeholder="acme" required>
-                <p class="help-block">Your ID is the slug after the hostname. e.g. <code>{{ server_hostname }}/<strong>acme</strong>/</code> is <code>acme</code>.</p>
+                <p class="help-block">Your ID is the slug either before or after the hostname. For example, <code><strong>acme</strong></code> is the slug in either <code>{{ server_hostname }}/<strong>acme</strong>/</code> or <code><strong>acme</strong>.{{ server_hostname }}/</code>.</p>
               </div>
             </div>
             <div class="auth-footer m-t-1">

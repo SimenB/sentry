@@ -1,82 +1,118 @@
-import {Fragment} from 'react';
+import {Fragment, useCallback, useContext, useEffect} from 'react';
+import type {Theme} from '@emotion/react';
 import {css} from '@emotion/react';
 import styled from '@emotion/styled';
 
-import OnboardingSidebar from 'sentry/components/onboardingWizard/sidebar';
+import {OnboardingContext} from 'sentry/components/onboarding/onboardingContext';
+import {OnboardingSidebar} from 'sentry/components/onboardingWizard/sidebar';
 import {getMergedTasks} from 'sentry/components/onboardingWizard/taskConfig';
+import {useOnboardingTasks} from 'sentry/components/onboardingWizard/useOnboardingTasks';
+import {findCompleteTasks} from 'sentry/components/onboardingWizard/utils';
 import ProgressRing, {
   RingBackground,
   RingBar,
   RingText,
 } from 'sentry/components/progressRing';
-import {t, tct} from 'sentry/locale';
-import space from 'sentry/styles/space';
-import {OnboardingTaskStatus, Organization, Project} from 'sentry/types';
-import trackAdvancedAnalyticsEvent from 'sentry/utils/analytics/trackAdvancedAnalyticsEvent';
-import theme, {Theme} from 'sentry/utils/theme';
-import withProjects from 'sentry/utils/withProjects';
-import {usePersistedOnboardingState} from 'sentry/views/onboarding/utils';
+import {ExpandedContext} from 'sentry/components/sidebar/expandedContextProvider';
+import {t, tn} from 'sentry/locale';
+import {space} from 'sentry/styles/space';
+import {trackAnalytics} from 'sentry/utils/analytics';
+import {isDemoModeEnabled} from 'sentry/utils/demoMode';
+import theme from 'sentry/utils/theme';
+import {useLocalStorageState} from 'sentry/utils/useLocalStorageState';
+import useOrganization from 'sentry/utils/useOrganization';
+import useProjects from 'sentry/utils/useProjects';
 
-import {CommonSidebarProps, SidebarPanelKey} from './types';
+import type {CommonSidebarProps} from './types';
+import {SidebarPanelKey} from './types';
 
-type Props = CommonSidebarProps & {
-  org: Organization;
-  projects: Project[];
-};
+type OnboardingStatusProps = CommonSidebarProps;
 
-const isDone = (task: OnboardingTaskStatus) =>
-  task.status === 'complete' || task.status === 'skipped';
-
-const progressTextCss = () => css`
-  font-size: ${theme.fontSizeMedium};
-  font-weight: bold;
-`;
-
-function OnboardingStatus({
+export function OnboardingStatus({
   collapsed,
-  org,
-  projects,
   currentPanel,
   orientation,
   hidePanel,
   onShowPanel,
-}: Props) {
-  const handleShowPanel = () => {
-    trackAdvancedAnalyticsEvent('onboarding.wizard_opened', {organization: org});
-    onShowPanel();
-  };
-  const [onboardingState] = usePersistedOnboardingState();
-
-  if (!org.features?.includes('onboarding')) {
-    return null;
-  }
-
-  const tasks = getMergedTasks({
-    organization: org,
-    projects,
-    onboardingState: onboardingState || undefined,
-  });
-
-  const allDisplayedTasks = tasks
-    .filter(task => task.display)
-    .filter(task => !task.renderCard);
-  const doneTasks = allDisplayedTasks.filter(isDone);
-  const numberRemaining = allDisplayedTasks.length - doneTasks.length;
-
-  const pendingCompletionSeen = doneTasks.some(
-    task =>
-      allDisplayedTasks.some(displayedTask => displayedTask.task === task.task) &&
-      task.status === 'complete' &&
-      !task.completionSeen
+}: OnboardingStatusProps) {
+  const organization = useOrganization();
+  const onboardingContext = useContext(OnboardingContext);
+  const {projects} = useProjects();
+  const {shouldAccordionFloat} = useContext(ExpandedContext);
+  const [quickStartCompleted, setQuickStartCompleted] = useLocalStorageState(
+    `quick-start:${organization.slug}:completed`,
+    false
   );
 
-  const isActive = currentPanel === SidebarPanelKey.OnboardingWizard;
+  const isActive = currentPanel === SidebarPanelKey.ONBOARDING_WIZARD;
+  const demoMode = isDemoModeEnabled();
 
-  if (doneTasks.length >= allDisplayedTasks.length && !isActive) {
+  const supportedTasks = getMergedTasks({
+    organization,
+    projects,
+    onboardingContext,
+  }).filter(task => task.display);
+
+  const {
+    allTasks,
+    gettingStartedTasks,
+    beyondBasicsTasks,
+    doneTasks,
+    completeTasks,
+    refetch,
+  } = useOnboardingTasks({
+    supportedTasks,
+    enabled:
+      !!organization.features?.includes('onboarding') &&
+      !supportedTasks.every(findCompleteTasks) &&
+      isActive,
+  });
+
+  const label = demoMode ? t('Guided Tours') : t('Onboarding');
+  const pendingCompletionSeen = doneTasks.length !== completeTasks.length;
+  const allTasksCompleted = allTasks.length === completeTasks.length;
+
+  const skipQuickStart =
+    (!demoMode && !organization.features?.includes('onboarding')) ||
+    (allTasksCompleted && !isActive);
+
+  const handleShowPanel = useCallback(() => {
+    if (!demoMode && !isActive === true) {
+      trackAnalytics('quick_start.opened', {
+        organization,
+      });
+    }
+
+    onShowPanel();
+  }, [onShowPanel, isActive, demoMode, organization]);
+
+  useEffect(() => {
+    if (!allTasksCompleted || skipQuickStart || quickStartCompleted) {
+      return;
+    }
+
+    if (demoMode) {
+      return;
+    }
+
+    trackAnalytics('quick_start.completed', {
+      organization,
+      referrer: 'onboarding_sidebar',
+    });
+
+    setQuickStartCompleted(true);
+  }, [
+    demoMode,
+    organization,
+    skipQuickStart,
+    quickStartCompleted,
+    setQuickStartCompleted,
+    allTasksCompleted,
+  ]);
+
+  if (skipQuickStart) {
     return null;
   }
-
-  const label = t('Quick Start');
 
   return (
     <Fragment>
@@ -85,23 +121,38 @@ function OnboardingStatus({
         aria-label={label}
         onClick={handleShowPanel}
         isActive={isActive}
+        showText={!shouldAccordionFloat}
+        onMouseEnter={() => {
+          refetch();
+        }}
       >
         <ProgressRing
           animateText
-          textCss={progressTextCss}
-          text={allDisplayedTasks.length - doneTasks.length}
-          value={(doneTasks.length / allDisplayedTasks.length) * 100}
+          textCss={() => css`
+            font-size: ${theme.fontSizeMedium};
+            font-weight: ${theme.fontWeightBold};
+          `}
+          text={doneTasks.length}
+          value={(doneTasks.length / allTasks.length) * 100}
           backgroundColor="rgba(255, 255, 255, 0.15)"
           progressEndcaps="round"
           size={38}
           barWidth={6}
         />
-        {!collapsed && (
+        {!shouldAccordionFloat && (
           <div>
             <Heading>{label}</Heading>
-            <Remaining>
-              {tct('[numberRemaining] Remaining tasks', {numberRemaining})}
-              {pendingCompletionSeen && <PendingSeenIndicator />}
+            <Remaining role="status">
+              {demoMode
+                ? tn(
+                    '%s remaining tour',
+                    '%s remaining tours',
+                    allTasks.length - doneTasks.length
+                  )
+                : tn('%s completed task', '%s completed tasks', doneTasks.length)}
+              {pendingCompletionSeen && (
+                <PendingSeenIndicator data-test-id="pending-seen-indicator" />
+              )}
             </Remaining>
           </div>
         )}
@@ -111,6 +162,8 @@ function OnboardingStatus({
           orientation={orientation}
           collapsed={collapsed}
           onClose={hidePanel}
+          gettingStartedTasks={gettingStartedTasks}
+          beyondBasicsTasks={beyondBasicsTasks}
         />
       )}
     </Fragment>
@@ -162,11 +215,11 @@ const hoverCss = (p: {theme: Theme}) => css`
   }
 `;
 
-const Container = styled('div')<{isActive: boolean}>`
-  padding: 9px 19px 9px 16px;
+const Container = styled('div')<{isActive: boolean; showText: boolean}>`
+  padding: 9px 16px;
   cursor: pointer;
   display: grid;
-  grid-template-columns: max-content 1fr;
+  grid-template-columns: ${p => (p.showText ? 'max-content 1fr' : 'max-content')};
   gap: ${space(1.5)};
   align-items: center;
   transition: background 100ms;
@@ -177,5 +230,3 @@ const Container = styled('div')<{isActive: boolean}>`
     ${hoverCss};
   }
 `;
-
-export default withProjects(OnboardingStatus);

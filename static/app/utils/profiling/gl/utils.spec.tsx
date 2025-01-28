@@ -1,38 +1,38 @@
-import Fuse from 'fuse.js';
+import type Fuse from 'fuse.js';
 import {mat3, vec2} from 'gl-matrix';
 
 import {
-  computeConfigViewWithStategy,
+  computeConfigViewWithStrategy,
   computeHighlightedBounds,
   createProgram,
   createShader,
   ELLIPSIS,
-  findRangeBinarySearch,
+  getCenterScaleMatrixFromConfigPosition,
   getContext,
+  lowerBound,
   makeProjectionMatrix,
-  Rect,
-  trimTextCenter,
+  upperBound,
 } from 'sentry/utils/profiling/gl/utils';
+
+import {findRangeBinarySearch, Rect, trimTextCenter} from '../speedscope';
 
 describe('makeProjectionMatrix', () => {
   it('should return a projection matrix', () => {
     // prettier-ignore
-    expect(makeProjectionMatrix(1024, 768)).toEqual(mat3.fromValues(
-      2/1024, 0, 0,
-      -0, -2/768, -0,
-      -1,1,1
-    ));
+    expect(makeProjectionMatrix(1024, 768)).toEqual(
+      mat3.fromValues(2 / 1024, 0, 0, -0, -2 / 768, -0, -1, 1, 1)
+    );
   });
 });
 
 describe('getContext', () => {
   it('throws if it cannot retrieve context', () => {
     expect(() =>
-      // @ts-ignore partial canvas mock
+      // @ts-expect-error partial canvas mock
       getContext({getContext: jest.fn().mockImplementationOnce(() => null)}, 'webgl')
     ).toThrow();
     expect(() =>
-      // @ts-ignore partial canvas mock
+      // @ts-expect-error partial canvas mock
       getContext({getContext: jest.fn().mockImplementationOnce(() => null)}, '2d')
     ).toThrow();
   });
@@ -40,9 +40,61 @@ describe('getContext', () => {
   it('returns ctx', () => {
     const ctx = {};
     expect(
-      // @ts-ignore partial canvas mock
+      // @ts-expect-error partial canvas mock
       getContext({getContext: jest.fn().mockImplementationOnce(() => ctx)}, 'webgl')
     ).toBe(ctx);
+  });
+});
+
+describe('upperBound', () => {
+  it.each([
+    [[], 5, 0],
+    [[1, 2, 3], 2, 1],
+    [[-3, -2, -1], -2, 1],
+    [[1, 2, 3], 10, 3],
+    [[1, 2, 3, 4, 5, 6, 7, 8, 9, 10], 5, 4],
+  ])(`inserts %p`, (args, target, insert) => {
+    expect(
+      upperBound(
+        target,
+        args.map(x => ({start: x, end: x + 1}))
+      )
+    ).toBe(insert);
+  });
+
+  it('finds the upper bound frame outside of view', () => {
+    const frames = new Array(10).fill(1).map((_, i) => ({start: i, end: i + 1}));
+    const view = new Rect(4, 0, 2, 0);
+
+    expect(upperBound(view.right, frames)).toBe(6);
+    expect(frames[6]!.start).toBeGreaterThanOrEqual(view.right);
+    expect(frames[6]!.end).toBeGreaterThanOrEqual(view.right);
+  });
+});
+
+describe('lowerBound', () => {
+  it.each([
+    [[], 5, 0],
+    [[1, 2, 3], 1, 0],
+    [[-3, -2, -1], -1, 1],
+    [[1, 2, 3], 10, 3],
+    [[1, 2, 3, 4, 5, 6, 7, 8, 9, 10], 5, 3],
+  ])(`inserts %p`, (args, target, insert) => {
+    expect(
+      lowerBound(
+        target,
+        args.map(x => ({start: x, end: x + 1}))
+      )
+    ).toBe(insert);
+  });
+
+  it('finds the lower bound frame outside of view', () => {
+    const frames = new Array(10).fill(1).map((_, i) => ({start: i, end: i + 1}));
+    const view = new Rect(4, 0, 2, 0);
+
+    expect(lowerBound(view.left, frames)).toBe(3);
+    expect(frames[3]!.start).toBeLessThanOrEqual(view.left);
+    expect(frames[3]!.end).toBeLessThanOrEqual(view.left);
   });
 });
 
@@ -54,7 +106,7 @@ describe('createProgram', () => {
       }),
     };
 
-    // @ts-ignore this is a partial mock
+    // @ts-expect-error this is a partial mock
     expect(() => createProgram(ctx, {}, {})).toThrow('Could not create program');
   });
   it('attaches both shaders and links program', () => {
@@ -71,7 +123,7 @@ describe('createProgram', () => {
     const vertexShader = {};
     const fragmentShader = {};
 
-    // @ts-ignore this is a partial mock
+    // @ts-expect-error this is a partial mock
     createProgram(ctx, vertexShader, fragmentShader);
 
     expect(ctx.createProgram).toHaveBeenCalled();
@@ -94,7 +146,7 @@ describe('createProgram', () => {
     const vertexShader = {};
     const fragmentShader = {};
 
-    // @ts-ignore this is a partial mock
+    // @ts-expect-error this is a partial mock
     expect(() => createProgram(ctx, vertexShader, fragmentShader)).toThrow();
 
     expect(ctx.createProgram).toHaveBeenCalled();
@@ -113,7 +165,7 @@ describe('createShader', () => {
     };
 
     const type = 0;
-    // @ts-ignore this is a partial mock
+    // @ts-expect-error this is a partial mock
     expect(() => createShader(ctx, type, '')).toThrow();
     expect(ctx.createShader).toHaveBeenLastCalledWith(type);
   });
@@ -128,12 +180,12 @@ describe('createShader', () => {
       shaderSource: jest.fn(),
       compileShader: jest.fn(),
       getShaderParameter: jest.fn().mockImplementation(() => 1),
-      COMPILE_STATUS: 1,
+      COMPILE_STATUS: 1 as any,
     };
 
-    // @ts-ignore this is a partial mock
+    // @ts-expect-error this is a partial mock
     expect(() => createShader(ctx, type, shaderSource)).not.toThrow();
-    // @ts-ignore this is a partial mock
+    // @ts-expect-error this is a partial mock
     expect(createShader(ctx, type, shaderSource)).toBe(shader);
     expect(ctx.shaderSource).toHaveBeenLastCalledWith(shader, shaderSource);
     expect(ctx.getShaderParameter).toHaveBeenLastCalledWith(shader, ctx.COMPILE_STATUS);
@@ -150,12 +202,12 @@ describe('createShader', () => {
       compileShader: jest.fn(),
       getShaderParameter: jest.fn().mockImplementation(() => 0),
       deleteShader: jest.fn(),
-      COMPILE_STATUS: 0,
+      COMPILE_STATUS: 0 as any,
     };
 
-    // @ts-ignore this is a partial mock
+    // @ts-expect-error this is a partial mock
     expect(() => createShader(ctx, type, shaderSource)).toThrow(
-      'Failed to compile shader'
+      'Failed to compile 0 shader'
     );
   });
 });
@@ -267,11 +319,7 @@ describe('Rect', () => {
     it('transformRect', () => {
       // prettier-ignore
       // Scale (10,20),translate by (3, 4)
-      const matrix = mat3.fromValues(
-        10,0,0,
-        0,20,0,
-        3,4,0,
-  )
+      const matrix = mat3.fromValues(10, 0, 0, 0, 20, 0, 3, 4, 0);
       expect(new Rect(1, 1, 1, 1).transformRect(matrix)).toEqual(
         new Rect(13, 24, 10, 20)
       );
@@ -480,14 +528,21 @@ describe('computeHighlightedBounds', () => {
   });
 });
 
-describe('computeConfigViewWithStategy', () => {
+describe('computeConfigViewWithStrategy', () => {
   it('exact (preserves view height)', () => {
     const view = new Rect(0, 0, 1, 1);
     const frame = new Rect(0, 0, 0.5, 0.5);
 
     expect(
-      computeConfigViewWithStategy('exact', view, frame).equals(new Rect(0, 0, 0.5, 1))
+      computeConfigViewWithStrategy('exact', view, frame).equals(new Rect(0, 0, 0.5, 1))
     ).toBe(true);
+  });
+
+  it('min (frame is in view -> preserves view)', () => {
+    const view = new Rect(0, 0, 1, 1);
+    const frame = new Rect(0, 0, 0.5, 0.5);
+
+    expect(computeConfigViewWithStrategy('min', view, frame).equals(view)).toBe(true);
   });
 
   it('min (when view is too small to fit frame)', () => {
@@ -495,7 +550,7 @@ describe('computeConfigViewWithStategy', () => {
     const frame = new Rect(2, 2, 5, 1);
 
     expect(
-      computeConfigViewWithStategy('min', view, frame).equals(new Rect(2, 2, 5, 1))
+      computeConfigViewWithStrategy('min', view, frame).equals(new Rect(2, 2, 5, 1))
     ).toBe(true);
   });
 
@@ -504,7 +559,7 @@ describe('computeConfigViewWithStategy', () => {
     const frame = new Rect(1, 0, 1, 1);
 
     expect(
-      computeConfigViewWithStategy('min', view, frame).equals(new Rect(1, 0, 10, 1))
+      computeConfigViewWithStrategy('min', view, frame).equals(new Rect(1, 0, 10, 1))
     ).toBe(true);
   });
 
@@ -513,7 +568,7 @@ describe('computeConfigViewWithStategy', () => {
     const frame = new Rect(4, 0, 2, 1);
 
     expect(
-      computeConfigViewWithStategy('min', view, frame).equals(new Rect(4, 0, 10, 1))
+      computeConfigViewWithStrategy('min', view, frame).equals(new Rect(4, 0, 10, 1))
     ).toBe(true);
   });
 
@@ -522,7 +577,7 @@ describe('computeConfigViewWithStategy', () => {
     const frame = new Rect(9, 0, 5, 1);
 
     expect(
-      computeConfigViewWithStategy('min', view, frame).equals(new Rect(4, 0, 10, 1))
+      computeConfigViewWithStrategy('min', view, frame).equals(new Rect(4, 0, 10, 1))
     ).toBe(true);
   });
 
@@ -531,7 +586,7 @@ describe('computeConfigViewWithStategy', () => {
     const frame = new Rect(12, 0, 5, 1);
 
     expect(
-      computeConfigViewWithStategy('min', view, frame).equals(new Rect(7, 0, 10, 1))
+      computeConfigViewWithStrategy('min', view, frame).equals(new Rect(7, 0, 10, 1))
     ).toBe(true);
   });
 
@@ -540,7 +595,7 @@ describe('computeConfigViewWithStategy', () => {
     const frame = new Rect(0, 0, 10, 1);
 
     expect(
-      computeConfigViewWithStategy('min', view, frame).equals(new Rect(0, 0, 10, 1))
+      computeConfigViewWithStrategy('min', view, frame).equals(new Rect(0, 0, 10, 1))
     ).toBe(true);
   });
 
@@ -549,7 +604,34 @@ describe('computeConfigViewWithStategy', () => {
     const frame = new Rect(0, 2, 10, 1);
 
     expect(
-      computeConfigViewWithStategy('min', view, frame).equals(new Rect(0, 2, 10, 1))
+      computeConfigViewWithStrategy('min', view, frame).equals(new Rect(0, 2, 10, 1))
     ).toBe(true);
+  });
+
+  describe('getCenterScaleMatrixFromConfigPosition', function () {
+    it('returns a matrix that represents scaling on both x and y axes', function () {
+      const actual = getCenterScaleMatrixFromConfigPosition(
+        vec2.fromValues(2, 2),
+        vec2.fromValues(0, 0)
+      );
+
+      // Scales by 2 along the x and y axis
+      expect(actual).toEqual(
+        // prettier-ignore
+        mat3.fromValues(2, 0, 0, 0, 2, 0, 0, 0, 1)
+      );
+    });
+
+    it('returns a matrix that scales and translates back so the scaling appears to zoom into the point', function () {
+      const actual = getCenterScaleMatrixFromConfigPosition(
+        vec2.fromValues(2, 2),
+        vec2.fromValues(5, 5)
+      );
+
+      expect(actual).toEqual(
+        // prettier-ignore
+        mat3.fromValues(2, 0, 0, 0, 2, 0, -5, -5, 1)
+      );
+    });
   });
 });

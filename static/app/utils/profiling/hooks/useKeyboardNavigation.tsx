@@ -45,7 +45,7 @@ export function useRovingTabIndex(items: any[]) {
 
 export function useKeyboardNavigation() {
   const [menuRef, setMenuRef] = useState<HTMLDivElement | null>(null);
-  const items: {id: number; node: HTMLElement | null}[] = [];
+  const items: Array<{id: number; node: HTMLElement | null}> = [];
 
   const {tabIndex, setTabIndex, onKeyDown} = useRovingTabIndex(items);
 
@@ -78,6 +78,9 @@ export function useKeyboardNavigation() {
           }
           items[idx].node = node;
         }
+      },
+      onMouseOver: () => {
+        setTabIndex(idx);
       },
       onMouseEnter: () => {
         setTabIndex(idx);

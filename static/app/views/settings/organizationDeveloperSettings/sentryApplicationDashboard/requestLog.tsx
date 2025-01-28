@@ -1,22 +1,29 @@
 import {Fragment} from 'react';
 import styled from '@emotion/styled';
 import memoize from 'lodash/memoize';
-import moment from 'moment-timezone';
+import type moment from 'moment-timezone';
 
-import AsyncComponent from 'sentry/components/asyncComponent';
-import Button, {StyledButton} from 'sentry/components/button';
+import Tag from 'sentry/components/badge/tag';
+import {Button, StyledButton} from 'sentry/components/button';
 import Checkbox from 'sentry/components/checkbox';
-import CompactSelect from 'sentry/components/compactSelect';
-import DateTime from 'sentry/components/dateTime';
+import {CompactSelect} from 'sentry/components/compactSelect';
+import {DateTime} from 'sentry/components/dateTime';
+import DeprecatedAsyncComponent from 'sentry/components/deprecatedAsyncComponent';
 import EmptyMessage from 'sentry/components/emptyMessage';
 import ExternalLink from 'sentry/components/links/externalLink';
 import LoadingIndicator from 'sentry/components/loadingIndicator';
-import {Panel, PanelBody, PanelHeader, PanelItem} from 'sentry/components/panels';
-import Tag from 'sentry/components/tag';
+import Panel from 'sentry/components/panels/panel';
+import PanelBody from 'sentry/components/panels/panelBody';
+import PanelHeader from 'sentry/components/panels/panelHeader';
+import PanelItem from 'sentry/components/panels/panelItem';
 import {IconChevron, IconFlag, IconOpen} from 'sentry/icons';
 import {t} from 'sentry/locale';
-import space from 'sentry/styles/space';
-import {SentryApp, SentryAppSchemaIssueLink, SentryAppWebhookRequest} from 'sentry/types';
+import {space} from 'sentry/styles/space';
+import type {
+  SentryApp,
+  SentryAppSchemaIssueLink,
+  SentryAppWebhookRequest,
+} from 'sentry/types/integrations';
 import {shouldUse24Hours} from 'sentry/utils/dates';
 
 const ALL_EVENTS = t('All Events');
@@ -47,7 +54,7 @@ const getEventTypes = memoize((app: SentryApp) => {
   );
   if (issueLinkComponent) {
     issueLinkEvents = ['external_issue.created', 'external_issue.linked'];
-    if (componentHasSelectUri(issueLinkComponent as SentryAppSchemaIssueLink)) {
+    if (componentHasSelectUri(issueLinkComponent)) {
       issueLinkEvents.push('select_options.requested');
     }
   }
@@ -77,7 +84,7 @@ const getEventTypes = memoize((app: SentryApp) => {
   return events;
 });
 
-const ResponseCode = ({code}: {code: number}) => {
+function ResponseCode({code}: {code: number}) {
   let type: React.ComponentProps<typeof Tag>['type'] = 'error';
   if (code <= 399 && code >= 300) {
     type = 'warning';
@@ -90,30 +97,31 @@ const ResponseCode = ({code}: {code: number}) => {
       <StyledTag type={type}>{code === 0 ? 'timeout' : code}</StyledTag>
     </Tags>
   );
-};
+}
 
-const TimestampLink = ({date, link}: {date: moment.MomentInput; link?: string}) =>
-  link ? (
+function TimestampLink({date, link}: {date: moment.MomentInput; link?: string}) {
+  return link ? (
     <ExternalLink href={link}>
       <DateTime date={date} />
-      <StyledIconOpen size="12px" />
+      <StyledIconOpen size="xs" />
     </ExternalLink>
   ) : (
     <DateTime date={date} format={is24Hours ? 'MMM D, YYYY HH:mm:ss z' : 'll LTS z'} />
   );
+}
 
-type Props = AsyncComponent['props'] & {
+type Props = DeprecatedAsyncComponent['props'] & {
   app: SentryApp;
 };
 
-type State = AsyncComponent['state'] & {
+type State = DeprecatedAsyncComponent['state'] & {
   currentPage: number;
   errorsOnly: boolean;
   eventType: string;
   requests: SentryAppWebhookRequest[];
 };
 
-export default class RequestLog extends AsyncComponent<Props, State> {
+export default class RequestLog extends DeprecatedAsyncComponent<Props, State> {
   shouldReload = true;
 
   get hasNextPage() {
@@ -124,7 +132,7 @@ export default class RequestLog extends AsyncComponent<Props, State> {
     return this.state.currentPage > 0;
   }
 
-  getEndpoints(): ReturnType<AsyncComponent['getEndpoints']> {
+  getEndpoints(): ReturnType<DeprecatedAsyncComponent['getEndpoints']> {
     const {slug} = this.props.app;
 
     const query: any = {};
@@ -241,7 +249,7 @@ export default class RequestLog extends AsyncComponent<Props, State> {
             <PanelBody>
               {currentRequests.length > 0 ? (
                 currentRequests.map((request, idx) => (
-                  <PanelItem key={idx}>
+                  <PanelItem key={idx} data-test-id="request-item">
                     <TableLayout hasOrganization={app.status !== 'internal'}>
                       <TimestampLink date={request.date} link={request.errorUrl} />
                       <ResponseCode code={request.responseCode} />
@@ -268,13 +276,13 @@ export default class RequestLog extends AsyncComponent<Props, State> {
 
         <PaginationButtons>
           <Button
-            icon={<IconChevron direction="left" size="sm" />}
+            icon={<IconChevron direction="left" />}
             onClick={this.handlePrevPage}
             disabled={!this.hasPrevPage}
             aria-label={t('Previous page')}
           />
           <Button
-            icon={<IconChevron direction="right" size="sm" />}
+            icon={<IconChevron direction="right" />}
             onClick={this.handleNextPage}
             disabled={!this.hasNextPage}
             aria-label={t('Next page')}
@@ -325,11 +333,8 @@ const RequestLogFilters = styled('div')`
 `;
 
 const ErrorsOnlyCheckbox = styled('div')`
-  input {
-    margin: 0 ${space(1)} 0 0;
-  }
-
   display: flex;
+  gap: ${space(1)};
   align-items: center;
 `;
 

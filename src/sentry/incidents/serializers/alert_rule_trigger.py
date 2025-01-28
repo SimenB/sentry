@@ -1,5 +1,7 @@
+from django import forms
 from rest_framework import serializers
 
+from sentry import features
 from sentry.api.serializers.rest_framework.base import CamelSnakeModelSerializer
 from sentry.api.serializers.rest_framework.project import ProjectField
 from sentry.incidents.logic import (
@@ -10,7 +12,8 @@ from sentry.incidents.logic import (
     rewrite_trigger_action_fields,
     update_alert_rule_trigger,
 )
-from sentry.incidents.models import AlertRuleTrigger, AlertRuleTriggerAction
+from sentry.incidents.models.alert_rule import AlertRuleTrigger, AlertRuleTriggerAction
+from sentry.workflow_engine.migration_helpers.alert_rule import migrate_metric_data_conditions
 
 from .alert_rule_trigger_action import AlertRuleTriggerActionSerializer
 
@@ -42,11 +45,20 @@ class AlertRuleTriggerSerializer(CamelSnakeModelSerializer):
             alert_rule_trigger = create_alert_rule_trigger(
                 alert_rule=self.context["alert_rule"], **validated_data
             )
-            self._handle_actions(alert_rule_trigger, actions)
 
-            return alert_rule_trigger
+        except forms.ValidationError as e:
+            # if we fail in create_alert_rule_trigger, then only one message is ever returned
+            raise serializers.ValidationError(e.error_list[0].message)
         except AlertRuleTriggerLabelAlreadyUsedError:
             raise serializers.ValidationError("This label is already in use for this alert rule")
+
+        if features.has(
+            "organizations:workflow-engine-metric-alert-processing",
+            alert_rule_trigger.alert_rule.organization,
+        ):
+            migrate_metric_data_conditions(alert_rule_trigger)
+        self._handle_actions(alert_rule_trigger, actions)
+        return alert_rule_trigger
 
     def update(self, instance, validated_data):
         actions = validated_data.pop("actions")
@@ -56,6 +68,9 @@ class AlertRuleTriggerSerializer(CamelSnakeModelSerializer):
             alert_rule_trigger = update_alert_rule_trigger(instance, **validated_data)
             self._handle_actions(alert_rule_trigger, actions)
             return alert_rule_trigger
+        except forms.ValidationError as e:
+            # if we fail in update_alert_rule_trigger, then only one message is ever returned
+            raise serializers.ValidationError(e.error_list[0].message)
         except AlertRuleTriggerLabelAlreadyUsedError:
             raise serializers.ValidationError("This label is already in use for this alert rule")
 
@@ -79,6 +94,11 @@ class AlertRuleTriggerSerializer(CamelSnakeModelSerializer):
                 else:
                     action_instance = None
 
+                if not action_data.get("target_identifier", ""):
+                    raise serializers.ValidationError(
+                        "One or more of your actions is missing a target identifier."
+                    )
+
                 action_serializer = AlertRuleTriggerActionSerializer(
                     context={
                         "alert_rule": alert_rule_trigger.alert_rule,
@@ -89,6 +109,8 @@ class AlertRuleTriggerSerializer(CamelSnakeModelSerializer):
                         "use_async_lookup": self.context.get("use_async_lookup"),
                         "validate_channel_id": self.context.get("validate_channel_id", True),
                         "input_channel_id": action_data.pop("input_channel_id", None),
+                        "installations": self.context.get("installations"),
+                        "integrations": self.context.get("integrations"),
                     },
                     instance=action_instance,
                     data=action_data,

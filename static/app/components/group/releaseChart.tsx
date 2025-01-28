@@ -1,3 +1,4 @@
+import type {Theme} from '@emotion/react';
 import {useTheme} from '@emotion/react';
 import styled from '@emotion/styled';
 
@@ -6,10 +7,11 @@ import MiniBarChart from 'sentry/components/charts/miniBarChart';
 import Count from 'sentry/components/count';
 import * as SidebarSection from 'sentry/components/sidebarSection';
 import {t} from 'sentry/locale';
-import type {Group, Release, TimeseriesValue} from 'sentry/types';
+import type {TimeseriesValue} from 'sentry/types/core';
+import type {Group} from 'sentry/types/group';
+import type {Release} from 'sentry/types/release';
 import {getFormattedDate} from 'sentry/utils/dates';
-import {formatVersion} from 'sentry/utils/formatters';
-import type {Theme} from 'sentry/utils/theme';
+import {formatVersion} from 'sentry/utils/versions/formatVersion';
 
 /**
  * Stats are provided indexed by statsPeriod strings.
@@ -45,7 +47,7 @@ export function getGroupReleaseChartMarkers(
 ): BarChartSeries['markPoint'] {
   const markers: Marker[] = [];
   // Get the timestamp of the first point.
-  const firstGraphTime = stats[0][0] * 1000;
+  const firstGraphTime = stats[0]![0] * 1000;
 
   const firstSeenX = new Date(firstSeen ?? 0).getTime();
   const lastSeenX = new Date(lastSeen ?? 0).getTime();
@@ -65,9 +67,9 @@ export function getGroupReleaseChartMarkers(
     let bucketStart: number | undefined;
     if (firstBucket > 0) {
       // The size of the data interval in ms
-      const halfBucketSize = ((stats[1][0] - stats[0][0]) * 1000) / 2;
+      const halfBucketSize = ((stats[1]![0] - stats[0]![0]) * 1000) / 2;
       // Display the marker in front of the first bucket
-      bucketStart = stats[firstBucket - 1][0] * 1000 - halfBucketSize;
+      bucketStart = stats[firstBucket - 1]![0] * 1000 - halfBucketSize;
     }
 
     markers.push({
@@ -90,7 +92,7 @@ export function getGroupReleaseChartMarkers(
   const markerTooltip = {
     show: true,
     trigger: 'item',
-    formatter: ({data}) => {
+    formatter: ({data}: any) => {
       const time = getFormattedDate(data.displayValue, 'MMM D, YYYY LT', {
         local: true,
       });
@@ -98,7 +100,7 @@ export function getGroupReleaseChartMarkers(
         '<div class="tooltip-series">',
         `<div><span class="tooltip-label"><strong>${data.name}</strong></span></div>`,
         '</div>',
-        `<div class="tooltip-date">${time}</div>`,
+        `<div class="tooltip-footer">${time}</div>`,
         '</div>',
         '<div class="tooltip-arrow"></div>',
       ].join('');
@@ -154,7 +156,7 @@ function GroupReleaseChart(props: Props) {
 
   series.push({
     seriesName: t('Events in %s', environmentLabel),
-    data: environmentStats[statsPeriod].map(point => ({
+    data: environmentStats[statsPeriod]!.map(point => ({
       name: point[0] * 1000,
       value: point[1],
     })),
@@ -163,7 +165,7 @@ function GroupReleaseChart(props: Props) {
   if (release && releaseStats) {
     series.push({
       seriesName: t('Events in release %s', formatVersion(release.version)),
-      data: releaseStats[statsPeriod].map(point => ({
+      data: releaseStats[statsPeriod]!.map(point => ({
         name: point[0] * 1000,
         value: point[1],
       })),
@@ -172,8 +174,8 @@ function GroupReleaseChart(props: Props) {
 
   const totalSeries =
     environment && environmentStats ? environmentStats[statsPeriod] : stats;
-  const totalEvents = totalSeries.reduce((acc, current) => acc + current[1], 0);
-  series[0].markPoint = getGroupReleaseChartMarkers(theme, stats, firstSeen, lastSeen);
+  const totalEvents = totalSeries!.reduce((acc, current) => acc + current[1], 0);
+  series[0]!.markPoint = getGroupReleaseChartMarkers(theme, stats, firstSeen, lastSeen);
 
   return (
     <SidebarSection.Wrap>

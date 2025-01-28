@@ -1,19 +1,17 @@
 import styled from '@emotion/styled';
 
-import Button from 'sentry/components/button';
-import Clipboard from 'sentry/components/clipboard';
+import {Button, LinkButton} from 'sentry/components/button';
 import Confirm from 'sentry/components/confirm';
+import {CopyToClipboardButton} from 'sentry/components/copyToClipboardButton';
 import EmptyMessage from 'sentry/components/emptyMessage';
-import {
-  Panel,
-  PanelAlert,
-  PanelBody,
-  PanelHeader,
-  PanelItem,
-} from 'sentry/components/panels';
-import {IconCopy, IconDownload, IconPrint} from 'sentry/icons';
+import Panel from 'sentry/components/panels/panel';
+import PanelAlert from 'sentry/components/panels/panelAlert';
+import PanelBody from 'sentry/components/panels/panelBody';
+import PanelHeader from 'sentry/components/panels/panelHeader';
+import PanelItem from 'sentry/components/panels/panelItem';
+import {IconDownload, IconPrint} from 'sentry/icons';
 import {t} from 'sentry/locale';
-import space from 'sentry/styles/space';
+import {space} from 'sentry/styles/space';
 
 type Props = {
   codes: string[];
@@ -22,13 +20,9 @@ type Props = {
   className?: string;
 };
 
-const RecoveryCodes = ({
-  className,
-  isEnrolled,
-  codes,
-  onRegenerateBackupCodes,
-}: Props) => {
+function RecoveryCodes({className, isEnrolled, codes, onRegenerateBackupCodes}: Props) {
   const printCodes = () => {
+    // @ts-expect-error TS(7015): Element implicitly has an 'any' type because index... Remove this comment to see the full error message
     // eslint-disable-next-line dot-notation
     const iframe = window.frames['printable'];
     iframe.document.write(codes.join('<br>'));
@@ -48,22 +42,17 @@ const RecoveryCodes = ({
         {t('Unused Codes')}
 
         <Actions>
-          <Clipboard hideUnsupported value={formattedCodes}>
-            <Button size="sm" aria-label={t('copy')}>
-              <IconCopy />
-            </Button>
-          </Clipboard>
+          <CopyToClipboardButton text={formattedCodes} size="sm" />
           <Button size="sm" onClick={printCodes} aria-label={t('print')}>
             <IconPrint />
           </Button>
-          <Button
+          <LinkButton
             size="sm"
             download="sentry-recovery-codes.txt"
             href={`data:text/plain;charset=utf-8,${formattedCodes}`}
             aria-label={t('download')}
-          >
-            <IconDownload />
-          </Button>
+            icon={<IconDownload />}
+          />
           <Confirm
             onConfirm={onRegenerateBackupCodes}
             message={t(
@@ -87,10 +76,10 @@ const RecoveryCodes = ({
           <EmptyMessage>{t('You have no more recovery codes to use')}</EmptyMessage>
         )}
       </PanelBody>
-      <iframe name="printable" style={{display: 'none'}} />
+      <iframe data-test-id="frame" name="printable" style={{display: 'none'}} />
     </CodeContainer>
   );
-};
+}
 
 export default RecoveryCodes;
 

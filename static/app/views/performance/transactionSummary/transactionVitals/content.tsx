@@ -1,28 +1,28 @@
 import {Fragment} from 'react';
-import {browserHistory} from 'react-router';
 import styled from '@emotion/styled';
-import {Location} from 'history';
+import type {Location} from 'history';
 
-import Alert from 'sentry/components/alert';
-import Button from 'sentry/components/button';
-import CompactSelect from 'sentry/components/compactSelect';
-import DatePageFilter from 'sentry/components/datePageFilter';
-import EnvironmentPageFilter from 'sentry/components/environmentPageFilter';
-import SearchBar from 'sentry/components/events/searchBar';
+import {Alert} from 'sentry/components/alert';
+import {Button} from 'sentry/components/button';
+import {CompactSelect} from 'sentry/components/compactSelect';
 import * as Layout from 'sentry/components/layouts/thirds';
 import ExternalLink from 'sentry/components/links/externalLink';
+import {DatePageFilter} from 'sentry/components/organizations/datePageFilter';
+import {EnvironmentPageFilter} from 'sentry/components/organizations/environmentPageFilter';
 import PageFilterBar from 'sentry/components/organizations/pageFilterBar';
 import {normalizeDateTimeParams} from 'sentry/components/organizations/pageFilters/parse';
+import {TransactionSearchQueryBuilder} from 'sentry/components/performance/transactionSearchQueryBuilder';
 import {t, tct} from 'sentry/locale';
-import space from 'sentry/styles/space';
-import {Organization} from 'sentry/types';
-import {trackAnalyticsEvent} from 'sentry/utils/analytics';
-import EventView from 'sentry/utils/discover/eventView';
-import {WebVital} from 'sentry/utils/fields';
+import {space} from 'sentry/styles/space';
+import type {Organization} from 'sentry/types/organization';
+import {trackAnalytics} from 'sentry/utils/analytics';
+import type EventView from 'sentry/utils/discover/eventView';
+import type {WebVital} from 'sentry/utils/fields';
 import Histogram from 'sentry/utils/performance/histogram';
 import {FILTER_OPTIONS} from 'sentry/utils/performance/histogram/constants';
 import VitalsCardsDiscoverQuery from 'sentry/utils/performance/vitals/vitalsCardsDiscoverQuery';
 import {decodeScalar} from 'sentry/utils/queryString';
+import {useNavigate} from 'sentry/utils/useNavigate';
 
 import {VITAL_GROUPS, ZOOM_KEYS} from './constants';
 import {isMissingVitalsData} from './utils';
@@ -36,6 +36,7 @@ type Props = {
 
 function VitalsContent(props: Props) {
   const {location, organization, eventView} = props;
+  const navigate = useNavigate();
   const query = decodeScalar(location.query.query, '');
 
   const handleSearch = (newQuery: string) => {
@@ -47,7 +48,7 @@ function VitalsContent(props: Props) {
     // do not propagate pagination when making a new search
     delete queryParams.cursor;
 
-    browserHistory.push({
+    navigate({
       pathname: location.pathname,
       query: queryParams,
     });
@@ -90,23 +91,22 @@ function VitalsContent(props: Props) {
                   <FilterActions>
                     <PageFilterBar condensed>
                       <EnvironmentPageFilter />
-                      <DatePageFilter alignDropdown="left" />
+                      <DatePageFilter />
                     </PageFilterBar>
-                    <StyledSearchBar
-                      organization={organization}
-                      projectIds={eventView.project}
-                      query={query}
-                      fields={eventView.fields}
-                      onSearch={handleSearch}
-                    />
+                    <StyledSearchBarWrapper>
+                      <TransactionSearchQueryBuilder
+                        projects={eventView.project}
+                        initialQuery={query}
+                        onSearch={handleSearch}
+                        searchSource="transaction_events"
+                      />
+                    </StyledSearchBarWrapper>
                     <CompactSelect
                       value={activeFilter.value}
                       options={FILTER_OPTIONS}
                       onChange={opt => {
-                        trackAnalyticsEvent({
-                          eventKey: 'performance_views.vitals.filter_changed',
-                          eventName: 'Performance Views: Change vitals filter',
-                          organization_id: organization.id,
+                        trackAnalytics('performance_views.vitals.filter_changed', {
+                          organization,
                           value: opt.value,
                         });
                         handleFilterChange(opt.value);
@@ -116,10 +116,8 @@ function VitalsContent(props: Props) {
                     />
                     <Button
                       onClick={() => {
-                        trackAnalyticsEvent({
-                          eventKey: 'performance_views.vitals.reset_view',
-                          eventName: 'Performance Views: Reset vitals view',
-                          organization_id: organization.id,
+                        trackAnalytics('performance_views.vitals.reset_view', {
+                          organization,
                         });
 
                         handleResetView();
@@ -161,10 +159,10 @@ const FilterActions = styled('div')`
   }
 `;
 
-const StyledSearchBar = styled(SearchBar)`
+const StyledSearchBarWrapper = styled('div')`
   @media (min-width: ${p => p.theme.breakpoints.small}) {
     order: 1;
-    grid-column: 1/5;
+    grid-column: 1/6;
   }
 
   @media (min-width: ${p => p.theme.breakpoints.xlarge}) {

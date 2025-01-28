@@ -1,15 +1,14 @@
-import {initializeOrg} from 'sentry-test/initializeOrg';
+import {DataScrubbingRelayPiiConfigFixture} from 'sentry-fixture/dataScrubbingRelayPiiConfig';
+import {EventFixture} from 'sentry-fixture/event';
+
 import {render, screen, userEvent} from 'sentry-test/reactTestingLibrary';
 import {textWithMarkupMatcher} from 'sentry-test/utils';
 
-import EventExtraData from 'sentry/components/events/eventExtraData';
-import {OrganizationContext} from 'sentry/views/organizationContext';
-import {RouteContext} from 'sentry/views/routeContext';
+import {EventExtraData} from 'sentry/components/events/eventExtraData';
 
 describe('EventExtraData', function () {
   it('display redacted data', async function () {
-    const event = {
-      ...TestStubs.Event(),
+    const event = EventFixture({
       context: {
         'sys.argv': ['', '', '', '', '', '', '', '', '', ''],
         sdk: {
@@ -171,39 +170,23 @@ describe('EventExtraData', function () {
           },
         },
       },
-    };
+    });
 
-    const {organization, router} = initializeOrg({
-      ...initializeOrg(),
+    render(<EventExtraData event={event} />, {
       organization: {
-        ...initializeOrg().organization,
-        relayPiiConfig: JSON.stringify(TestStubs.DataScrubbingRelayPiiConfig()),
+        relayPiiConfig: JSON.stringify(DataScrubbingRelayPiiConfigFixture()),
       },
     });
 
-    render(
-      <OrganizationContext.Provider value={organization}>
-        <RouteContext.Provider
-          value={{
-            router,
-            location: router.location,
-            params: {},
-            routes: [],
-          }}
-        >
-          <EventExtraData event={event} />
-        </RouteContext.Provider>
-      </OrganizationContext.Provider>
-    );
-
+    await userEvent.click(screen.getByRole('button', {name: 'Expand'}));
     expect(await screen.findAllByText(/redacted/)).toHaveLength(10);
 
-    userEvent.hover(screen.getAllByText(/redacted/)[0]);
+    await userEvent.hover(screen.getAllByText(/redacted/)[0]!);
 
     expect(
       await screen.findByText(
         textWithMarkupMatcher(
-          'Replaced because of the PII rule [Replace] [[a-zA-Z0-9]+] with [Placeholder] from [$message] in the settings of the organization org-slug'
+          "Replaced because of the data scrubbing rule [Replace] [[a-zA-Z0-9]+] with [Placeholder] from [$message] in your organization's settings"
         )
       )
     ).toBeInTheDocument(); // tooltip description

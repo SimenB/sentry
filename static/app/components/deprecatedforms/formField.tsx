@@ -2,11 +2,10 @@ import {PureComponent} from 'react';
 import styled from '@emotion/styled';
 import classNames from 'classnames';
 
-import FormContext, {
-  FormContextData,
-} from 'sentry/components/deprecatedforms/formContext';
+import type {FormContextData} from 'sentry/components/deprecatedforms/formContext';
+import FormContext from 'sentry/components/deprecatedforms/formContext';
 import QuestionTooltip from 'sentry/components/questionTooltip';
-import {Meta} from 'sentry/types';
+import type {Meta} from 'sentry/types/group';
 import {defined} from 'sentry/utils';
 
 type Value = string | number | boolean;
@@ -36,9 +35,9 @@ type FormFieldState = {
   value: Value;
 };
 
-export default class FormField<
+export default abstract class FormField<
   Props extends FormFieldProps = FormFieldProps,
-  State extends FormFieldState = FormFieldState
+  State extends FormFieldState = FormFieldState,
 > extends PureComponent<Props, State> {
   static defaultProps: DefaultProps = {
     hideErrorMessage: false,
@@ -54,8 +53,6 @@ export default class FormField<
     } as State;
   }
 
-  componentDidMount() {}
-
   UNSAFE_componentWillReceiveProps(nextProps: Props, nextContext: FormContextData) {
     const newError = this.getError(nextProps, nextContext);
     if (newError !== this.state.error) {
@@ -69,29 +66,30 @@ export default class FormField<
     }
   }
 
-  componentWillUnmount() {}
-
+  declare context: React.ContextType<typeof FormContext>;
   static contextType = FormContext;
 
   getValue(props: Props, context: FormContextData) {
-    const form = (context || this.context || {}).form;
+    const form = (context || this.context)?.form;
     props = props || this.props;
     if (defined(props.value)) {
       return props.value;
     }
-    if (form && form.data.hasOwnProperty(props.name)) {
+    if (form?.data.hasOwnProperty(props.name)) {
+      // @ts-expect-error TS(7053): Element implicitly has an 'any' type because expre... Remove this comment to see the full error message
       return defined(form.data[props.name]) ? form.data[props.name] : '';
     }
     return defined(props.defaultValue) ? props.defaultValue : '';
   }
 
   getError(props: Props, context: FormContextData) {
-    const form = (context || this.context || {}).form;
+    const form = (context || this.context)?.form;
     props = props || this.props;
     if (defined(props.error)) {
       return props.error;
     }
-    return (form && form.errors[props.name]) || null;
+    // @ts-expect-error TS(7053): Element implicitly has an 'any' type because expre... Remove this comment to see the full error message
+    return form?.errors[props.name] || null;
   }
 
   getId() {
@@ -108,7 +106,7 @@ export default class FormField<
   };
 
   setValue = (value: Value) => {
-    const form = (this.context || {}).form;
+    const form = this.context?.form;
     this.setState(
       {
         value,
@@ -121,13 +119,8 @@ export default class FormField<
     );
   };
 
-  getField() {
-    throw new Error('Must be implemented by child.');
-  }
-
-  getClassName(): string {
-    throw new Error('Must be implemented by child.');
-  }
+  abstract getField(): React.ReactNode;
+  abstract getClassName(): string;
 
   getFinalClassNames() {
     const {className, required} = this.props;
@@ -175,5 +168,5 @@ export default class FormField<
 
 const ErrorMessage = styled('p')`
   font-size: ${p => p.theme.fontSizeMedium};
-  color: ${p => p.theme.red300};
+  color: ${p => p.theme.errorText};
 `;

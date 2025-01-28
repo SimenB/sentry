@@ -1,30 +1,31 @@
 from __future__ import annotations
 
-from typing import Callable
+import logging
+from collections.abc import Callable
 
 from django.conf import settings
 from django.contrib.auth import logout
-from django.http import HttpResponse, HttpResponseRedirect
+from django.http import HttpResponseRedirect
+from django.http.request import HttpRequest
+from django.http.response import HttpResponseBase
 from django.urls import resolve, reverse
-from rest_framework import status
-from rest_framework.request import Request
-from rest_framework.response import Response
 
-from sentry import options
-from sentry.api.base import resolve_region
-from sentry.api.utils import generate_organization_url
-from sentry.models import Organization
+from sentry import features
+from sentry.organizations.absolute_url import generate_organization_url
+from sentry.organizations.services.organization import organization_service
+from sentry.types.region import subdomain_is_region
 from sentry.utils import auth
+from sentry.utils.http import absolute_uri
+
+logger = logging.getLogger(__name__)
 
 
 def _org_exists(slug):
     if not slug:
         return False
-    try:
-        Organization.objects.get_from_cache(slug=slug)
-        return True
-    except Organization.DoesNotExist:
-        return False
+    return (
+        organization_service.check_organization_by_slug(slug=slug, only_visible=False) is not None
+    )
 
 
 def _query_string(request):
@@ -52,20 +53,28 @@ def _resolve_redirect_url(request, activeorg):
     if redirect_subdomain:
         redirect_url = generate_organization_url(activeorg)
     result = resolve(request.path)
-    org_slug_path_mismatch = (
-        result.kwargs
-        and "organization_slug" in result.kwargs
-        and result.kwargs["organization_slug"] != activeorg
+    org_slug_path_mismatch = result.kwargs and (
+        ("organization_slug" in result.kwargs and result.kwargs["organization_slug"] != activeorg)
+        or (
+            "organization_id_or_slug" in result.kwargs
+            and result.kwargs["organization_id_or_slug"] != activeorg
+            and not str(result.kwargs["organization_id_or_slug"]).isdecimal()
+        )
     )
     if not redirect_subdomain and not org_slug_path_mismatch:
         return None
     kwargs = {**result.kwargs}
+
+    # Make sure if organization_id_or_slug is passed in, it is a slug
     if org_slug_path_mismatch:
-        kwargs["organization_slug"] = activeorg
+        if "organization_slug" in kwargs:
+            kwargs["organization_slug"] = activeorg
+        else:
+            kwargs["organization_id_or_slug"] = activeorg
+
     path = reverse(result.url_name or result.func, kwargs=kwargs)
     qs = _query_string(request)
-    redirect_url = f"{redirect_url}{path}{qs}"
-    return redirect_url
+    return f"{redirect_url}{path}{qs}"
 
 
 class CustomerDomainMiddleware:
@@ -73,16 +82,18 @@ class CustomerDomainMiddleware:
     Set active organization from request.domain.
     """
 
-    def __init__(self, get_response: Callable[[Request], Response]):
+    def __init__(self, get_response: Callable[[HttpRequest], HttpResponseBase]) -> None:
         self.get_response = get_response
 
-    def __call__(self, request: Request) -> Response:
-        if not getattr(settings, "SENTRY_USE_CUSTOMER_DOMAINS", False):
-            return self.get_response(request)
-        if not hasattr(request, "subdomain"):
+    def __call__(self, request: HttpRequest) -> HttpResponseBase:
+        if (
+            request.method != "GET"
+            or not features.has("system:multi-region")
+            or not hasattr(request, "subdomain")
+        ):
             return self.get_response(request)
         subdomain = request.subdomain
-        if subdomain is None or resolve_region(request) is not None:
+        if subdomain is None or subdomain_is_region(request):
             return self.get_response(request)
 
         if (
@@ -92,21 +103,9 @@ class CustomerDomainMiddleware:
             # DISALLOWED_CUSTOMER_DOMAINS is a list of org slugs that are explicitly not allowed to use customer domains.
             # We kick any request to the logout view.
             logout(request)
-            url_prefix = options.get("system.url-prefix")
-            logout_view = reverse("sentry-logout")
-            redirect_url = f"{url_prefix}{logout_view}"
+            redirect_url = absolute_uri(reverse("sentry-logout"))
+            logger.info("customer_domain.redirect.logout", extra={"location": redirect_url})
             return HttpResponseRedirect(redirect_url)
-
-        user = getattr(request, "user", None)
-        if user and user.is_authenticated and not user.is_staff:
-            # Kick user to sentry.io if they are not a Sentry staff
-            url_prefix = options.get("system.url-prefix")
-            qs = _query_string(request)
-            redirect_url = f"{url_prefix}{request.path}{qs}"
-            if request.method == "GET":
-                return HttpResponseRedirect(redirect_url)
-            else:
-                return HttpResponse(status=status.HTTP_400_BAD_REQUEST)
 
         activeorg = _resolve_activeorg(request)
         if not activeorg:
@@ -117,5 +116,6 @@ class CustomerDomainMiddleware:
         auth.set_active_org(request, activeorg)
         redirect_url = _resolve_redirect_url(request, activeorg)
         if redirect_url is not None and len(redirect_url) > 0:
+            logger.info("customer_domain.redirect", extra={"location": redirect_url})
             return HttpResponseRedirect(redirect_url)
         return self.get_response(request)

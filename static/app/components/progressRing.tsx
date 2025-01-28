@@ -1,9 +1,9 @@
-import {SerializedStyles} from '@emotion/react';
+import type {SerializedStyles, Theme} from '@emotion/react';
 import styled from '@emotion/styled';
 import {AnimatePresence, motion} from 'framer-motion';
 
 import testableTransition from 'sentry/utils/testableTransition';
-import theme, {Theme} from 'sentry/utils/theme';
+import theme from 'sentry/utils/theme';
 
 type TextProps = {
   percent: number;
@@ -58,19 +58,19 @@ const Text = styled('div')<Omit<TextProps, 'theme'>>`
   color: ${p => p.theme.chartLabel};
   font-size: ${p => p.theme.fontSizeExtraSmall};
   transition: color 100ms;
-  ${p => p.textCss && p.textCss(p)}
+  ${p => p.textCss?.(p)}
 `;
 
 const AnimatedText = motion(Text);
 
-AnimatedText.defaultProps = {
+const animatedTextDefaultProps = {
   initial: {opacity: 0, y: -10},
   animate: {opacity: 1, y: 0},
   exit: {opacity: 0, y: 10},
   transition: testableTransition(),
 };
 
-const ProgressRing = ({
+function ProgressRing({
   value,
   minValue = 0,
   maxValue = 100,
@@ -83,7 +83,7 @@ const ProgressRing = ({
   backgroundColor = theme.gray200,
   progressEndcaps,
   ...p
-}: Props) => {
+}: Props) {
   const radius = size / 2 - barWidth / 2;
   const circumference = 2 * Math.PI * radius;
 
@@ -95,7 +95,11 @@ const ProgressRing = ({
   const TextComponent = animateText ? AnimatedText : Text;
 
   let textNode = (
-    <TextComponent key={text?.toString()} {...{textCss, percent}}>
+    <TextComponent
+      key={text?.toString()}
+      {...(animateText ? animatedTextDefaultProps : {})}
+      {...{textCss, percent}}
+    >
       {text}
     </TextComponent>
   );
@@ -135,7 +139,7 @@ const ProgressRing = ({
       </foreignObject>
     </RingSvg>
   );
-};
+}
 
 const RingSvg = styled('svg')`
   position: relative;
@@ -159,7 +163,9 @@ const RingBar = styled('circle')<{
   stroke-dasharray: ${p => p.circumference} ${p => p.circumference};
   transform: rotate(-90deg);
   transform-origin: 50% 50%;
-  transition: stroke-dashoffset 200ms, stroke 100ms;
+  transition:
+    stroke-dashoffset 200ms,
+    stroke 100ms;
 `;
 
 export default ProgressRing;

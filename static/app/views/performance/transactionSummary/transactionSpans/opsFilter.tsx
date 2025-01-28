@@ -1,13 +1,13 @@
 import styled from '@emotion/styled';
-import {Location} from 'history';
+import type {Location} from 'history';
 
-import CompactSelect from 'sentry/components/compactSelect';
+import {CompactSelect} from 'sentry/components/compactSelect';
 import {pickBarColor} from 'sentry/components/performance/waterfall/utils';
 import {IconFilter, IconWarning} from 'sentry/icons';
 import {t} from 'sentry/locale';
-import space from 'sentry/styles/space';
-import {Organization} from 'sentry/types';
-import EventView from 'sentry/utils/discover/eventView';
+import {space} from 'sentry/styles/space';
+import type {Organization} from 'sentry/types/organization';
+import type EventView from 'sentry/utils/discover/eventView';
 import SpanOpsQuery from 'sentry/utils/performance/suspectSpans/spanOpsQuery';
 import {decodeScalar} from 'sentry/utils/queryString';
 import {MutableSearch} from 'sentry/utils/tokenizeSearch';
@@ -20,15 +20,15 @@ type Props = {
   transactionName: string;
 };
 
-function getMenuOptions({spanOps, isLoading, error}) {
+function getMenuOptions({spanOps, isLoading, error}: any) {
   if (isLoading) {
-    return [{key: 'isLoading', disabled: true, label: t('Loading…')}];
+    return [{value: 'isLoading', disabled: true, label: t('Loading…')}];
   }
 
   if (error) {
     return [
       {
-        key: 'error',
+        value: 'error',
         disabled: true,
         label: t('Error loading operations'),
         leadingItems: <IconWarning color="subText" />,
@@ -36,7 +36,7 @@ function getMenuOptions({spanOps, isLoading, error}) {
     ];
   }
 
-  return spanOps.map(spanOp => ({
+  return spanOps.map((spanOp: any) => ({
     value: spanOp.op,
     label: spanOp.op,
     leadingItems: <OperationDot backgroundColor={pickBarColor(spanOp.op)} />,
@@ -67,8 +67,9 @@ export default function OpsFilter(props: Props) {
     >
       {results => (
         <CompactSelect
-          isClearable
+          clearable
           maxMenuWidth="24rem"
+          disallowEmptySelection={false}
           menuTitle={t('Filter by operation')}
           options={getMenuOptions(results)}
           onChange={opt => handleOpChange(opt?.value)}

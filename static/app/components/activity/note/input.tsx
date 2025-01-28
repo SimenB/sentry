@@ -1,24 +1,24 @@
-import {useCallback, useRef, useState} from 'react';
-import {Mention, MentionsInput, MentionsInputProps} from 'react-mentions';
+import {useCallback, useMemo, useState} from 'react';
+import type {MentionsInputProps} from 'react-mentions';
+import {Mention, MentionsInput} from 'react-mentions';
+import type {Theme} from '@emotion/react';
 import {useTheme} from '@emotion/react';
 import styled from '@emotion/styled';
 
-import Button from 'sentry/components/button';
-import {Item, TabList, TabPanels, Tabs} from 'sentry/components/tabs';
+import {Button} from 'sentry/components/button';
+import {TabList, TabPanels, Tabs} from 'sentry/components/tabs';
 import {IconMarkdown} from 'sentry/icons';
 import {t} from 'sentry/locale';
-import MemberListStore from 'sentry/stores/memberListStore';
-import {useLegacyStore} from 'sentry/stores/useLegacyStore';
-import space from 'sentry/styles/space';
+import {space} from 'sentry/styles/space';
 import textStyles from 'sentry/styles/text';
-import {NoteType} from 'sentry/types/alerts';
+import type {NoteType} from 'sentry/types/alerts';
 import domId from 'sentry/utils/domId';
 import marked from 'sentry/utils/marked';
-import {Theme} from 'sentry/utils/theme';
-import useTeams from 'sentry/utils/useTeams';
+import {useMembers} from 'sentry/utils/useMembers';
+import {useTeams} from 'sentry/utils/useTeams';
 
-import mentionStyle from './mentionStyle';
-import {CreateError, MentionChangeEvent, Mentioned} from './types';
+import {mentionStyle} from './mentionStyle';
+import type {CreateError, MentionChangeEvent, Mentioned} from './types';
 
 type Props = {
   /**
@@ -64,16 +64,17 @@ function NoteInput({
 }: Props) {
   const theme = useTheme();
 
-  const members = useLegacyStore(MemberListStore).map(member => ({
+  const {members} = useMembers();
+  const {teams} = useTeams();
+
+  const suggestMembers = members.map(member => ({
     id: `user:${member.id}`,
     display: member.name,
-    email: member.email,
   }));
 
-  const teams = useTeams().teams.map(team => ({
+  const suggestTeams = teams.map(team => ({
     id: `team:${team.id}`,
     display: `#${team.slug}`,
-    email: team.id,
   }));
 
   const [value, setValue] = useState(text ?? '');
@@ -131,7 +132,7 @@ function NoteInput({
   );
 
   const handleChange: MentionsInputProps['onChange'] = useCallback(
-    e => {
+    (e: MentionChangeEvent) => {
       setValue(e.target.value);
       onChange?.(e, {updating: existingItem});
     },
@@ -139,7 +140,7 @@ function NoteInput({
   );
 
   const handleKeyDown: MentionsInputProps['onKeyDown'] = useCallback(
-    e => {
+    (e: React.KeyboardEvent<HTMLInputElement | HTMLTextAreaElement>) => {
       // Auto submit the form on [meta,ctrl] + Enter
       if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && canSubmit) {
         submitForm();
@@ -148,26 +149,25 @@ function NoteInput({
     [canSubmit, submitForm]
   );
 
-  const errorId = useRef(domId('note-error-'));
+  const errorId = useMemo(() => domId('note-error-'), []);
   const errorMessage =
     (errorJSON &&
       (typeof errorJSON.detail === 'string'
         ? errorJSON.detail
-        : (errorJSON.detail && errorJSON.detail.message) ||
-          t('Unable to post comment'))) ||
+        : errorJSON.detail?.message || t('Unable to post comment'))) ||
     null;
 
   return (
     <NoteInputForm data-test-id="note-input-form" noValidate onSubmit={handleSubmit}>
       <Tabs>
         <StyledTabList>
-          <Item key="edit">{existingItem ? t('Edit') : t('Write')}</Item>
-          <Item key="preview">{t('Preview')}</Item>
+          <TabList.Item key="edit">{existingItem ? t('Edit') : t('Write')}</TabList.Item>
+          <TabList.Item key="preview">{t('Preview')}</TabList.Item>
         </StyledTabList>
         <NoteInputPanel>
-          <Item key="edit">
+          <TabPanels.Item key="edit">
             <MentionsInput
-              aria-errormessage={errorMessage ? errorId.current : undefined}
+              aria-errormessage={errorMessage ? errorId : undefined}
               style={mentionStyle({theme, minHeight})}
               placeholder={placeholder}
               onChange={handleChange}
@@ -178,7 +178,7 @@ function NoteInput({
             >
               <Mention
                 trigger="@"
-                data={members}
+                data={suggestMembers}
                 onAdd={handleAddMember}
                 displayTransform={(_id, display) => `@${display}`}
                 markup="**[sentry.strip:member]__display__**"
@@ -186,24 +186,24 @@ function NoteInput({
               />
               <Mention
                 trigger="#"
-                data={teams}
+                data={suggestTeams}
                 onAdd={handleAddTeam}
                 markup="**[sentry.strip:team]__display__**"
                 appendSpaceOnAdd
               />
             </MentionsInput>
-          </Item>
-          <Item key="preview">
+          </TabPanels.Item>
+          <TabPanels.Item key="preview">
             <NotePreview
               minHeight={minHeight}
               dangerouslySetInnerHTML={{__html: marked(cleanMarkdown)}}
             />
-          </Item>
+          </TabPanels.Item>
         </NoteInputPanel>
       </Tabs>
       <Footer>
         {errorMessage ? (
-          <div id={errorId.current}>
+          <div id={errorId}>
             {errorMessage && <ErrorMessage>{errorMessage}</ErrorMessage>}
           </div>
         ) : (
@@ -213,7 +213,7 @@ function NoteInput({
         )}
         <div>
           {existingItem && (
-            <FooterButton priority="danger" type="button" onClick={handleCancel}>
+            <FooterButton priority="danger" onClick={handleCancel}>
               {t('Cancel')}
             </FooterButton>
           )}
@@ -230,7 +230,7 @@ function NoteInput({
   );
 }
 
-export default NoteInput;
+export {NoteInput};
 
 type NotePreviewProps = {
   minHeight: Props['minHeight'];
@@ -296,8 +296,6 @@ const StyledTabList = styled(TabList)`
 `;
 
 const NoteInputForm = styled('form')<{error?: string}>`
-  font-size: 15px;
-  line-height: 22px;
   transition: padding 0.2s ease-in-out;
 
   ${p => getNoteInputErrorStyles(p)};
@@ -315,7 +313,6 @@ const Footer = styled('div')`
 `;
 
 const FooterButton = styled(Button)<{error?: boolean}>`
-  font-size: 13px;
   margin: -1px -1px -1px;
   border-radius: 0 0 ${p => p.theme.borderRadius};
 
@@ -346,5 +343,4 @@ const MarkdownIndicator = styled('div')`
 
 const NotePreview = styled('div')<{minHeight: Props['minHeight']}>`
   ${p => getNotePreviewCss(p)};
-  padding-bottom: ${space(1)};
 `;

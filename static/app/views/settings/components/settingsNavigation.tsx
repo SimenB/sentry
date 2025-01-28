@@ -2,9 +2,9 @@ import {cloneElement, Component} from 'react';
 import styled from '@emotion/styled';
 import * as Sentry from '@sentry/react';
 
-import space from 'sentry/styles/space';
+import {space} from 'sentry/styles/space';
 import SettingsNavigationGroup from 'sentry/views/settings/components/settingsNavigationGroup';
-import {NavigationProps, NavigationSection} from 'sentry/views/settings/types';
+import type {NavigationProps, NavigationSection} from 'sentry/views/settings/types';
 
 type DefaultProps = {
   /**
@@ -39,6 +39,7 @@ class SettingsNavigation extends Component<Props> {
   componentDidCatch(error: Error, errorInfo: React.ErrorInfo) {
     Sentry.withScope(scope => {
       Object.keys(errorInfo).forEach(key => {
+        // @ts-expect-error TS(7053): Element implicitly has an 'any' type because expre... Remove this comment to see the full error message
         scope.setExtra(key, errorInfo[key]);
       });
       scope.setExtra('url', window.location.href);

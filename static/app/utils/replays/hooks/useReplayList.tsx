@@ -1,25 +1,37 @@
-import {useCallback, useEffect, useRef, useState} from 'react';
+import {useCallback, useEffect, useState} from 'react';
+import type {Location} from 'history';
 
-import type {Organization} from 'sentry/types';
-import EventView from 'sentry/utils/discover/eventView';
+import type {Organization} from 'sentry/types/organization';
+import type EventView from 'sentry/utils/discover/eventView';
 import fetchReplayList from 'sentry/utils/replays/fetchReplayList';
 import useApi from 'sentry/utils/useApi';
-import {useLocation} from 'sentry/utils/useLocation';
-import type {ReplayListLocationQuery} from 'sentry/views/replays/types';
+import usePageFilters from 'sentry/utils/usePageFilters';
+import type {
+  ReplayListLocationQuery,
+  ReplayListQueryReferrer,
+} from 'sentry/views/replays/types';
 
 type Options = {
   eventView: EventView;
+  location: Location<ReplayListLocationQuery>;
   organization: Organization;
+  perPage?: number;
+  queryReferrer?: ReplayListQueryReferrer;
 };
 
-type State = Awaited<ReturnType<typeof fetchReplayList>>;
+type State = Awaited<ReturnType<typeof fetchReplayList>> & {isFetching: boolean};
 
 type Result = State;
 
-function useReplayList({eventView, organization}: Options): Result {
+function useReplayList({
+  eventView,
+  location,
+  organization,
+  queryReferrer,
+  perPage,
+}: Options): Result {
   const api = useApi();
-  const location = useLocation<ReplayListLocationQuery>();
-  const querySearchRef = useRef<string>();
+  const {selection} = usePageFilters();
 
   const [data, setData] = useState<State>({
     fetchError: undefined,
@@ -29,6 +41,7 @@ function useReplayList({eventView, organization}: Options): Result {
   });
 
   const loadReplays = useCallback(async () => {
+    api.clear();
     setData(prev => ({
       ...prev,
       isFetching: true,
@@ -38,16 +51,17 @@ function useReplayList({eventView, organization}: Options): Result {
       organization,
       location,
       eventView,
+      queryReferrer,
+      perPage,
+      selection,
     });
-    setData(response);
-  }, [api, organization, location, eventView]);
+
+    setData({...response, isFetching: false});
+  }, [api, organization, location, eventView, queryReferrer, perPage, selection]);
 
   useEffect(() => {
-    if (!querySearchRef.current || querySearchRef.current !== location.search) {
-      querySearchRef.current = location.search;
-      loadReplays();
-    }
-  }, [loadReplays, location.search]);
+    loadReplays();
+  }, [loadReplays]);
 
   return data;
 }

@@ -1,11 +1,15 @@
 import {forwardRef} from 'react';
-import {PopperProps} from 'react-popper';
-import {SerializedStyles} from '@emotion/react';
+import type {PopperProps} from 'react-popper';
+import type {SerializedStyles} from '@emotion/react';
 import styled from '@emotion/styled';
-import {HTMLMotionProps, motion, MotionProps, MotionStyle} from 'framer-motion';
+import type {HTMLMotionProps, MotionProps, MotionStyle} from 'framer-motion';
+import {motion, useIsPresent} from 'framer-motion';
 
-import OverlayArrow from 'sentry/components/overlayArrow';
+import type {OverlayArrowProps} from 'sentry/components/overlayArrow';
+import {OverlayArrow} from 'sentry/components/overlayArrow';
+import {NODE_ENV} from 'sentry/constants';
 import {defined} from 'sentry/utils';
+import PanelProvider from 'sentry/utils/panelProvider';
 import testableTransition from 'sentry/utils/testableTransition';
 
 type OriginPoint = Partial<{x: number; y: number}>;
@@ -20,7 +24,7 @@ interface OverlayProps extends HTMLMotionProps<'div'> {
    * Props to be passed into <OverlayArrow />. If undefined, the overlay will
    * render with no arrow.
    */
-  arrowProps?: React.ComponentProps<typeof OverlayArrow>;
+  arrowProps?: OverlayArrowProps;
   children?: React.ReactNode;
   /**
    * The CSS styles for the "origin point" over the overlay. Typically this
@@ -93,44 +97,58 @@ function computeOriginFromArrow(
  * `<AnimatePresence />`.
  */
 const Overlay = styled(
-  ({
-    children,
-    arrowProps,
-    animated,
-    placement,
-    originPoint,
-    style,
-    overlayStyle: _overlayStyle,
-    ...props
-  }: OverlayProps) => {
-    const animationProps = animated
-      ? {
-          ...overlayAnimation,
-          style: {
-            ...style,
-            ...computeOriginFromArrow(placement, originPoint),
-          },
-        }
-      : {style};
+  forwardRef<HTMLDivElement, OverlayProps>(
+    (
+      {
+        children,
+        arrowProps,
+        animated,
+        placement,
+        originPoint,
+        style,
+        overlayStyle: _overlayStyle,
+        ...props
+      },
+      ref
+    ) => {
+      const isTestEnv = NODE_ENV === 'test';
+      const animationProps =
+        !isTestEnv && animated
+          ? {
+              ...overlayAnimation,
+              style: {
+                ...style,
+                ...computeOriginFromArrow(placement, originPoint),
+              },
+            }
+          : {style};
 
-    return (
-      <motion.div {...props} {...animationProps}>
-        {defined(arrowProps) && <OverlayArrow {...arrowProps} />}
-        {children}
-      </motion.div>
-    );
-  }
+      return (
+        <motion.div {...props} {...animationProps} data-overlay ref={ref}>
+          {defined(arrowProps) && <OverlayArrow {...arrowProps} />}
+          <PanelProvider>{children}</PanelProvider>
+        </motion.div>
+      );
+    }
+  )
 )`
   position: relative;
-  border-radius: ${p => p.theme.borderRadius};
+  border-radius: ${p => p.theme.panelBorderRadius};
   background: ${p => p.theme.backgroundElevated};
-  box-shadow: 0 0 0 1px ${p => p.theme.translucentBorder}, ${p => p.theme.dropShadowHeavy};
+  box-shadow:
+    0 0 0 1px ${p => p.theme.translucentBorder},
+    ${p => p.theme.dropShadowHeavy};
   font-size: ${p => p.theme.fontSizeMedium};
 
   /* Override z-index from useOverlayPosition */
   z-index: ${p => p.theme.zIndex.dropdown} !important;
   ${p => p.animated && `will-change: transform, opacity;`}
-  ${p => p.overlayStyle as any}
+
+  /* Specificity hack to allow override styles to have higher specificity than
+   * styles provided in any styled components which extend Overlay */
+  :where(*) {
+    ${p => p.overlayStyle as any}
+  }
 `;
 
 interface PositionWrapperProps extends React.HTMLAttributes<HTMLDivElement> {
@@ -168,15 +186,16 @@ const PositionWrapper = forwardRef<HTMLDivElement, PositionWrapperProps>(
       ...props
     },
     ref
-  ) => (
-    <motion.div
-      {...props}
-      ref={ref}
-      style={{...style, zIndex}}
-      initial={{pointerEvents: 'auto'}}
-      exit={{pointerEvents: 'none'}}
-    />
-  )
+  ) => {
+    const isPresent = useIsPresent();
+    return (
+      <motion.div
+        {...props}
+        ref={ref}
+        style={{...style, zIndex, pointerEvents: isPresent ? 'auto' : 'none'}}
+      />
+    );
+  }
 );
 
 export {Overlay, PositionWrapper};

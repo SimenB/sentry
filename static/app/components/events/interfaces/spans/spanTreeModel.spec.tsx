@@ -1,16 +1,22 @@
-import {Client} from 'sentry/api';
+import {waitFor} from 'sentry-test/reactTestingLibrary';
+
 import SpanTreeModel from 'sentry/components/events/interfaces/spans/spanTreeModel';
-import {EnhancedProcessedSpanType} from 'sentry/components/events/interfaces/spans/types';
+import type {
+  EnhancedProcessedSpanType,
+  RawSpanType,
+} from 'sentry/components/events/interfaces/spans/types';
 import {
   boundsGenerator,
   generateRootSpan,
   parseTrace,
 } from 'sentry/components/events/interfaces/spans/utils';
-import {EntryType, EventTransaction} from 'sentry/types/event';
+import type {EventTransaction} from 'sentry/types/event';
+import {EntryType} from 'sentry/types/event';
 import {assert} from 'sentry/types/utils';
+import {generateEventSlug} from 'sentry/utils/discover/urls';
 
 describe('SpanTreeModel', () => {
-  const api: Client = new Client();
+  const api = new MockApiClient();
 
   const event = {
     id: '2b658a829a21496b87fd1f14a61abf65',
@@ -44,7 +50,7 @@ describe('SpanTreeModel', () => {
               'http.status_code': '200',
             },
             data: {
-              method: 'GET',
+              'http.method': 'GET',
               type: 'fetch',
               url: '/api/0/organizations/?member=1',
             },
@@ -62,7 +68,7 @@ describe('SpanTreeModel', () => {
               'http.status_code': '200',
             },
             data: {
-              method: 'GET',
+              'http.method': 'GET',
               type: 'fetch',
               url: '/api/0/internal/health/',
             },
@@ -76,58 +82,61 @@ describe('SpanTreeModel', () => {
             parent_span_id: 'a453cc713e5baf9c',
             trace_id: '8cbbc19c0f54447ab702f00263262726',
             data: {
-              'Decoded Body Size': 159248,
-              'Encoded Body Size': 159248,
-              'Transfer Size': 275,
+              'http.decoded_response_content_length': 159248,
+              'http.response_content_length': 159248,
+              'http.response_transfer_size': 275,
             },
           },
         ],
         type: EntryType.SPANS,
       },
     ],
-  } as EventTransaction;
+  } as unknown as EventTransaction;
 
-  MockApiClient.addMockResponse({
-    url: '/organizations/sentry/events/project:19c403a10af34db2b7d93ad669bb51ed/',
-    body: {
-      ...event,
-      contexts: {
-        trace: {
-          trace_id: '61d2d7c5acf448ffa8e2f8f973e2cd36',
-          span_id: 'a5702f287954a9ef',
-          parent_span_id: 'b23703998ae619e7',
-          op: 'something',
-          status: 'unknown',
-          type: 'trace',
+  beforeEach(() => {
+    MockApiClient.clearMockResponses();
+    MockApiClient.addMockResponse({
+      url: '/organizations/sentry/events/project:19c403a10af34db2b7d93ad669bb51ed/',
+      body: {
+        ...event,
+        contexts: {
+          trace: {
+            trace_id: '61d2d7c5acf448ffa8e2f8f973e2cd36',
+            span_id: 'a5702f287954a9ef',
+            parent_span_id: 'b23703998ae619e7',
+            op: 'something',
+            status: 'unknown',
+            type: 'trace',
+          },
         },
+        entries: [
+          {
+            data: [
+              {
+                timestamp: 1622079937.227645,
+                start_timestamp: 1622079936.90689,
+                description: 'something child',
+                op: 'child',
+                span_id: 'bcbea9f18a11e161',
+                parent_span_id: 'a5702f287954a9ef',
+                trace_id: '61d2d7c5acf448ffa8e2f8f973e2cd36',
+                status: 'ok',
+                data: {},
+              },
+            ],
+            type: EntryType.SPANS,
+          },
+        ],
       },
-      entries: [
-        {
-          data: [
-            {
-              timestamp: 1622079937.227645,
-              start_timestamp: 1622079936.90689,
-              description: 'something child',
-              op: 'child',
-              span_id: 'bcbea9f18a11e161',
-              parent_span_id: 'a5702f287954a9ef',
-              trace_id: '61d2d7c5acf448ffa8e2f8f973e2cd36',
-              status: 'ok',
-              data: {},
-            },
-          ],
-          type: EntryType.SPANS,
-        },
-      ],
-    },
-  });
+    });
 
-  MockApiClient.addMockResponse({
-    url: '/organizations/sentry/events/project:broken/',
-    body: {
-      ...event,
-    },
-    statusCode: 500,
+    MockApiClient.addMockResponse({
+      url: '/organizations/sentry/events/project:broken/',
+      body: {
+        ...event,
+      },
+      statusCode: 500,
+    });
   });
 
   it('makes children', () => {
@@ -158,7 +167,7 @@ describe('SpanTreeModel', () => {
                 'http.status_code': '200',
               },
               data: {
-                method: 'GET',
+                'http.method': 'GET',
                 type: 'fetch',
                 url: '/api/0/organizations/?member=1',
               },
@@ -216,7 +225,7 @@ describe('SpanTreeModel', () => {
         isLastSibling: true,
         continuingTreeDepths: [],
         showEmbeddedChildren: false,
-        toggleEmbeddedChildren: expect.any(Function),
+        toggleEmbeddedChildren: expect.anything(),
         fetchEmbeddedChildrenState: 'idle',
         toggleNestedSpanGroup: undefined,
         toggleSiblingSpanGroup: undefined,
@@ -237,7 +246,7 @@ describe('SpanTreeModel', () => {
             'http.status_code': '200',
           },
           data: {
-            method: 'GET',
+            'http.method': 'GET',
             type: 'fetch',
             url: '/api/0/organizations/?member=1',
           },
@@ -247,7 +256,7 @@ describe('SpanTreeModel', () => {
         isLastSibling: false,
         continuingTreeDepths: [],
         showEmbeddedChildren: false,
-        toggleEmbeddedChildren: expect.any(Function),
+        toggleEmbeddedChildren: expect.anything(),
         fetchEmbeddedChildrenState: 'idle',
         toggleNestedSpanGroup: undefined,
         toggleSiblingSpanGroup: undefined,
@@ -268,7 +277,7 @@ describe('SpanTreeModel', () => {
             'http.status_code': '200',
           },
           data: {
-            method: 'GET',
+            'http.method': 'GET',
             type: 'fetch',
             url: '/api/0/internal/health/',
           },
@@ -278,7 +287,7 @@ describe('SpanTreeModel', () => {
         isLastSibling: true,
         continuingTreeDepths: [],
         showEmbeddedChildren: false,
-        toggleEmbeddedChildren: expect.any(Function),
+        toggleEmbeddedChildren: expect.anything(),
         fetchEmbeddedChildrenState: 'idle',
         toggleNestedSpanGroup: undefined,
         toggleSiblingSpanGroup: undefined,
@@ -295,9 +304,9 @@ describe('SpanTreeModel', () => {
           parent_span_id: 'a453cc713e5baf9c',
           trace_id: '8cbbc19c0f54447ab702f00263262726',
           data: {
-            'Decoded Body Size': 159248,
-            'Encoded Body Size': 159248,
-            'Transfer Size': 275,
+            'http.decoded_response_content_length': 159248,
+            'http.response_content_length': 159248,
+            'http.response_transfer_size': 275,
           },
         },
         numOfSpanChildren: 0,
@@ -305,7 +314,7 @@ describe('SpanTreeModel', () => {
         isLastSibling: true,
         continuingTreeDepths: [],
         showEmbeddedChildren: false,
-        toggleEmbeddedChildren: expect.any(Function),
+        toggleEmbeddedChildren: expect.anything(),
         fetchEmbeddedChildrenState: 'idle',
         toggleNestedSpanGroup: undefined,
         toggleSiblingSpanGroup: undefined,
@@ -348,13 +357,15 @@ describe('SpanTreeModel', () => {
     let mockRemoveTraceBounds = jest.fn();
 
     // embed a child transaction
-    let promise = spanTreeModel.toggleEmbeddedChildren({
+    const eventSlug = generateEventSlug({
+      id: '19c403a10af34db2b7d93ad669bb51ed',
+      project: 'project',
+    });
+
+    let promise = spanTreeModel.makeToggleEmbeddedChildren({
       addTraceBounds: mockAddTraceBounds,
       removeTraceBounds: mockRemoveTraceBounds,
-    })({
-      orgSlug: 'sentry',
-      eventSlug: 'project:19c403a10af34db2b7d93ad669bb51ed',
-    });
+    })('sentry', [eventSlug]);
     expect(spanTreeModel.fetchEmbeddedChildrenState).toBe(
       'loading_embedded_transactions'
     );
@@ -411,7 +422,7 @@ describe('SpanTreeModel', () => {
         isLastSibling: false,
         continuingTreeDepths: [],
         showEmbeddedChildren: false,
-        toggleEmbeddedChildren: expect.any(Function),
+        toggleEmbeddedChildren: expect.anything(),
         fetchEmbeddedChildrenState: 'idle',
         toggleNestedSpanGroup: undefined,
         toggleSiblingSpanGroup: undefined,
@@ -435,7 +446,7 @@ describe('SpanTreeModel', () => {
         isLastSibling: true,
         continuingTreeDepths: [1],
         showEmbeddedChildren: false,
-        toggleEmbeddedChildren: expect.any(Function),
+        toggleEmbeddedChildren: expect.anything(),
         fetchEmbeddedChildrenState: 'idle',
         toggleNestedSpanGroup: undefined,
         toggleSiblingSpanGroup: undefined,
@@ -444,7 +455,7 @@ describe('SpanTreeModel', () => {
     );
 
     fullWaterfallExpected[0] = {
-      ...fullWaterfallExpected[0],
+      ...fullWaterfallExpected[0]!,
     };
     assert(fullWaterfallExpected[0].type === 'span');
     fullWaterfallExpected[0].numOfSpanChildren += 1;
@@ -456,13 +467,10 @@ describe('SpanTreeModel', () => {
     mockRemoveTraceBounds = jest.fn();
 
     // un-embed a child transaction
-    promise = spanTreeModel.toggleEmbeddedChildren({
+    promise = spanTreeModel.makeToggleEmbeddedChildren({
       addTraceBounds: mockAddTraceBounds,
       removeTraceBounds: mockRemoveTraceBounds,
-    })({
-      orgSlug: 'sentry',
-      eventSlug: 'project:19c403a10af34db2b7d93ad669bb51ed',
-    });
+    })('sentry', [eventSlug]);
     expect(spanTreeModel.fetchEmbeddedChildrenState).toBe('idle');
 
     await promise;
@@ -501,22 +509,23 @@ describe('SpanTreeModel', () => {
     const rootSpan = generateRootSpan(parsedTrace);
 
     const spanTreeModel = new SpanTreeModel(rootSpan, parsedTrace.childSpans, api);
+    const eventSlug = generateEventSlug({
+      id: 'broken',
+      project: 'project',
+    });
 
-    const promise = spanTreeModel.toggleEmbeddedChildren({
+    spanTreeModel.makeToggleEmbeddedChildren({
       addTraceBounds: () => {},
       removeTraceBounds: () => {},
-    })({
-      orgSlug: 'sentry',
-      eventSlug: 'project:broken',
-    });
+    })('sentry', [eventSlug]);
     expect(spanTreeModel.fetchEmbeddedChildrenState).toBe(
       'loading_embedded_transactions'
     );
 
-    await promise;
-
-    expect(spanTreeModel.fetchEmbeddedChildrenState).toBe(
-      'error_fetching_embedded_transactions'
+    await waitFor(() =>
+      expect(spanTreeModel.fetchEmbeddedChildrenState).toBe(
+        'error_fetching_embedded_transactions'
+      )
     );
   });
 
@@ -544,14 +553,19 @@ describe('SpanTreeModel', () => {
         'http.status_code': '200',
       },
       data: {
-        method: 'GET',
+        'http.method': 'GET',
         type: 'fetch',
         url: '/api/0/internal/health/',
       },
     };
 
+    if (!Array.isArray(event2.entries[0]!.data)) {
+      throw new Error('event2.entries[0].data is not an array');
+    }
+
+    const data = event2.entries[0]!.data as RawSpanType[];
     for (let i = 0; i < 5; i++) {
-      event2.entries[0].data.push(spanTemplate);
+      data.push(spanTemplate);
     }
 
     const parsedTrace = parseTrace(event2);
@@ -588,12 +602,12 @@ describe('SpanTreeModel', () => {
       directParent: null,
     });
 
-    expect(spans.length).toEqual(2);
-    expect(spans[1].type).toEqual('span_group_siblings');
+    expect(spans).toHaveLength(2);
+    expect(spans[1]!.type).toBe('span_group_siblings');
 
     // If statement here is required to avoid TS linting issues
-    if (spans[1].type === 'span_group_siblings') {
-      expect(spans[1].spanSiblingGrouping!.length).toEqual(5);
+    if (spans[1]!.type === 'span_group_siblings') {
+      expect(spans[1]!.spanSiblingGrouping!).toHaveLength(5);
     }
   });
 
@@ -621,14 +635,19 @@ describe('SpanTreeModel', () => {
         'http.status_code': '200',
       },
       data: {
-        method: 'GET',
+        'http.method': 'GET',
         type: 'fetch',
         url: '/api/0/internal/health/',
       },
     };
 
+    if (!Array.isArray(event2.entries[0]!.data)) {
+      throw new Error('event2.entries[0].data is not an array');
+    }
+
+    const data = event2.entries[0]!.data as RawSpanType[];
     for (let i = 0; i < 4; i++) {
-      event2.entries[0].data.push(spanTemplate);
+      data.push(spanTemplate);
     }
 
     const parsedTrace = parseTrace(event2);
@@ -665,8 +684,8 @@ describe('SpanTreeModel', () => {
       directParent: null,
     });
 
-    expect(spans.length).toEqual(5);
-    spans.forEach(span => expect(span.type).toEqual('span'));
+    expect(spans).toHaveLength(5);
+    spans.forEach(span => expect(span.type).toBe('span'));
   });
 
   it('properly autogroups similar siblings and leaves other siblings ungrouped', () => {
@@ -693,7 +712,7 @@ describe('SpanTreeModel', () => {
         'http.status_code': '200',
       },
       data: {
-        method: 'GET',
+        'http.method': 'GET',
         type: 'fetch',
         url: '/api/0/internal/health/',
       },
@@ -712,21 +731,26 @@ describe('SpanTreeModel', () => {
         'http.status_code': '200',
       },
       data: {
-        method: 'GET',
+        'http.method': 'GET',
         type: 'fetch',
         url: '/api/0/internal/health/',
       },
     };
 
+    if (!Array.isArray(event2.entries[0]!.data)) {
+      throw new Error('event2.entries[0].data is not an array');
+    }
+
+    const data = event2.entries[0]!.data as RawSpanType[];
     for (let i = 0; i < 7; i++) {
-      event2.entries[0].data.push(groupableSpanTemplate);
+      data.push(groupableSpanTemplate);
     }
 
     // This span should not get grouped with the others
-    event2.entries[0].data.push(normalSpanTemplate);
+    data.push(normalSpanTemplate);
 
     for (let i = 0; i < 5; i++) {
-      event2.entries[0].data.push(groupableSpanTemplate);
+      data.push(groupableSpanTemplate);
     }
 
     const parsedTrace = parseTrace(event2);
@@ -763,9 +787,9 @@ describe('SpanTreeModel', () => {
       directParent: null,
     });
 
-    expect(spans.length).toEqual(4);
-    expect(spans[1].type).toEqual('span_group_siblings');
-    expect(spans[2].type).toEqual('span');
-    expect(spans[3].type).toEqual('span_group_siblings');
+    expect(spans).toHaveLength(4);
+    expect(spans[1]!.type).toBe('span_group_siblings');
+    expect(spans[2]!.type).toBe('span');
+    expect(spans[3]!.type).toBe('span_group_siblings');
   });
 });

@@ -2,7 +2,7 @@ import {Fragment} from 'react';
 import styled from '@emotion/styled';
 
 import {t} from 'sentry/locale';
-import space from 'sentry/styles/space';
+import {space} from 'sentry/styles/space';
 
 const scoreComponents = {
   'exception:message:character-shingles': t('Exception Message'),
@@ -23,10 +23,10 @@ type Props = {
   // we treat the score list keys as opaque as we wish to be able to extend the
   // backend without having to fix UI. Keys not in scoreComponents are grouped
   // into Other anyway
-  scoreList?: [string, ScoreValue][];
+  scoreList?: Array<[string, ScoreValue]>;
 };
 
-const SimilarScoreCard = ({scoreList = []}: Props) => {
+function SimilarScoreCard({scoreList = []}: Props) {
   if (scoreList.length === 0) {
     return null;
   }
@@ -38,6 +38,7 @@ const SimilarScoreCard = ({scoreList = []}: Props) => {
     <Fragment>
       {scoreList.map(([key, score]) => {
         const title =
+          // @ts-expect-error TS(7053): Element implicitly has an 'any' type because expre... Remove this comment to see the full error message
           scoreComponents[key.replace(/similarity:\d\d\d\d-\d\d-\d\d/, 'similarity:*')];
 
         if (!title) {
@@ -64,7 +65,7 @@ const SimilarScoreCard = ({scoreList = []}: Props) => {
       )}
     </Fragment>
   );
-};
+}
 
 const Wrapper = styled('div')`
   display: flex;

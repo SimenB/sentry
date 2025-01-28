@@ -21,9 +21,9 @@ export type Trace = {
   error_code?: number;
   error_code_name?: string;
   error_description?: string;
-  span_annotations?: Readonly<Annotation[]>;
-  spans?: Readonly<Span[]>;
-  trace_annotations?: Readonly<Annotation[]>;
+  span_annotations?: readonly Annotation[];
+  spans?: readonly Span[];
+  trace_annotations?: readonly Annotation[];
 };
 
 export type Span = {
@@ -32,8 +32,8 @@ export type Span = {
   name: string;
   relative_start_ms: number;
   thread_name: string;
-  annotations?: Readonly<Annotation[]>;
-  children?: Readonly<Span[]>;
+  annotations?: readonly Annotation[];
+  children?: readonly Span[];
   network_request?: Readonly<{
     method: string;
     status_code: number;
@@ -48,9 +48,10 @@ export type SuspectFunction = {
   fingerprint: number;
   name: string;
   p75: number;
+  p95: number;
   p99: number;
   package: string;
-  path: string;
+  sum: number;
   worst: string;
 };
 

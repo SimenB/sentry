@@ -1,15 +1,15 @@
 import {getInterval} from 'sentry/components/charts/utils';
 import DropdownAutoComplete from 'sentry/components/dropdownAutoComplete';
-import autoCompleteFilter from 'sentry/components/dropdownAutoComplete/autoCompleteFilter';
+import type autoCompleteFilter from 'sentry/components/dropdownAutoComplete/autoCompleteFilter';
 import DropdownButton from 'sentry/components/dropdownButton';
 import {
   _timeRangeAutoCompleteFilter,
   makeItem,
-} from 'sentry/components/organizations/timeRangeSelector/utils';
+} from 'sentry/components/timeRangeSelector/utils';
 import {t, tn} from 'sentry/locale';
-import {parsePeriodToHours} from 'sentry/utils/dates';
-import EventView from 'sentry/utils/discover/eventView';
+import type EventView from 'sentry/utils/discover/eventView';
 import {INTERVAL_DISPLAY_MODES} from 'sentry/utils/discover/types';
+import {parsePeriodToHours} from 'sentry/utils/duration/parsePeriodToHours';
 
 type IntervalUnits = 's' | 'm' | 'h' | 'd';
 
@@ -123,12 +123,12 @@ function formatHoursToInterval(hours: number): [number, IntervalUnits] {
 
 function getIntervalOption(rangeHours: number): IntervalOption {
   for (const index in INTERVAL_OPTIONS) {
-    const currentOption = INTERVAL_OPTIONS[index];
+    const currentOption = INTERVAL_OPTIONS[index]!;
     if (currentOption.rangeStart <= rangeHours) {
       return currentOption;
     }
   }
-  return INTERVAL_OPTIONS[0];
+  return INTERVAL_OPTIONS[0]!;
 }
 
 function bindInterval(
@@ -196,7 +196,7 @@ export default function IntervalSelector({
         makeItem(
           amount,
           unit,
-          SUPPORTED_RELATIVE_PERIOD_UNITS[unit].label,
+          SUPPORTED_RELATIVE_PERIOD_UNITS[unit]!.label,
           results.length + 1
         )
       );

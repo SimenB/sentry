@@ -1,14 +1,14 @@
 import {Component} from 'react';
-import {Location} from 'history';
+import type {Location} from 'history';
 import isEqual from 'lodash/isEqual';
 import omit from 'lodash/omit';
 import pick from 'lodash/pick';
-import moment from 'moment';
+import moment from 'moment-timezone';
 
 import {addErrorMessage} from 'sentry/actionCreators/indicator';
-import {Client} from 'sentry/api';
+import type {Client} from 'sentry/api';
+import type {DateTimeObject} from 'sentry/components/charts/utils';
 import {
-  DateTimeObject,
   getDiffInMinutes,
   ONE_WEEK,
   TWENTY_FOUR_HOURS,
@@ -17,13 +17,10 @@ import {
 import {normalizeDateTimeParams} from 'sentry/components/organizations/pageFilters/parse';
 import {URL_PARAM} from 'sentry/constants/pageFilters';
 import {t} from 'sentry/locale';
-import {
-  HealthStatsPeriodOption,
-  Organization,
-  PageFilters,
-  SessionApiResponse,
-  SessionFieldWithOperation,
-} from 'sentry/types';
+import type {PageFilters} from 'sentry/types/core';
+import type {Organization, SessionApiResponse} from 'sentry/types/organization';
+import {SessionFieldWithOperation} from 'sentry/types/organization';
+import {HealthStatsPeriodOption} from 'sentry/types/release';
 import {defined, percent} from 'sentry/utils';
 import {MutableSearch} from 'sentry/utils/tokenizeSearch';
 import withApi from 'sentry/utils/withApi';
@@ -149,14 +146,14 @@ class ReleasesRequest extends Component<Props, State> {
 
     return {
       query: new MutableSearch(
-        releases.reduce((acc, release, index, allReleases) => {
+        releases.reduce<string[]>((acc, release, index, allReleases) => {
           acc.push(`release:"${release}"`);
           if (index < allReleases.length - 1) {
             acc.push('OR');
           }
 
           return acc;
-        }, [] as string[])
+        }, [])
       ).formatString(),
       interval: getInterval(selection.datetime),
       ...normalizeDateTimeParams(pick(location.query, Object.values(URL_PARAM)), {
@@ -205,12 +202,12 @@ class ReleasesRequest extends Component<Props, State> {
 
       this.setState({
         loading: false,
-        statusCountByReleaseInPeriod,
-        totalCountByReleaseIn24h,
-        totalCountByProjectIn24h,
-        statusCountByProjectInPeriod,
-        totalCountByReleaseInPeriod,
-        totalCountByProjectInPeriod,
+        statusCountByReleaseInPeriod: statusCountByReleaseInPeriod!,
+        totalCountByReleaseIn24h: totalCountByReleaseIn24h!,
+        totalCountByProjectIn24h: totalCountByProjectIn24h!,
+        statusCountByProjectInPeriod: statusCountByProjectInPeriod!,
+        totalCountByReleaseInPeriod: totalCountByReleaseInPeriod!,
+        totalCountByProjectInPeriod: totalCountByProjectInPeriod!,
       });
     } catch (error) {
       addErrorMessage(error.responseJSON?.detail ?? t('Error loading health data'));
@@ -362,7 +359,7 @@ class ReleasesRequest extends Component<Props, State> {
 
     const totalCount = statusCountByReleaseInPeriod?.groups
       .filter(({by}) => by.release === version && by.project === project)
-      ?.reduce((acc, group) => acc + group.totals[field], 0);
+      ?.reduce((acc, group) => acc + group.totals[field]!, 0);
 
     const crashedCount = this.getCrashCount(version, project, display);
 
@@ -381,7 +378,7 @@ class ReleasesRequest extends Component<Props, State> {
 
     return totalCountByReleaseIn24h?.groups
       .filter(({by}) => by.release === version && by.project === project)
-      ?.reduce((acc, group) => acc + group.totals[field], 0);
+      ?.reduce((acc, group) => acc + group.totals[field]!, 0);
   };
 
   getPeriodCountByRelease = (
@@ -394,7 +391,7 @@ class ReleasesRequest extends Component<Props, State> {
 
     return totalCountByReleaseInPeriod?.groups
       .filter(({by}) => by.release === version && by.project === project)
-      ?.reduce((acc, group) => acc + group.totals[field], 0);
+      ?.reduce((acc, group) => acc + group.totals[field]!, 0);
   };
 
   get24hCountByProject = (project: number, display: ReleasesDisplayOption) => {
@@ -403,7 +400,7 @@ class ReleasesRequest extends Component<Props, State> {
 
     return totalCountByProjectIn24h?.groups
       .filter(({by}) => by.project === project)
-      ?.reduce((acc, group) => acc + group.totals[field], 0);
+      ?.reduce((acc, group) => acc + group.totals[field]!, 0);
   };
 
   getPeriodCountByProject = (project: number, display: ReleasesDisplayOption) => {
@@ -412,7 +409,7 @@ class ReleasesRequest extends Component<Props, State> {
 
     return totalCountByProjectInPeriod?.groups
       .filter(({by}) => by.project === project)
-      ?.reduce((acc, group) => acc + group.totals[field], 0);
+      ?.reduce((acc, group) => acc + group.totals[field]!, 0);
   };
 
   getTimeSeries = (version: string, project: number, display: ReleasesDisplayOption) => {

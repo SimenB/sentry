@@ -1,7 +1,7 @@
+import type {Theme} from '@emotion/react';
 import styled from '@emotion/styled';
 
-import space from 'sentry/styles/space';
-import {Theme} from 'sentry/utils/theme';
+import {space} from 'sentry/styles/space';
 
 export const DataSection = styled('div')`
   display: flex;
@@ -79,7 +79,7 @@ export const BannerSummary = styled('p')`
   }
 `;
 
-export const CauseHeader = styled('div')`
+export const SuspectCommitHeader = styled('div')`
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -89,7 +89,7 @@ export const CauseHeader = styled('div')`
   & h3 {
     color: ${p => p.theme.subText};
     font-size: ${p => p.theme.fontSizeMedium};
-    font-weight: 600;
+    font-weight: ${p => p.theme.fontWeightBold};
   }
 
   & h3 {

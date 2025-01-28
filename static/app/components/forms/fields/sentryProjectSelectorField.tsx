@@ -1,48 +1,49 @@
-import {Component} from 'react';
-
-import SelectControl from 'sentry/components/forms/controls/selectControl';
 import IdBadge from 'sentry/components/idBadge';
 import {t} from 'sentry/locale';
-import {Project} from 'sentry/types';
+import type {Project} from 'sentry/types/project';
 
-import InputField, {InputFieldProps} from './inputField';
+// XXX(epurkhiser): This is wrong, it should not be inheriting these props
+import type {InputFieldProps} from './inputField';
+import SelectField from './selectField';
 
-const defaultProps = {
-  avatarSize: 20,
-  placeholder: t('Choose Sentry project'),
-};
+/**
+ * Function used to group projects by returning the key of the group
+ */
+type GroupProjects = (project: Project) => string;
 
 // projects can be passed as a direct prop as well
 export interface RenderFieldProps extends InputFieldProps {
+  avatarSize?: number;
+  /**
+   * Controls grouping of projects within the field. Useful to prioritize some
+   * projects above others
+   */
+  groupProjects?: GroupProjects;
+  /**
+   * When using groupProjects you must specify the labels of the groups as a
+   * list of key and label. The ordering determines the order of the groups.
+   */
+  groups?: Array<{key: string; label: React.ReactNode}>;
   projects?: Project[];
+  /**
+   * Use the slug as the select field value. Without setting this the numeric id
+   * of the project will be used.
+   */
+  valueIsSlug?: boolean;
 }
 
-interface RenderProps
-  extends Omit<Partial<Readonly<typeof defaultProps>>, 'placeholder'>,
-    RenderFieldProps {
-  projects: Project[]; // can't use AvatarProject since we need the ID
-}
-
-class RenderField extends Component<RenderProps> {
-  static defaultProps = defaultProps;
-
-  // need to map the option object to the value
-  handleChange = (
-    onBlur: RenderFieldProps['onBlur'],
-    onChange: RenderFieldProps['onChange'],
-    optionObj: {value: any},
-    event: React.MouseEvent
-  ) => {
-    const {value} = optionObj;
-    onChange?.(value, event);
-    onBlur?.(value, event);
-  };
-
-  render() {
-    const {projects, avatarSize, onChange, onBlur, ...rest} = this.props;
-
-    const projectOptions = projects.map(project => ({
-      value: project.id,
+function SentryProjectSelectorField({
+  projects,
+  groupProjects,
+  groups,
+  avatarSize = 20,
+  placeholder = t('Choose Sentry project'),
+  valueIsSlug,
+  ...props
+}: RenderFieldProps) {
+  function projectToOption(project: Project) {
+    return {
+      value: project[valueIsSlug ? 'slug' : 'id'],
       label: project.slug,
       leadingItems: (
         <IdBadge
@@ -52,23 +53,22 @@ class RenderField extends Component<RenderProps> {
           hideName
         />
       ),
-    }));
-
-    return (
-      <SelectControl
-        options={projectOptions}
-        onChange={this.handleChange.bind(this, onBlur, onChange)}
-        {...rest}
-      />
-    );
+    };
   }
-}
 
-const SentryProjectSelectorField = (props: RenderFieldProps) => (
-  <InputField
-    {...props}
-    field={(renderProps: RenderProps) => <RenderField {...renderProps} />}
-  />
-);
+  const projectOptions =
+    projects && groupProjects
+      ? // Create project groups when groupProjects is in use
+        groups?.map(({key, label}) => ({
+          label,
+          options: projects
+            .filter(project => groupProjects(project) === key)
+            .map(projectToOption),
+        }))
+      : // Otherwise just map projects to the options
+        projects?.map(projectToOption);
+
+  return <SelectField placeholder={placeholder} options={projectOptions} {...props} />;
+}
 
 export default SentryProjectSelectorField;

@@ -1,24 +1,43 @@
-import os
+from __future__ import annotations
 
+import os
+from copy import deepcopy
+from typing import Any
+
+from sentry.testutils.factories import get_fixture_path
 from sentry.utils import json
 
 from .span_builder import SpanBuilder
 
-_fixture_path = os.path.join(os.path.dirname(__file__), "events")
+_fixture_path = get_fixture_path("events", "performance_problems")
 
 EVENTS = {}
 PROJECT_ID = 1
 
-for filename in os.listdir(_fixture_path):
-    if not filename.endswith(".json"):
-        continue
+for dirpath, dirnames, filenames in os.walk(_fixture_path):
 
-    [event_name, _extension] = filename.split(".")
+    for filename in filenames:
+        [name, extension] = filename.split(".")
 
-    with open(os.path.join(_fixture_path, filename)) as f:
-        event = json.load(f)
-        event["project"] = PROJECT_ID
-        EVENTS[event_name] = event
+        if not extension == "json":
+            continue
+
+        filepath = os.path.join(dirpath, filename)
+        relative_path = os.path.relpath(filepath, _fixture_path)
+
+        [full_event_name, _] = relative_path.split(".")
+
+        with open(filepath) as f:
+            event = json.load(f)
+            event["project"] = PROJECT_ID
+
+        EVENTS[full_event_name] = event
+
+
+def get_event(event_name: str) -> dict[str, Any]:
+    # Create copy to avoid the risk of tests altering the event and affecting
+    # other tests.
+    return deepcopy(EVENTS[event_name])
 
 
 # Duration is in ms
@@ -36,14 +55,16 @@ def modify_span_start(obj, start):
     return obj
 
 
-def create_span(op, duration=100.0, desc="SELECT count() FROM table WHERE id = %s", hash=""):
+def create_span(
+    op, duration=100.0, desc="SELECT count() FROM table WHERE id = %s", hash="", data=None
+):
     return modify_span_duration(
-        SpanBuilder().with_op(op).with_description(desc).with_hash(hash).build(),
+        SpanBuilder().with_op(op).with_description(desc).with_hash(hash).with_data(data).build(),
         duration,
     )
 
 
-def create_event(spans, event_id="a" * 16):
+def create_event(spans, event_id: str = "a" * 16) -> dict[str, Any]:
     return {
         "event_id": event_id,
         "project": PROJECT_ID,

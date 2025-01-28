@@ -1,6 +1,6 @@
 const FILE_EXTENSION_TO_PLATFORM = {
-  jsx: 'react',
-  tsx: 'react',
+  jsx: 'javascript-react',
+  tsx: 'javascript-react',
   js: 'javascript',
   ts: 'javascript',
   php: 'php',
@@ -13,7 +13,6 @@ const FILE_EXTENSION_TO_PLATFORM = {
   rs: 'rust',
   rlib: 'rust',
   swift: 'swift',
-  h: 'apple',
   m: 'apple',
   mm: 'apple',
   M: 'apple',
@@ -22,6 +21,9 @@ const FILE_EXTENSION_TO_PLATFORM = {
   cs: 'csharp',
   fs: 'fsharp',
   vb: 'visualbasic',
+  ps1: 'powershell',
+  psd1: 'powershell',
+  psm1: 'powershell',
   kt: 'kotlin',
   dart: 'dart',
   sc: 'scala',
@@ -45,5 +47,6 @@ export function getFileExtension(fileName: string): string | undefined {
  * Takes in file extension and returns a platform string that can be passed into platformicons
  */
 export function fileExtensionToPlatform(fileExtension: string): string | undefined {
+  // @ts-expect-error TS(7053): Element implicitly has an 'any' type because expre... Remove this comment to see the full error message
   return FILE_EXTENSION_TO_PLATFORM[fileExtension];
 }

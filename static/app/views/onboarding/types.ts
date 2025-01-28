@@ -1,19 +1,25 @@
-import {PlatformKey} from 'sentry/data/platformCategories';
-import {Organization} from 'sentry/types';
+import type {RouteComponentProps} from 'sentry/types/legacyReactRouter';
+import type {
+  OnboardingRecentCreatedProject,
+  OnboardingSelectedSDK,
+} from 'sentry/types/onboarding';
 
 export type StepData = {
-  platform?: PlatformKey | null;
+  platform?: OnboardingSelectedSDK | null;
 };
 
 // Not sure if we need platform info to be passed down
-export type StepProps = {
+export type StepProps = Pick<
+  RouteComponentProps<{}, {}>,
+  'router' | 'route' | 'location'
+> & {
   active: boolean;
   genSkipOnboardingLink: () => React.ReactNode;
-  onComplete: () => void;
+  onComplete: (selectedPlatforms?: OnboardingSelectedSDK) => void;
   orgId: string;
-  organization: Organization;
   search: string;
   stepIndex: number;
+  recentCreatedProject?: OnboardingRecentCreatedProject;
 };
 
 export type StepDescriptor = {
@@ -22,15 +28,4 @@ export type StepDescriptor = {
   id: string;
   title: string;
   hasFooter?: boolean;
-};
-
-export type OnboardingState = {
-  // map from platform id to project id. Contains projects ever created by onboarding.
-  platformToProjectIdMap: {[key in PlatformKey]?: string};
-
-  // Contains platforms currently selected. This is different from `platforms` because
-  // a project created by onboarding could be unselected by the user in the future.
-  selectedPlatforms: PlatformKey[];
-  state?: 'started' | 'projects_selected' | 'finished' | 'skipped';
-  url?: string;
 };

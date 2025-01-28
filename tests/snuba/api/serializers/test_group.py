@@ -1,32 +1,30 @@
 from datetime import timedelta
-from unittest.mock import patch
+from unittest import mock
 
-import pytz
 from django.utils import timezone
 
+from sentry.api.event_search import SearchFilter, SearchKey, SearchValue
 from sentry.api.serializers import serialize
 from sentry.api.serializers.models.group import GroupSerializerSnuba
-from sentry.models import (
-    Group,
-    GroupEnvironment,
-    GroupLink,
-    GroupResolution,
-    GroupSnooze,
-    GroupStatus,
-    GroupSubscription,
-    NotificationSetting,
-    UserOption,
-)
-from sentry.notifications.types import NotificationSettingOptionValues, NotificationSettingTypes
-from sentry.testutils import APITestCase, SnubaTestCase
-from sentry.testutils.helpers.datetime import before_now, iso_format
-from sentry.testutils.perfomance_issues.store_transaction import PerfIssueTransactionTestMixin
-from sentry.testutils.silo import region_silo_test
-from sentry.types.integrations import ExternalProviders
-from sentry.types.issues import GroupType
+from sentry.issues.grouptype import PerformanceNPlusOneGroupType, ProfileFileIOGroupType
+from sentry.models.group import Group, GroupStatus
+from sentry.models.groupenvironment import GroupEnvironment
+from sentry.models.grouplink import GroupLink
+from sentry.models.groupresolution import GroupResolution
+from sentry.models.groupsnooze import GroupSnooze
+from sentry.models.groupsubscription import GroupSubscription
+from sentry.notifications.models.notificationsettingoption import NotificationSettingOption
+from sentry.notifications.types import NotificationSettingsOptionEnum
+from sentry.silo.base import SiloMode
+from sentry.testutils.cases import APITestCase, PerformanceIssueTestCase, SnubaTestCase
+from sentry.testutils.helpers.datetime import before_now
+from sentry.testutils.silo import assume_test_silo_mode
+from sentry.types.group import PriorityLevel
+from sentry.users.models.user_option import UserOption
+from sentry.utils.samples import load_data
+from tests.sentry.issues.test_utils import SearchIssueTestMixin
 
 
-@region_silo_test
 class GroupSerializerSnubaTest(APITestCase, SnubaTestCase):
     def setUp(self):
         super().setUp()
@@ -45,6 +43,25 @@ class GroupSerializerSnubaTest(APITestCase, SnubaTestCase):
         group = self.create_group()
         result = serialize(group, outside_user, serializer=GroupSerializerSnuba())
         assert result["permalink"] is None
+
+    def test_priority_high(self):
+        outside_user = self.create_user()
+        group = self.create_group(priority=PriorityLevel.HIGH)
+        result = serialize(group, outside_user, serializer=GroupSerializerSnuba())
+        assert result["priority"] == "high"
+
+    def test_priority_medium(self):
+        outside_user = self.create_user()
+        group = self.create_group(priority=PriorityLevel.MEDIUM)
+        result = serialize(group, outside_user, serializer=GroupSerializerSnuba())
+        assert result["priority"] == "medium"
+
+    def test_priority_none(self):
+        outside_user = self.create_user()
+        group = self.create_group()
+        result = serialize(group, outside_user, serializer=GroupSerializerSnuba())
+        assert result["priority"] is None
+        assert result["priorityLockedAt"] is None
 
     def test_is_ignored_with_expired_snooze(self):
         now = timezone.now()
@@ -137,7 +154,7 @@ class GroupSerializerSnubaTest(APITestCase, SnubaTestCase):
         assert result["status"] == "resolved"
         assert result["statusDetails"]["inCommit"]["id"] == commit.key
 
-    @patch("sentry.models.Group.is_over_resolve_age")
+    @mock.patch("sentry.models.Group.is_over_resolve_age")
     def test_auto_resolved(self, mock_is_over_resolve_age):
         mock_is_over_resolve_age.return_value = True
 
@@ -153,7 +170,7 @@ class GroupSerializerSnubaTest(APITestCase, SnubaTestCase):
         group = self.create_group()
 
         GroupSubscription.objects.create(
-            user=user, group=group, project=group.project, is_active=True
+            user_id=user.id, group=group, project=group.project, is_active=True
         )
 
         result = serialize(group, user, serializer=GroupSerializerSnuba())
@@ -165,7 +182,7 @@ class GroupSerializerSnubaTest(APITestCase, SnubaTestCase):
         group = self.create_group()
 
         GroupSubscription.objects.create(
-            user=user, group=group, project=group.project, is_active=False
+            user_id=user.id, group=group, project=group.project, is_active=False
         )
 
         result = serialize(group, user, serializer=GroupSerializerSnuba())
@@ -179,119 +196,110 @@ class GroupSerializerSnubaTest(APITestCase, SnubaTestCase):
         combinations = (
             # (default, project, subscribed, has_details)
             (
-                NotificationSettingOptionValues.ALWAYS,
-                NotificationSettingOptionValues.DEFAULT,
+                NotificationSettingsOptionEnum.ALWAYS,
+                NotificationSettingsOptionEnum.DEFAULT,
                 True,
                 False,
             ),
             (
-                NotificationSettingOptionValues.ALWAYS,
-                NotificationSettingOptionValues.ALWAYS,
+                NotificationSettingsOptionEnum.ALWAYS,
+                NotificationSettingsOptionEnum.ALWAYS,
                 True,
                 False,
             ),
             (
-                NotificationSettingOptionValues.ALWAYS,
-                NotificationSettingOptionValues.SUBSCRIBE_ONLY,
+                NotificationSettingsOptionEnum.ALWAYS,
+                NotificationSettingsOptionEnum.SUBSCRIBE_ONLY,
                 False,
                 False,
             ),
             (
-                NotificationSettingOptionValues.ALWAYS,
-                NotificationSettingOptionValues.NEVER,
+                NotificationSettingsOptionEnum.ALWAYS,
+                NotificationSettingsOptionEnum.NEVER,
                 False,
                 True,
             ),
             (
-                NotificationSettingOptionValues.DEFAULT,
-                NotificationSettingOptionValues.DEFAULT,
+                NotificationSettingsOptionEnum.DEFAULT,
+                NotificationSettingsOptionEnum.DEFAULT,
                 False,
                 False,
             ),
             (
-                NotificationSettingOptionValues.SUBSCRIBE_ONLY,
-                NotificationSettingOptionValues.DEFAULT,
+                NotificationSettingsOptionEnum.SUBSCRIBE_ONLY,
+                NotificationSettingsOptionEnum.DEFAULT,
                 False,
                 False,
             ),
             (
-                NotificationSettingOptionValues.SUBSCRIBE_ONLY,
-                NotificationSettingOptionValues.ALWAYS,
+                NotificationSettingsOptionEnum.SUBSCRIBE_ONLY,
+                NotificationSettingsOptionEnum.ALWAYS,
                 True,
                 False,
             ),
             (
-                NotificationSettingOptionValues.SUBSCRIBE_ONLY,
-                NotificationSettingOptionValues.SUBSCRIBE_ONLY,
+                NotificationSettingsOptionEnum.SUBSCRIBE_ONLY,
+                NotificationSettingsOptionEnum.SUBSCRIBE_ONLY,
                 False,
                 False,
             ),
             (
-                NotificationSettingOptionValues.SUBSCRIBE_ONLY,
-                NotificationSettingOptionValues.NEVER,
+                NotificationSettingsOptionEnum.SUBSCRIBE_ONLY,
+                NotificationSettingsOptionEnum.NEVER,
                 False,
                 True,
             ),
             (
-                NotificationSettingOptionValues.NEVER,
-                NotificationSettingOptionValues.DEFAULT,
+                NotificationSettingsOptionEnum.NEVER,
+                NotificationSettingsOptionEnum.DEFAULT,
                 False,
                 True,
             ),
             (
-                NotificationSettingOptionValues.NEVER,
-                NotificationSettingOptionValues.ALWAYS,
+                NotificationSettingsOptionEnum.NEVER,
+                NotificationSettingsOptionEnum.ALWAYS,
                 True,
                 False,
             ),
             (
-                NotificationSettingOptionValues.NEVER,
-                NotificationSettingOptionValues.SUBSCRIBE_ONLY,
+                NotificationSettingsOptionEnum.NEVER,
+                NotificationSettingsOptionEnum.SUBSCRIBE_ONLY,
                 False,
                 False,
             ),
             (
-                NotificationSettingOptionValues.NEVER,
-                NotificationSettingOptionValues.NEVER,
+                NotificationSettingsOptionEnum.NEVER,
+                NotificationSettingsOptionEnum.NEVER,
                 False,
                 True,
             ),
         )
 
         for default_value, project_value, is_subscribed, has_details in combinations:
-            UserOption.objects.clear_local_cache()
+            with assume_test_silo_mode(SiloMode.CONTROL):
+                UserOption.objects.clear_local_cache()
+                NotificationSettingOption.objects.all().delete()
 
-            NotificationSetting.objects.update_settings(
-                ExternalProviders.EMAIL,
-                NotificationSettingTypes.WORKFLOW,
-                default_value,
-                user=user,
-            )
-            NotificationSetting.objects.update_settings(
-                ExternalProviders.EMAIL,
-                NotificationSettingTypes.WORKFLOW,
-                project_value,
-                user=user,
-                project=group.project,
-            )
+                if default_value != NotificationSettingsOptionEnum.DEFAULT:
+                    NotificationSettingOption.objects.create(
+                        user_id=user.id,
+                        scope_type="user",
+                        scope_identifier=user.id,
+                        value=default_value.value,
+                        type="workflow",
+                    )
 
-            NotificationSetting.objects.update_settings(
-                ExternalProviders.SLACK,
-                NotificationSettingTypes.WORKFLOW,
-                default_value,
-                user=user,
-            )
-            NotificationSetting.objects.update_settings(
-                ExternalProviders.SLACK,
-                NotificationSettingTypes.WORKFLOW,
-                project_value,
-                user=user,
-                project=group.project,
-            )
+                if project_value != NotificationSettingsOptionEnum.DEFAULT:
+                    NotificationSettingOption.objects.create(
+                        user_id=user.id,
+                        scope_type="project",
+                        scope_identifier=group.project.id,
+                        value=project_value.value,
+                        type="workflow",
+                    )
 
             result = serialize(group, user, serializer=GroupSerializerSnuba())
             subscription_details = result.get("subscriptionDetails")
-
             assert result["isSubscribed"] is is_subscribed
             assert (
                 subscription_details == {"disabled": True}
@@ -304,15 +312,16 @@ class GroupSerializerSnubaTest(APITestCase, SnubaTestCase):
         group = self.create_group()
 
         GroupSubscription.objects.create(
-            user=user, group=group, project=group.project, is_active=True
+            user_id=user.id, group=group, project=group.project, is_active=True
         )
 
-        for provider in [ExternalProviders.EMAIL, ExternalProviders.SLACK]:
-            NotificationSetting.objects.update_settings(
-                provider,
-                NotificationSettingTypes.WORKFLOW,
-                NotificationSettingOptionValues.NEVER,
-                user=user,
+        with assume_test_silo_mode(SiloMode.CONTROL):
+            NotificationSettingOption.objects.create(
+                user_id=user.id,
+                scope_type="user",
+                scope_identifier=user.id,
+                value="never",
+                type="workflow",
             )
 
         result = serialize(group, user, serializer=GroupSerializerSnuba())
@@ -324,16 +333,15 @@ class GroupSerializerSnubaTest(APITestCase, SnubaTestCase):
         group = self.create_group()
 
         GroupSubscription.objects.create(
-            user=user, group=group, project=group.project, is_active=True
+            user_id=user.id, group=group, project=group.project, is_active=True
         )
-
-        for provider in [ExternalProviders.EMAIL, ExternalProviders.SLACK]:
-            NotificationSetting.objects.update_settings(
-                provider,
-                NotificationSettingTypes.WORKFLOW,
-                NotificationSettingOptionValues.NEVER,
-                user=user,
-                project=group.project,
+        with assume_test_silo_mode(SiloMode.CONTROL):
+            NotificationSettingOption.objects.create(
+                user_id=user.id,
+                scope_type="project",
+                scope_identifier=group.project.id,
+                value="never",
+                type="workflow",
             )
 
         result = serialize(group, user, serializer=GroupSerializerSnuba())
@@ -353,16 +361,16 @@ class GroupSerializerSnubaTest(APITestCase, SnubaTestCase):
         events = []
 
         for event_id, env, user_id, timestamp in [
-            ("a" * 32, environment, 1, iso_format(self.min_ago)),
-            ("b" * 32, environment, 2, iso_format(self.min_ago)),
-            ("c" * 32, environment2, 3, iso_format(self.week_ago)),
+            ("a" * 32, environment, 1, self.min_ago),
+            ("b" * 32, environment, 2, self.min_ago),
+            ("c" * 32, environment2, 3, self.week_ago),
         ]:
             events.append(
                 self.store_event(
                     data={
                         "event_id": event_id,
                         "fingerprint": ["put-me-in-group1"],
-                        "timestamp": timestamp,
+                        "timestamp": timestamp.isoformat(),
                         "environment": env.name,
                         "user": {"id": user_id},
                     },
@@ -382,7 +390,7 @@ class GroupSerializerSnubaTest(APITestCase, SnubaTestCase):
         # should use group columns when no environments arg passed
         result = serialize(group, serializer=GroupSerializerSnuba(environment_ids=[]))
         assert result["count"] == "3"
-        assert iso_format(result["lastSeen"]) == iso_format(self.min_ago)
+        assert result["lastSeen"] == self.min_ago.replace(microsecond=0)
         assert result["firstSeen"] == group.first_seen
 
         # update this to something different to make sure it's being used
@@ -398,9 +406,10 @@ class GroupSerializerSnubaTest(APITestCase, SnubaTestCase):
         )
         assert result["count"] == "3"
         # result is rounded down to nearest second
-        assert iso_format(result["lastSeen"]) == iso_format(self.min_ago)
-        assert iso_format(result["firstSeen"]) == iso_format(group_env.first_seen)
-        assert iso_format(group_env2.first_seen) > iso_format(group_env.first_seen)
+        assert result["lastSeen"] == self.min_ago.replace(microsecond=0)
+        assert result["firstSeen"] == group_env.first_seen
+        assert group_env2.first_seen is not None
+        assert group_env2.first_seen > group_env.first_seen
         assert result["userCount"] == 3
 
         result = serialize(
@@ -412,60 +421,153 @@ class GroupSerializerSnubaTest(APITestCase, SnubaTestCase):
             ),
         )
         assert result["userCount"] == 1
-        assert iso_format(result["lastSeen"]) == iso_format(self.week_ago)
-        assert iso_format(result["firstSeen"]) == iso_format(self.week_ago)
+        assert result["lastSeen"] == self.week_ago.replace(microsecond=0)
+        assert result["firstSeen"] == self.week_ago.replace(microsecond=0)
         assert result["count"] == "1"
 
     def test_get_start_from_seen_stats(self):
         for days, expected in [(None, 30), (0, 14), (1000, 90)]:
-            last_seen = None if days is None else before_now(days=days).replace(tzinfo=pytz.UTC)
-            start = GroupSerializerSnuba._get_start_from_seen_stats({"": {"last_seen": last_seen}})
+            last_seen = None if days is None else before_now(days=days)
+            start = GroupSerializerSnuba._get_start_from_seen_stats(
+                {
+                    mock.sentinel.group: {
+                        "last_seen": last_seen,
+                        "first_seen": None,
+                        "times_seen": 0,
+                        "user_count": 0,
+                    }
+                }
+            )
 
-            assert iso_format(start) == iso_format(before_now(days=expected))
+            assert start.replace(microsecond=0) == before_now(days=expected).replace(microsecond=0)
+
+    def test_skipped_date_timestamp_filters(self):
+        group = self.create_group()
+        serializer = GroupSerializerSnuba(
+            search_filters=[
+                SearchFilter(
+                    SearchKey("timestamp"),
+                    ">",
+                    SearchValue(before_now(hours=1)),
+                ),
+                SearchFilter(
+                    SearchKey("timestamp"),
+                    "<",
+                    SearchValue(before_now(seconds=1)),
+                ),
+                SearchFilter(
+                    SearchKey("date"),
+                    ">",
+                    SearchValue(before_now(hours=1)),
+                ),
+                SearchFilter(
+                    SearchKey("date"),
+                    "<",
+                    SearchValue(before_now(seconds=1)),
+                ),
+            ]
+        )
+        assert not serializer.conditions
+        result = serialize(group, self.user, serializer=serializer)
+        assert result["id"] == str(group.id)
 
 
-@region_silo_test
 class PerformanceGroupSerializerSnubaTest(
     APITestCase,
     SnubaTestCase,
-    PerfIssueTransactionTestMixin,
+    PerformanceIssueTestCase,
 ):
     def test_perf_seen_stats(self):
         proj = self.create_project()
-        environment = self.create_environment(project=proj)
 
-        first_group_fingerprint = f"{GroupType.PERFORMANCE_SLOW_SPAN.value}-group1"
-        timestamp = timezone.now() - timedelta(days=5)
+        first_group_fingerprint = f"{PerformanceNPlusOneGroupType.type_id}-group1"
+        timestamp = (timezone.now() - timedelta(days=5)).replace(microsecond=0)
         times = 5
         for _ in range(0, times):
-            self.store_transaction(
-                proj.id,
-                "user1",
-                [first_group_fingerprint],
-                environment.name,
+            event_data = load_data(
+                "transaction-n-plus-one",
                 timestamp=timestamp + timedelta(minutes=1),
+                start_timestamp=timestamp + timedelta(minutes=1),
+            )
+            event_data["user"] = {"email": "test1@example.com"}
+
+            self.create_performance_issue(
+                event_data=event_data, fingerprint=first_group_fingerprint, project_id=proj.id
             )
 
-        event = self.store_transaction(
-            proj.id,
-            "user2",
-            [first_group_fingerprint],
-            environment.name,
+        event_data = load_data(
+            "transaction-n-plus-one",
             timestamp=timestamp + timedelta(minutes=2),
+            start_timestamp=timestamp + timedelta(minutes=2),
+        )
+        event_data["user"] = {"email": "test2@example.com"}
+
+        event = self.create_performance_issue(
+            event_data=event_data, fingerprint=first_group_fingerprint, project_id=proj.id
         )
 
-        first_group = event.groups[0]
+        first_group = event.group
+
+        result = serialize(
+            first_group,
+            serializer=GroupSerializerSnuba(
+                start=timezone.now() - timedelta(days=60),
+                end=timezone.now() + timedelta(days=10),
+            ),
+        )
+
+        assert result["userCount"] == 2
+        assert result["lastSeen"] == (timestamp + timedelta(minutes=2))
+        assert result["firstSeen"] == (timestamp + timedelta(minutes=1))
+        assert result["count"] == str(times + 1)
+
+
+class ProfilingGroupSerializerSnubaTest(
+    APITestCase,
+    SnubaTestCase,
+    SearchIssueTestMixin,
+):
+    def test_profiling_seen_stats(self):
+        proj = self.create_project()
+        environment = self.create_environment(project=proj)
+
+        first_group_fingerprint = f"{ProfileFileIOGroupType.type_id}-group1"
+        timestamp = (timezone.now() - timedelta(days=5)).replace(
+            hour=0, minute=0, second=0, microsecond=0
+        )
+        times = 5
+        for incr in range(0, times):
+            # for user_0 - user_4, first_group
+            self.store_search_issue(
+                proj.id,
+                incr,
+                [first_group_fingerprint],
+                environment.name,
+                timestamp + timedelta(minutes=incr),
+            )
+
+        # user_5, another_group
+        event, issue_occurrence, group_info = self.store_search_issue(
+            proj.id,
+            5,
+            [first_group_fingerprint],
+            environment.name,
+            timestamp + timedelta(minutes=5),
+        )
+        assert group_info is not None
+
+        first_group = group_info.group
 
         result = serialize(
             first_group,
             serializer=GroupSerializerSnuba(
                 environment_ids=[environment.id],
-                start=timestamp - timedelta(hours=1),
-                end=timestamp + timedelta(hours=1),
+                start=timestamp - timedelta(days=1),
+                end=timestamp + timedelta(days=1),
             ),
         )
 
-        assert result["userCount"] == 2
-        assert iso_format(result["lastSeen"]) == iso_format(timestamp + timedelta(minutes=2))
-        assert iso_format(result["firstSeen"]) == iso_format(timestamp + timedelta(minutes=1))
+        assert result["userCount"] == 6
+        assert result["lastSeen"] == (timestamp + timedelta(minutes=5))
+        assert result["firstSeen"] == timestamp
         assert result["count"] == str(times + 1)

@@ -1,49 +1,64 @@
+import {Fragment} from 'react';
 import styled from '@emotion/styled';
+import classNames from 'classnames';
 import sortBy from 'lodash/sortBy';
 
-import space from 'sentry/styles/space';
-import {KeyValueListData} from 'sentry/types';
+import {ValueLink} from 'sentry/components/keyValueData';
+import {space} from 'sentry/styles/space';
+import type {KeyValueListData} from 'sentry/types/group';
 import {defined} from 'sentry/utils';
 import theme from 'sentry/utils/theme';
 
-import {Value, ValueProps} from './value';
+import type {ValueProps} from './value';
+import {Value} from './value';
 
 interface Props extends Pick<ValueProps, 'raw' | 'isContextData'> {
+  className?: string;
   data?: KeyValueListData;
-  isSorted?: boolean;
   longKeys?: boolean;
   onClick?: () => void;
+  shouldSort?: boolean;
 }
 
 function KeyValueList({
   data,
   isContextData = false,
-  isSorted = true,
+  shouldSort = true,
   raw = false,
   longKeys = false,
   onClick,
+  className,
   ...props
 }: Props) {
   if (!defined(data) || data.length === 0) {
     return null;
   }
 
-  const keyValueData = isSorted ? sortBy(data, [({key}) => key.toLowerCase()]) : data;
+  const keyValueData = shouldSort ? sortBy(data, [({key}) => key?.toLowerCase()]) : data;
 
   return (
-    <Table className="table key-value" onClick={onClick} {...props}>
+    <Table
+      className={classNames('table key-value', className)}
+      onClick={onClick}
+      {...props}
+    >
       <tbody>
         {keyValueData.map(
-          ({
-            key,
-            subject,
-            value = null,
-            meta,
-            subjectIcon,
-            subjectDataTestId,
-            actionButton,
-            isContextData: valueIsContextData,
-          }) => {
+          (
+            {
+              key,
+              subject,
+              value = null,
+              meta,
+              subjectIcon,
+              subjectDataTestId,
+              action,
+              actionButton,
+              isContextData: valueIsContextData,
+              isMultiValue,
+            },
+            idx
+          ) => {
             const valueProps = {
               isContextData: valueIsContextData || isContextData,
               meta,
@@ -52,8 +67,21 @@ function KeyValueList({
               raw,
             };
 
+            const valueItem = action?.link ? (
+              <ValueLink to={action.link}>{<Value {...valueProps} />}</ValueLink>
+            ) : (
+              <Value {...valueProps} />
+            );
+
+            const valueContainer =
+              isMultiValue && Array.isArray(value) ? (
+                <MultiValueContainer values={value} />
+              ) : (
+                valueItem
+              );
+
             return (
-              <tr key={`${key}.${value}`}>
+              <tr key={`${key}-${idx}`}>
                 <TableSubject className="key" wide={longKeys}>
                   {subject}
                 </TableSubject>
@@ -61,11 +89,11 @@ function KeyValueList({
                   <Tablevalue>
                     {actionButton ? (
                       <ValueWithButtonContainer>
-                        <Value {...valueProps} />
+                        {valueContainer}
                         <ActionButtonWrapper>{actionButton}</ActionButtonWrapper>
                       </ValueWithButtonContainer>
                     ) : (
-                      <Value {...valueProps} />
+                      valueContainer
                     )}
                   </Tablevalue>
                 </td>
@@ -75,6 +103,16 @@ function KeyValueList({
         )}
       </tbody>
     </Table>
+  );
+}
+
+function MultiValueContainer({values}: {values: string[]}): JSX.Element {
+  return (
+    <Fragment>
+      {values.map((val, idx) => (
+        <Value key={`${val}-${idx}`} value={val} />
+      ))}
+    </Fragment>
   );
 }
 
@@ -104,6 +142,7 @@ const ValueWithButtonContainer = styled('div')`
   background: ${p => p.theme.bodyBackground};
   padding: ${space(1)} 10px;
   margin: ${space(0.25)} 0;
+  border-radius: ${p => p.theme.borderRadius};
   pre {
     padding: 0 !important;
     margin: 0 !important;

@@ -1,13 +1,15 @@
 import {Component, forwardRef} from 'react';
-import ReactSelect from 'react-select';
+import type ReactSelect from 'react-select';
 import debounce from 'lodash/debounce';
 
 import {addErrorMessage} from 'sentry/actionCreators/indicator';
 import {Client} from 'sentry/api';
 import {t} from 'sentry/locale';
-import handleXhrErrorResponse from 'sentry/utils/handleXhrErrorResponse';
+import {handleXhrErrorResponse} from 'sentry/utils/handleXhrErrorResponse';
+import type RequestError from 'sentry/utils/requestError/requestError';
 
-import SelectControl, {ControlProps, GeneralSelectValue} from './selectControl';
+import type {ControlProps, GeneralSelectValue} from './selectControl';
+import SelectControl from './selectControl';
 
 export type Result = {
   label: string;
@@ -37,7 +39,7 @@ class SelectAsyncControl extends Component<SelectAsyncControlProps> {
     defaultOptions: true,
   };
 
-  constructor(props) {
+  constructor(props: any) {
     super(props);
     this.api = new Client();
     this.state = {
@@ -79,7 +81,7 @@ class SelectAsyncControl extends Component<SelectAsyncControlProps> {
 
   handleLoadOptions = () =>
     new Promise((resolve, reject) => {
-      this.doQuery((err, result) => {
+      this.doQuery((err: any, result: any) => {
         if (err) {
           reject(err);
         } else {
@@ -91,15 +93,15 @@ class SelectAsyncControl extends Component<SelectAsyncControlProps> {
         const {onResults} = this.props;
         return typeof onResults === 'function' ? onResults(resp) : resp;
       },
-      err => {
+      (err: RequestError) => {
         addErrorMessage(t('There was a problem with the request.'));
-        handleXhrErrorResponse('SelectAsync failed')(err);
+        handleXhrErrorResponse('SelectAsync failed', err);
         // eslint-disable-next-line no-console
         console.error(err);
       }
     );
 
-  handleInputChange = query => {
+  handleInputChange = (query: any) => {
     this.setState({query});
   };
 
@@ -123,7 +125,9 @@ class SelectAsyncControl extends Component<SelectAsyncControlProps> {
   }
 }
 
-const RefForwarder = (p, ref) => <SelectAsyncControl {...p} forwardedRef={ref} />;
+function RefForwarder(p: any, ref: any) {
+  return <SelectAsyncControl {...p} forwardedRef={ref} />;
+}
 RefForwarder.displayName = 'SelectAsyncControl';
 
 export default forwardRef(RefForwarder);

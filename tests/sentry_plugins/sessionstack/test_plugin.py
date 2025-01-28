@@ -1,7 +1,10 @@
-import responses
-from exam import fixture
+from functools import cached_property
 
-from sentry.testutils import PluginTestCase
+import orjson
+import responses
+from django.urls import reverse
+
+from sentry.testutils.cases import PluginTestCase
 from sentry_plugins.sessionstack.plugin import SessionStackPlugin
 
 EXPECTED_SESSION_URL = (
@@ -15,7 +18,7 @@ ACCESS_TOKENS_URL = (
 
 
 class SessionStackPluginTest(PluginTestCase):
-    @fixture
+    @cached_property
     def plugin(self):
         return SessionStackPlugin()
 
@@ -74,3 +77,16 @@ class SessionStackPluginTest(PluginTestCase):
         session_url = sessionstack_context.get("session_url")
 
         assert session_url == EXPECTED_SESSION_URL
+
+    def test_no_secrets(self):
+        self.login_as(self.user)
+        self.plugin.set_option("api_token", "example-api-token", self.project)
+        url = reverse(
+            "sentry-api-0-project-plugin-details",
+            args=[self.organization.slug, self.project.slug, "sessionstack"],
+        )
+        res = self.client.get(url)
+        config = orjson.loads(res.content)["config"]
+        api_token_config = [item for item in config if item["name"] == "api_token"][0]
+        assert api_token_config.get("type") == "secret"
+        assert api_token_config.get("value") is None

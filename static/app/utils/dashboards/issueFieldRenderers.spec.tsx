@@ -1,3 +1,7 @@
+import {GroupFixture} from 'sentry-fixture/group';
+import {ProjectFixture} from 'sentry-fixture/project';
+import {UserFixture} from 'sentry-fixture/user';
+
 import {initializeOrg} from 'sentry-test/initializeOrg';
 import {act, render, screen, userEvent} from 'sentry-test/reactTestingLibrary';
 
@@ -7,14 +11,13 @@ import ProjectsStore from 'sentry/stores/projectsStore';
 import {getIssueFieldRenderer} from 'sentry/utils/dashboards/issueFieldRenderers';
 
 describe('getIssueFieldRenderer', function () {
-  let location, context, project, organization, data, user;
+  let location: any, context: any, project: any, organization: any, data: any, user: any;
 
   beforeEach(function () {
     context = initializeOrg({
       organization,
       router: {},
-      project: TestStubs.Project(),
-      projects: [TestStubs.Project()],
+      projects: [ProjectFixture()],
     });
     organization = context.organization;
     project = context.project;
@@ -49,7 +52,7 @@ describe('getIssueFieldRenderer', function () {
       filteredEvents: 3000,
       events: 6000,
       period: '7d',
-      links: ['<a href="sentry.io">ANNO-123</a>'],
+      links: [{url: 'sentry.io', displayName: 'ANNO-123'}],
     };
 
     MockApiClient.addMockResponse({
@@ -71,7 +74,7 @@ describe('getIssueFieldRenderer', function () {
   describe('Issue fields', () => {
     it('can render assignee', async function () {
       MemberListStore.loadInitialData([
-        TestStubs.User({
+        UserFixture({
           name: 'Test User',
           email: 'test@sentry.io',
           avatar: {
@@ -81,19 +84,16 @@ describe('getIssueFieldRenderer', function () {
         }),
       ]);
 
-      const group = TestStubs.Group({project});
-      GroupStore.add([
-        {
-          ...group,
-          owners: [{owner: 'user:1', type: 'suspectCommit'}],
-          assignedTo: {
-            email: 'test@sentry.io',
-            type: 'user',
-            id: '1',
-            name: 'Test User',
-          },
+      const group = GroupFixture({
+        project,
+        assignedTo: {
+          email: 'test@sentry.io',
+          type: 'user',
+          id: '1',
+          name: 'Test User',
         },
-      ]);
+      });
+      GroupStore.add([group]);
       const renderer = getIssueFieldRenderer('assignee');
 
       render(
@@ -102,12 +102,8 @@ describe('getIssueFieldRenderer', function () {
           organization,
         }) as React.ReactElement
       );
-      expect(screen.getByText('TU')).toBeInTheDocument();
-      userEvent.hover(screen.getByText('TU'));
-      expect(await screen.findByText('Assigned to')).toBeInTheDocument();
-      expect(screen.getByText('Test User')).toBeInTheDocument();
-      expect(screen.getByText('Based on')).toBeInTheDocument();
-      expect(screen.getByText('commit data')).toBeInTheDocument();
+      await userEvent.hover(screen.getByText('TU'));
+      expect(await screen.findByText('Assigned to Test User')).toBeInTheDocument();
     });
 
     it('can render counts', async function () {
@@ -121,7 +117,7 @@ describe('getIssueFieldRenderer', function () {
       );
       expect(screen.getByText('3k')).toBeInTheDocument();
       expect(screen.getByText('6k')).toBeInTheDocument();
-      userEvent.hover(screen.getByText('3k'));
+      await userEvent.hover(screen.getByText('3k'));
       expect(await screen.findByText('Total in last 7 days')).toBeInTheDocument();
       expect(screen.getByText('Matching search filters')).toBeInTheDocument();
       expect(screen.getByText('Since issue began')).toBeInTheDocument();
@@ -149,8 +145,8 @@ describe('getIssueFieldRenderer', function () {
           data,
           ...{
             links: [
-              '<a href="sentry.io">ANNO-123</a>',
-              '<a href="sentry.io">ANNO-456</a>',
+              {url: 'sentry.io', displayName: 'ANNO-123'},
+              {url: 'sentry.io', displayName: 'ANNO-456'},
             ],
           },
         },

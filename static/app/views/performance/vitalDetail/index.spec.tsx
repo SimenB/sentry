@@ -1,34 +1,40 @@
-import {browserHistory, InjectedRouter} from 'react-router';
+import {MetricsFieldFixture} from 'sentry-fixture/metrics';
+import {OrganizationFixture} from 'sentry-fixture/organization';
 
 import {initializeOrg} from 'sentry-test/initializeOrg';
-import {render, screen, userEvent, within} from 'sentry-test/reactTestingLibrary';
+import {
+  render,
+  screen,
+  userEvent,
+  waitFor,
+  within,
+} from 'sentry-test/reactTestingLibrary';
 import {textWithMarkupMatcher} from 'sentry-test/utils';
 
 import ProjectsStore from 'sentry/stores/projectsStore';
 import TeamStore from 'sentry/stores/teamStore';
+import type {InjectedRouter} from 'sentry/types/legacyReactRouter';
 import {WebVital} from 'sentry/utils/fields';
 import {Browser} from 'sentry/utils/performance/vitals/constants';
+import {DEFAULT_STATS_PERIOD} from 'sentry/views/performance/data';
 import VitalDetail from 'sentry/views/performance/vitalDetail';
 import {vitalSupportedBrowsers} from 'sentry/views/performance/vitalDetail/utils';
 
 const api = new MockApiClient();
-const organization = TestStubs.Organization({
+const organization = OrganizationFixture({
   features: ['discover-basic', 'performance-view'],
-  projects: [TestStubs.Project()],
 });
 
 const {
-  routerContext,
   organization: org,
-  router,
   project,
+  router,
 } = initializeOrg({
-  ...initializeOrg(),
   organization,
   router: {
     location: {
       query: {
-        project: 1,
+        project: '1',
       },
     },
   },
@@ -66,43 +72,42 @@ const testSupportedBrowserRendering = (webVital: WebVital) => {
 describe('Performance > VitalDetail', function () {
   beforeEach(function () {
     TeamStore.loadInitialData([], false, null);
-    ProjectsStore.loadInitialData(org.projects);
-    browserHistory.push = jest.fn();
+    ProjectsStore.loadInitialData([project]);
     MockApiClient.addMockResponse({
-      url: '/organizations/org-slug/projects/',
+      url: `/organizations/${organization.slug}/projects/`,
       body: [],
     });
     MockApiClient.addMockResponse({
-      url: '/organizations/org-slug/tags/',
+      url: `/organizations/${organization.slug}/tags/`,
       body: [],
     });
     MockApiClient.addMockResponse({
-      url: '/organizations/org-slug/events-stats/',
+      url: `/organizations/${organization.slug}/events-stats/`,
       body: {data: [[123, []]]},
     });
     MockApiClient.addMockResponse({
-      url: '/organizations/org-slug/tags/user.email/values/',
+      url: `/organizations/${organization.slug}/tags/user.email/values/`,
       body: [],
     });
     MockApiClient.addMockResponse({
-      url: '/organizations/org-slug/releases/stats/',
+      url: `/organizations/${organization.slug}/releases/stats/`,
       body: [],
     });
     MockApiClient.addMockResponse({
-      url: '/organizations/org-slug/users/',
+      url: `/organizations/${organization.slug}/users/`,
       body: [],
     });
     MockApiClient.addMockResponse({
-      url: '/organizations/org-slug/recent-searches/',
+      url: `/organizations/${organization.slug}/recent-searches/`,
       body: [],
     });
     MockApiClient.addMockResponse({
-      url: '/organizations/org-slug/recent-searches/',
+      url: `/organizations/${organization.slug}/recent-searches/`,
       method: 'POST',
       body: [],
     });
     MockApiClient.addMockResponse({
-      url: '/organizations/org-slug/events-vitals/',
+      url: `/organizations/${organization.slug}/events-vitals/`,
       body: {
         'measurements.lcp': {
           poor: 1,
@@ -114,7 +119,7 @@ describe('Performance > VitalDetail', function () {
       },
     });
     MockApiClient.addMockResponse({
-      url: '/organizations/org-slug/events/',
+      url: `/organizations/${organization.slug}/events/`,
       body: {
         meta: {
           fields: {
@@ -144,12 +149,14 @@ describe('Performance > VitalDetail', function () {
       },
       match: [
         (_url, options) => {
-          return options.query?.field?.find(f => f === 'p50(measurements.lcp)');
+          return (options.query?.field as string[])?.some(
+            f => f === 'p50(measurements.lcp)'
+          );
         },
       ],
     });
     MockApiClient.addMockResponse({
-      url: '/organizations/org-slug/events/',
+      url: `/organizations/${organization.slug}/events/`,
       body: {
         meta: {
           fields: {
@@ -182,73 +189,32 @@ describe('Performance > VitalDetail', function () {
       },
       match: [
         (_url, options) => {
-          return options.query?.field?.find(f => f === 'p50(measurements.cls)');
+          return (options.query?.field as string[])?.some(
+            f => f === 'p50(measurements.cls)'
+          );
         },
       ],
     });
     MockApiClient.addMockResponse({
       method: 'GET',
-      url: `/organizations/org-slug/key-transactions-list/`,
+      url: `/organizations/${organization.slug}/key-transactions-list/`,
       body: [],
     });
 
     // Metrics Requests
     MockApiClient.addMockResponse({
       method: 'GET',
-      url: `/organizations/org-slug/metrics/tags/`,
+      url: `/organizations/${organization.slug}/metrics/tags/`,
       body: [],
     });
 
     MockApiClient.addMockResponse({
       method: 'GET',
-      url: `/organizations/org-slug/metrics/data/`,
-      body: TestStubs.MetricsField({
-        field: 'p75(sentry.transactions.measurements.lcp)',
-      }),
+      url: `/organizations/${organization.slug}/metrics/data/`,
+      body: MetricsFieldFixture('p75(sentry.transactions.measurements.lcp)'),
       match: [
         MockApiClient.matchQuery({
           field: ['p75(sentry.transactions.measurements.lcp)'],
-        }),
-      ],
-    });
-
-    MockApiClient.addMockResponse({
-      method: 'GET',
-      url: `/organizations/org-slug/metrics/data/`,
-      body: TestStubs.MetricsFieldByMeasurementRating({
-        field: 'count(sentry.transactions.measurements.lcp)',
-      }),
-      match: [
-        MockApiClient.matchQuery({
-          groupBy: ['measurement_rating'],
-          field: ['count(sentry.transactions.measurements.lcp)'],
-        }),
-      ],
-    });
-
-    MockApiClient.addMockResponse({
-      method: 'GET',
-      url: `/organizations/org-slug/metrics/data/`,
-      body: TestStubs.MetricsField({
-        field: 'p75(sentry.transactions.measurements.cls)',
-      }),
-      match: [
-        MockApiClient.matchQuery({
-          field: ['p75(sentry.transactions.measurements.cls)'],
-        }),
-      ],
-    });
-
-    MockApiClient.addMockResponse({
-      method: 'GET',
-      url: `/organizations/org-slug/metrics/data/`,
-      body: TestStubs.MetricsFieldByMeasurementRating({
-        field: 'count(sentry.transactions.measurements.cls)',
-      }),
-      match: [
-        MockApiClient.matchQuery({
-          groupBy: ['measurement_rating'],
-          field: ['count(sentry.transactions.measurements.cls)'],
         }),
       ],
     });
@@ -261,21 +227,23 @@ describe('Performance > VitalDetail', function () {
 
   it('renders basic UI elements', async function () {
     render(<TestComponent />, {
-      context: routerContext,
+      router,
       organization: org,
     });
 
     // It shows a search bar
-    expect(await screen.findByLabelText('Search events')).toBeInTheDocument();
+    expect(
+      await screen.findByPlaceholderText('Search for events, users, tags, and more')
+    ).toBeInTheDocument();
 
     // It shows the vital card
     expect(
       screen.getByText(textWithMarkupMatcher('The p75 for all transactions is 4500ms'))
     ).toBeInTheDocument();
 
-    expect(screen.getByText('Good 50%')).toBeInTheDocument();
-    expect(screen.getByText('Meh 33%')).toBeInTheDocument();
-    expect(screen.getByText('Poor 17%')).toBeInTheDocument();
+    expect(screen.getByText('Good 50%', {exact: false})).toBeInTheDocument();
+    expect(screen.getByText('Meh 33%', {exact: false})).toBeInTheDocument();
+    expect(screen.getByText('Poor 17%', {exact: false})).toBeInTheDocument();
 
     // It shows a chart
     expect(screen.getByText('Duration p75')).toBeInTheDocument();
@@ -286,21 +254,26 @@ describe('Performance > VitalDetail', function () {
 
   it('triggers a navigation on search', async function () {
     render(<TestComponent />, {
-      context: routerContext,
+      router,
       organization: org,
     });
 
     // Fill out the search box, and submit it.
-    userEvent.type(
-      await screen.findByLabelText('Search events'),
-      'user.email:uhoh*{enter}'
+    await userEvent.click(
+      await screen.findByPlaceholderText('Search for events, users, tags, and more')
     );
+    await userEvent.paste('user.email:uhoh*');
+    await userEvent.keyboard('{enter}');
+
     // Check the navigation.
-    expect(browserHistory.push).toHaveBeenCalledTimes(1);
-    expect(browserHistory.push).toHaveBeenCalledWith({
+    await waitFor(() => {
+      expect(router.push).toHaveBeenCalledTimes(1);
+    });
+
+    expect(router.push).toHaveBeenCalledWith({
       pathname: undefined,
       query: {
-        project: 1,
+        project: '1',
         statsPeriod: '14d',
         query: 'user.email:uhoh*',
       },
@@ -318,17 +291,8 @@ describe('Performance > VitalDetail', function () {
       },
     };
 
-    const context = TestStubs.routerContext([
-      {
-        organization,
-        project,
-        router: newRouter,
-        location: newRouter.location,
-      },
-    ]);
-
     render(<TestComponent router={newRouter} />, {
-      context,
+      router: newRouter,
       organization: org,
     });
 
@@ -336,21 +300,22 @@ describe('Performance > VitalDetail', function () {
       await screen.findByRole('heading', {name: 'Largest Contentful Paint'})
     ).toBeInTheDocument();
 
-    userEvent.click(
+    await userEvent.click(
       screen.getByLabelText('See transaction summary of the transaction something')
     );
 
     expect(newRouter.push).toHaveBeenCalledWith({
-      pathname: '/organizations/org-slug/performance/summary/',
+      pathname: `/organizations/${organization.slug}/performance/summary/`,
       query: {
         transaction: 'something',
         project: undefined,
-        environment: [],
-        statsPeriod: '24h',
+        environment: undefined,
+        statsPeriod: DEFAULT_STATS_PERIOD,
         start: undefined,
         end: undefined,
         query: 'sometag:value has:measurements.lcp',
-        unselectedSeries: 'p100()',
+        referrer: 'performance-transaction-summary',
+        unselectedSeries: ['p100()', 'avg()'],
         showTransactions: 'recent',
         display: 'vitals',
         trendFunction: undefined,
@@ -371,37 +336,29 @@ describe('Performance > VitalDetail', function () {
       },
     };
 
-    const context = TestStubs.routerContext([
-      {
-        organization,
-        project,
-        router: newRouter,
-        location: newRouter.location,
-      },
-    ]);
-
     render(<TestComponent router={newRouter} />, {
-      context,
+      router: newRouter,
       organization: org,
     });
 
     expect(await screen.findByText('Cumulative Layout Shift')).toBeInTheDocument();
 
-    userEvent.click(
+    await userEvent.click(
       screen.getByLabelText('See transaction summary of the transaction something')
     );
 
     expect(newRouter.push).toHaveBeenCalledWith({
-      pathname: '/organizations/org-slug/performance/summary/',
+      pathname: `/organizations/${organization.slug}/performance/summary/`,
       query: {
         transaction: 'something',
         project: undefined,
-        environment: [],
-        statsPeriod: '24h',
+        environment: undefined,
+        statsPeriod: DEFAULT_STATS_PERIOD,
         start: undefined,
         end: undefined,
         query: 'anothertag:value has:measurements.cls',
-        unselectedSeries: 'p100()',
+        referrer: 'performance-transaction-summary',
+        unselectedSeries: ['p100()', 'avg()'],
         showTransactions: 'recent',
         display: 'vitals',
         trendFunction: undefined,
@@ -413,7 +370,7 @@ describe('Performance > VitalDetail', function () {
     expect(screen.getByText('0.215').closest('td')).toBeInTheDocument();
   });
 
-  it('can switch vitals with dropdown menu', function () {
+  it('can switch vitals with dropdown menu', async function () {
     const newRouter = {
       ...router,
       location: {
@@ -425,30 +382,21 @@ describe('Performance > VitalDetail', function () {
       },
     };
 
-    const context = TestStubs.routerContext([
-      {
-        organization,
-        project,
-        router: newRouter,
-        location: newRouter.location,
-      },
-    ]);
-
     render(<TestComponent router={newRouter} />, {
-      context,
+      router: newRouter,
       organization: org,
     });
 
     const button = screen.getByRole('button', {name: /web vitals: lcp/i});
     expect(button).toBeInTheDocument();
-    userEvent.click(button);
+    await userEvent.click(button);
 
     const menuItem = screen.getByRole('menuitemradio', {name: /fcp/i});
     expect(menuItem).toBeInTheDocument();
-    userEvent.click(menuItem);
+    await userEvent.click(menuItem);
 
-    expect(browserHistory.push).toHaveBeenCalledTimes(1);
-    expect(browserHistory.push).toHaveBeenCalledWith({
+    expect(newRouter.push).toHaveBeenCalledTimes(1);
+    expect(newRouter.push).toHaveBeenCalledWith({
       pathname: undefined,
       query: {
         project: 1,
@@ -460,7 +408,7 @@ describe('Performance > VitalDetail', function () {
 
   it('renders LCP vital correctly', async function () {
     render(<TestComponent />, {
-      context: routerContext,
+      router,
       organization: org,
     });
 
@@ -473,16 +421,17 @@ describe('Performance > VitalDetail', function () {
     expect(screen.getByText('4.50s').closest('td')).toBeInTheDocument();
   });
 
-  it('correctly renders which browsers support LCP', function () {
+  it('correctly renders which browsers support LCP', async function () {
     render(<TestComponent />, {
-      context: routerContext,
+      router,
       organization: org,
     });
 
+    expect(await screen.findAllByText(/Largest Contentful Paint/)).toHaveLength(2);
     testSupportedBrowserRendering(WebVital.LCP);
   });
 
-  it('correctly renders which browsers support CLS', function () {
+  it('correctly renders which browsers support CLS', async function () {
     const newRouter = {
       ...router,
       location: {
@@ -494,14 +443,15 @@ describe('Performance > VitalDetail', function () {
     };
 
     render(<TestComponent router={newRouter} />, {
-      context: routerContext,
+      router,
       organization: org,
     });
 
+    expect(await screen.findAllByText(/Cumulative Layout Shift/)).toHaveLength(2);
     testSupportedBrowserRendering(WebVital.CLS);
   });
 
-  it('correctly renders which browsers support FCP', function () {
+  it('correctly renders which browsers support FCP', async function () {
     const newRouter = {
       ...router,
       location: {
@@ -512,16 +462,21 @@ describe('Performance > VitalDetail', function () {
       },
     };
 
-    MockApiClient.warnOnMissingMocks();
+    MockApiClient.addMockResponse({
+      url: `/organizations/${organization.slug}/events/`,
+      body: [],
+    });
+
     render(<TestComponent router={newRouter} />, {
-      context: routerContext,
+      router,
       organization: org,
     });
 
+    expect(await screen.findAllByText(/First Contentful Paint/)).toHaveLength(2);
     testSupportedBrowserRendering(WebVital.FCP);
   });
 
-  it('correctly renders which browsers support FID', function () {
+  it('correctly renders which browsers support FID', async function () {
     const newRouter = {
       ...router,
       location: {
@@ -532,12 +487,17 @@ describe('Performance > VitalDetail', function () {
       },
     };
 
-    MockApiClient.warnOnMissingMocks();
+    MockApiClient.addMockResponse({
+      url: `/organizations/${organization.slug}/events/`,
+      body: [],
+    });
+
     render(<TestComponent router={newRouter} />, {
-      context: routerContext,
+      router,
       organization: org,
     });
 
+    expect(await screen.findAllByText(/First Input Delay/)).toHaveLength(2);
     testSupportedBrowserRendering(WebVital.FID);
   });
 });

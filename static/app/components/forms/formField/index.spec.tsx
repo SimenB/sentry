@@ -5,19 +5,18 @@ import Form from 'sentry/components/forms/form';
 import FormModel from 'sentry/components/forms/model';
 
 describe('FormField + model', function () {
-  let model;
+  let model!: FormModel;
 
   beforeEach(function () {
     model = new FormModel();
   });
 
   it('renders with Form', function () {
-    const wrapper = render(
+    render(
       <Form model={model}>
         <TextField name="fieldName" />
       </Form>
     );
-    expect(wrapper.container).toSnapshot();
   });
 
   it('sets initial data in model', function () {

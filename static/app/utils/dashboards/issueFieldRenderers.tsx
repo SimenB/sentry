@@ -1,20 +1,23 @@
 import {Fragment} from 'react';
 import {css} from '@emotion/react';
 import styled from '@emotion/styled';
-import {Location} from 'history';
+import type {Location} from 'history';
 
-import AssigneeSelector from 'sentry/components/assigneeSelector';
 import Count from 'sentry/components/count';
+import ExternalLink from 'sentry/components/links/externalLink';
 import Link from 'sentry/components/links/link';
-import {getRelativeSummary} from 'sentry/components/organizations/timeRangeSelector/utils';
-import Tooltip from 'sentry/components/tooltip';
+import {getRelativeSummary} from 'sentry/components/timeRangeSelector/utils';
+import {Tooltip} from 'sentry/components/tooltip';
 import {DEFAULT_STATS_PERIOD} from 'sentry/constants';
 import {t} from 'sentry/locale';
-import MemberListStore from 'sentry/stores/memberListStore';
-import space from 'sentry/styles/space';
-import {Organization} from 'sentry/types';
-import EventView, {EventData} from 'sentry/utils/discover/eventView';
-import {FieldKey} from 'sentry/views/dashboardsV2/widgetBuilder/issueWidget/fields';
+import {space} from 'sentry/styles/space';
+import type {Organization} from 'sentry/types/organization';
+import {IssueAssignee} from 'sentry/utils/dashboards/issueAssignee';
+import type {EventData} from 'sentry/utils/discover/eventView';
+import EventView from 'sentry/utils/discover/eventView';
+import {SavedQueryDatasets} from 'sentry/utils/discover/types';
+import {hasDatasetSelector} from 'sentry/views/dashboards/utils';
+import {FieldKey} from 'sentry/views/dashboards/widgetBuilder/issueWidget/fields';
 
 import {Container, FieldShortId, OverflowLink} from '../discover/styles';
 
@@ -89,14 +92,7 @@ const SPECIAL_FIELDS: SpecialFields = {
   },
   assignee: {
     sortField: null,
-    renderFunc: data => {
-      const memberList = MemberListStore.getAll();
-      return (
-        <ActorContainer>
-          <AssigneeSelector id={data.id} memberList={memberList} noDropdown />
-        </ActorContainer>
-      );
-    },
+    renderFunc: data => <IssueAssignee groupId={data.id} />,
   },
   lifetimeEvents: {
     sortField: null,
@@ -140,7 +136,15 @@ const SPECIAL_FIELDS: SpecialFields = {
   },
   links: {
     sortField: null,
-    renderFunc: ({links}) => <LinksContainer dangerouslySetInnerHTML={{__html: links}} />,
+    renderFunc: ({links}) => (
+      <LinksContainer>
+        {links.map((link: any, index: any) => (
+          <ExternalLink key={index} href={link.url}>
+            {link.displayName}
+          </ExternalLink>
+        ))}
+      </LinksContainer>
+    ),
   },
 };
 
@@ -179,7 +183,7 @@ const issuesCountRenderer = (
               </Fragment>
             ) : null}
             <StyledLink to={discoverLink}>
-              {t(`Total in ${selectionDateString}`)}
+              {t('Total in %s', selectionDateString)}
               <WrappedCount value={count} />
             </StyledLink>
             <Divider />
@@ -223,7 +227,11 @@ const getDiscoverUrl = (
     query: `issue.id:${data.id}${filtered ? data.discoverSearchQuery : ''}`,
     version: 2,
   });
-  return discoverView.getResultsViewUrlTarget(organization.slug);
+  return discoverView.getResultsViewUrlTarget(
+    organization.slug,
+    false,
+    hasDatasetSelector(organization) ? SavedQueryDatasets.ERRORS : undefined
+  );
 };
 
 export function getSortField(field: string): string | null {
@@ -268,13 +276,13 @@ const SecondaryCount = styled(Count)`
   }
 `;
 
-const WrappedCount = styled(({value, ...p}) => (
+const WrappedCount = styled(({value, ...p}: any) => (
   <div {...p}>
     <Count value={value} />
   </div>
 ))`
   text-align: right;
-  font-weight: bold;
+  font-weight: ${p => p.theme.fontWeightBold};
   font-variant-numeric: tabular-nums;
   padding-left: ${space(2)};
   color: ${p => p.theme.subText};
@@ -284,17 +292,6 @@ const Divider = styled('div')`
   height: 1px;
   overflow: hidden;
   background-color: ${p => p.theme.innerBorder};
-`;
-
-const ActorContainer = styled('div')`
-  display: flex;
-  justify-content: left;
-  margin-left: 18px;
-  /* IconUser is the only one with 20px. We are setting 24px here to make the height consistent */
-  height: 24px;
-  :hover {
-    cursor: default;
-  }
 `;
 
 const LinksContainer = styled('span')`
@@ -312,6 +309,7 @@ export function getIssueFieldRenderer(
   field: string
 ): FieldFormatterRenderFunctionPartial | null {
   if (SPECIAL_FIELDS.hasOwnProperty(field)) {
+    // @ts-expect-error TS(7053): Element implicitly has an 'any' type because expre... Remove this comment to see the full error message
     return SPECIAL_FIELDS[field].renderFunc;
   }
 

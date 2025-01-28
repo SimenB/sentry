@@ -1,17 +1,13 @@
 import {useState} from 'react';
 import styled from '@emotion/styled';
 
-import Alert from 'sentry/components/alert';
-import Button from 'sentry/components/button';
-import Link from 'sentry/components/links/link';
+import {Alert} from 'sentry/components/alert';
+import {Button} from 'sentry/components/button';
 import {IconClose} from 'sentry/icons';
 import {t, tct} from 'sentry/locale';
 import type EventView from 'sentry/utils/discover/eventView';
-import {
-  Aggregation,
-  AGGREGATIONS,
-  explodeFieldString,
-} from 'sentry/utils/discover/fields';
+import type {Aggregation} from 'sentry/utils/discover/fields';
+import {AGGREGATIONS, explodeFieldString} from 'sentry/utils/discover/fields';
 import {
   errorFieldConfig,
   transactionFieldConfig,
@@ -58,6 +54,7 @@ function incompatibleYAxis(eventView: EventView): boolean {
 
   const invalidFunction = !yAxisConfig.aggregations.includes(column.function[0]);
   // Allow empty parameters, allow all numeric parameters - eg. apdex(300)
+  // @ts-expect-error TS(7053): Element implicitly has an 'any' type because expre... Remove this comment to see the full error message
   const aggregation: Aggregation | undefined = AGGREGATIONS[column.function[0]];
   if (!aggregation) {
     return false;
@@ -100,7 +97,6 @@ export function checkMetricAlertCompatiablity(
 
 interface IncompatibleAlertQueryProps {
   eventView: EventView;
-  orgSlug: string;
 }
 
 /**
@@ -114,51 +110,6 @@ export function IncompatibleAlertQuery(props: IncompatibleAlertQueryProps) {
   if (!totalErrors || !isOpen) {
     return null;
   }
-
-  const eventTypeError = props.eventView.clone();
-  eventTypeError.query += ' event.type:error';
-  const eventTypeTransaction = props.eventView.clone();
-  eventTypeTransaction.query += ' event.type:transaction';
-  const eventTypeDefault = props.eventView.clone();
-  eventTypeDefault.query += ' event.type:default';
-  const eventTypeErrorDefault = props.eventView.clone();
-  eventTypeErrorDefault.query += ' event.type:error or event.type:default';
-  const pathname = `/organizations/${props.orgSlug}/discover/results/`;
-
-  const eventTypeLinks = {
-    error: (
-      <Link
-        to={{
-          pathname,
-          query: eventTypeError.generateQueryStringObject(),
-        }}
-      />
-    ),
-    default: (
-      <Link
-        to={{
-          pathname,
-          query: eventTypeDefault.generateQueryStringObject(),
-        }}
-      />
-    ),
-    transaction: (
-      <Link
-        to={{
-          pathname,
-          query: eventTypeTransaction.generateQueryStringObject(),
-        }}
-      />
-    ),
-    errorDefault: (
-      <Link
-        to={{
-          pathname,
-          query: eventTypeErrorDefault.generateQueryStringObject(),
-        }}
-      />
-    ),
-  };
 
   return (
     <StyledAlert
@@ -181,7 +132,14 @@ export function IncompatibleAlertQuery(props: IncompatibleAlertQueryProps) {
           <li>{t('Too many environments were selected')}</li>
         )}
         {incompatibleQuery.hasEventTypeError && (
-          <li>{tct("An event type wasn't selected", eventTypeLinks)}</li>
+          <li>
+            {tct(
+              "An event type wasn't selected. [defaultSetting] has been set as the default",
+              {
+                defaultSetting: <StyledCode>event.type:error</StyledCode>,
+              }
+            )}
+          </li>
         )}
         {incompatibleQuery.hasYAxisError && (
           <li>

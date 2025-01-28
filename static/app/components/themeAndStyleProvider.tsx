@@ -19,13 +19,15 @@ type Props = {
 //
 // In 2022 prefixes are almost ubiquitously unnecessary
 const cache = createCache({key: 'app', stylisPlugins: []});
+// Compat disables :nth-child warning
+cache.compat = true;
 
 /**
  * Wraps children with emotions ThemeProvider reactively set a theme.
  *
  * Also injects the sentry GlobalStyles .
  */
-function ThemeAndStyleProvider({children}: Props) {
+export function ThemeAndStyleProvider({children}: Props) {
   useEffect(() => void loadPreferencesState(), []);
 
   const config = useLegacyStore(ConfigStore);
@@ -45,5 +47,3 @@ function ThemeAndStyleProvider({children}: Props) {
     </ThemeProvider>
   );
 }
-
-export default ThemeAndStyleProvider;

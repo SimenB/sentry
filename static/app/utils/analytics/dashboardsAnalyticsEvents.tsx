@@ -1,42 +1,14 @@
-// The add/edit widget modal is currently being ported to the widget builder full-page and
-// this will be removed once that is done.
-type DashboardsEventParametersAddWidgetModal = {
-  'dashboards_views.add_widget_modal.change': {
-    field: string;
-    from: string;
-    value: string;
-    widget_type: string;
-  };
-  'dashboards_views.add_widget_modal.confirm': {
-    data_set: string;
-  };
-  'dashboards_views.add_widget_modal.opened': {};
-  'dashboards_views.add_widget_modal.save': {
-    data_set: string;
-  };
-  'dashboards_views.edit_widget_modal.confirm': {};
-  'dashboards_views.edit_widget_modal.opened': {};
-};
+import type {DashboardsLayout} from 'sentry/views/dashboards/manage';
 
-const dashboardsEventMapAddWidgetModal: Record<
-  keyof DashboardsEventParametersAddWidgetModal,
-  string | null
-> = {
-  'dashboards_views.edit_widget_modal.confirm':
-    'Dashboards2: Edit Dashboard Widget modal form submitted',
-  'dashboards_views.edit_widget_modal.opened': 'Dashboards2: Edit Widget Modal Opened',
-  'dashboards_views.add_widget_modal.opened': 'Dashboards2: Add Widget Modal opened',
-  'dashboards_views.add_widget_modal.change':
-    'Dashboards2: Field changed in Add Widget Modal',
-  'dashboards_views.add_widget_modal.confirm':
-    'Dashboards2: Add Widget to Dashboard modal form submitted',
-  'dashboards_views.add_widget_modal.save':
-    'Dashboards2: Widget saved directly to Dashboard from Add Widget to Dashboard modal',
-};
+export enum WidgetBuilderVersion {
+  PAGE = 'page',
+  SLIDEOUT = 'slideout',
+}
 
 // Used in the full-page widget builder
 type DashboardsEventParametersWidgetBuilder = {
   'dashboards_views.widget_builder.change': {
+    builder_version: WidgetBuilderVersion;
     field: string;
     from: string;
     new_widget: boolean;
@@ -44,11 +16,27 @@ type DashboardsEventParametersWidgetBuilder = {
     widget_type: string;
   };
   'dashboards_views.widget_builder.opened': {
+    builder_version: WidgetBuilderVersion;
+    from: string;
     new_widget: boolean;
   };
   'dashboards_views.widget_builder.save': {
+    builder_version: WidgetBuilderVersion;
     data_set: string;
     new_widget: boolean;
+  };
+  'dashboards_views.widget_builder.templates.add_to_dashboard': {
+    title: string;
+    widget_type: string;
+  };
+  'dashboards_views.widget_builder.templates.add_to_dashboard.customize': {
+    title: string;
+    widget_type: string;
+  };
+  'dashboards_views.widget_builder.templates.open': {};
+  'dashboards_views.widget_builder.templates.selected': {
+    title: string;
+    widget_type: string;
   };
 };
 
@@ -59,6 +47,13 @@ const dashboardsEventMapWidgetBuilder: Record<
   'dashboards_views.widget_builder.change': 'Widget Builder: Field changed',
   'dashboards_views.widget_builder.save': 'Widget Builder: Form submitted',
   'dashboards_views.widget_builder.opened': 'Widget Builder: Page opened',
+  'dashboards_views.widget_builder.templates.open': 'Widget Builder: Templates opened',
+  'dashboards_views.widget_builder.templates.selected':
+    'Widget Builder: Template selected',
+  'dashboards_views.widget_builder.templates.add_to_dashboard':
+    'Widget Builder: Template added to dashboard',
+  'dashboards_views.widget_builder.templates.add_to_dashboard.customize':
+    'Widget Builder: Template added to dashboard and customized',
 };
 
 export type DashboardsEventParameters = {
@@ -68,10 +63,24 @@ export type DashboardsEventParameters = {
   'dashboards2.edit.cancel': {};
   'dashboards2.edit.complete': {};
   'dashboards2.edit.start': {};
+  'dashboards2.edit_access.save': {
+    editable_by: 'owner_only' | 'all' | 'team_selection';
+    team_count?: number;
+  };
+  'dashboards2.edit_access.start': {};
+  'dashboards2.filter.cancel': {};
+  'dashboards2.filter.change': {filter_type: string};
+  'dashboards2.filter.save': {};
   'dashboards_manage.change_sort': {
     sort: string;
   };
+  'dashboards_manage.change_view_type': {
+    view_type: DashboardsLayout;
+  };
   'dashboards_manage.create.start': {};
+  'dashboards_manage.delete': {dashboard_id: number; view_type: DashboardsLayout};
+  'dashboards_manage.duplicate': {dashboard_id: number; view_type: DashboardsLayout};
+  'dashboards_manage.paginate': {};
   'dashboards_manage.search': {};
   'dashboards_manage.templates.add': {
     dashboard_id: string;
@@ -84,6 +93,7 @@ export type DashboardsEventParameters = {
   'dashboards_manage.templates.toggle': {
     show_templates: boolean;
   };
+  'dashboards_manage.toggle_favorite': {dashboard_id: string; favorited: boolean};
   'dashboards_views.open_in_discover.opened': {
     widget_type: string;
   };
@@ -93,16 +103,19 @@ export type DashboardsEventParameters = {
   'dashboards_views.query_selector.selected': {
     widget_type: string;
   };
-  'dashboards_views.widget_library.add': {
-    num_widgets: number;
+  'dashboards_views.widget.delete': {
+    widget_type: string;
+  };
+  'dashboards_views.widget.duplicate': {
+    widget_type: string;
+  };
+  'dashboards_views.widget.edit': {
+    widget_type: string;
   };
   'dashboards_views.widget_library.add_widget': {
     title: string;
   };
   'dashboards_views.widget_library.opened': {};
-  'dashboards_views.widget_library.switch_tab': {
-    to: string;
-  };
   'dashboards_views.widget_viewer.edit': {
     display_type: string;
     widget_type: string;
@@ -137,8 +150,7 @@ export type DashboardsEventParameters = {
     display_type: string;
     widget_type: string;
   };
-} & DashboardsEventParametersAddWidgetModal &
-  DashboardsEventParametersWidgetBuilder;
+} & DashboardsEventParametersWidgetBuilder;
 
 export type DashboardsEventKey = keyof DashboardsEventParameters;
 
@@ -149,23 +161,31 @@ export const dashboardsEventMap: Record<DashboardsEventKey, string | null> = {
   'dashboards2.edit.cancel': 'Dashboards2: Edit cancel',
   'dashboards2.edit.complete': 'Dashboards2: Edit complete',
   'dashboards2.edit.start': 'Dashboards2: Edit start',
+  'dashboards2.filter.save': 'Dashboards2: Filter bar save',
+  'dashboards2.filter.cancel': 'Dashboards2: Filter bar cancel',
+  'dashboards2.filter.change': 'Dashboards2: Filter bar changed',
   'dashboards_views.query_selector.opened':
     'Dashboards2: Query Selector opened for Widget',
   'dashboards_views.query_selector.selected':
     'Dashboards2: Query selected in Query Selector',
+  'dashboards_views.widget.edit': 'Dashboards2: dashboard widget edited',
+  'dashboards_views.widget.duplicate': 'Dashboards2: dashboard widget duplicated',
+  'dashboards_views.widget.delete': 'Dashboards2: dashboard widget deleted',
   'dashboards_views.open_in_discover.opened': 'Dashboards2: Widget Opened In Discover',
-  'dashboards_views.widget_library.add': 'Dashboards2: Number of prebuilt widgets added',
   'dashboards_views.widget_library.add_widget':
     'Dashboards2: Title of prebuilt widget added',
-  'dashboards_views.widget_library.switch_tab':
-    'Dashboards2: Widget Library tab switched',
   'dashboards_views.widget_library.opened': 'Dashboards2: Add Widget Library opened',
   'dashboards_manage.search': 'Dashboards Manager: Search',
   'dashboards_manage.change_sort': 'Dashboards Manager: Sort By Changed',
+  'dashboards_manage.change_view_type': 'Dashboards Manager: View Type Toggled',
   'dashboards_manage.create.start': 'Dashboards Manager: Dashboard Create Started',
+  'dashboards_manage.delete': 'Dashboards Manager: Dashboard Deleted',
+  'dashboards_manage.duplicate': 'Dashboards Manager: Dashboard Duplicated',
+  'dashboards_manage.paginate': 'Dashboards Manager: Paginate',
   'dashboards_manage.templates.toggle': 'Dashboards Manager: Template Toggle Changed',
   'dashboards_manage.templates.add': 'Dashboards Manager: Template Added',
   'dashboards_manage.templates.preview': 'Dashboards Manager: Template Previewed',
+  'dashboards_manage.toggle_favorite': 'Dashboards Manager: Dashboard Favorite Toggled',
   'dashboards_views.widget_viewer.edit': 'Widget Viewer: Edit Widget Modal Opened',
   'dashboards_views.widget_viewer.open': 'Widget Viewer: Opened',
   'dashboards_views.widget_viewer.open_source':
@@ -175,6 +195,7 @@ export const dashboardsEventMap: Record<DashboardsEventKey, string | null> = {
   'dashboards_views.widget_viewer.sort': 'Widget Viewer: Table Sorted',
   'dashboards_views.widget_viewer.toggle_legend': 'Widget Viewer: Legend Toggled',
   'dashboards_views.widget_viewer.zoom': 'Widget Viewer: Chart zoomed',
-  ...dashboardsEventMapAddWidgetModal,
+  'dashboards2.edit_access.start': 'Dashboards2: Edit Access Dropdown Opened',
+  'dashboards2.edit_access.save': 'Dashboards2: Edit Access Dropdown Selection Saved',
   ...dashboardsEventMapWidgetBuilder,
 };

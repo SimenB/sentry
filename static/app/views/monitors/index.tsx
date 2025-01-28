@@ -1,26 +1,29 @@
-import styled from '@emotion/styled';
+import {useEffect} from 'react';
 
-import Feature from 'sentry/components/acl/feature';
+import NoProjectMessage from 'sentry/components/noProjectMessage';
 import PageFiltersContainer from 'sentry/components/organizations/pageFilters/container';
-import {PageContent} from 'sentry/styles/organization';
-import withPageFilters from 'sentry/utils/withPageFilters';
+import normalizeUrl from 'sentry/utils/url/normalizeUrl';
+import {useNavigate} from 'sentry/utils/useNavigate';
+import useOrganization from 'sentry/utils/useOrganization';
 
-const Body = styled('div')`
-  background-color: ${p => p.theme.backgroundSecondary};
-  flex-direction: column;
-  flex: 1;
-`;
+function MonitorsContainer({children}: {children?: React.ReactNode}) {
+  const organization = useOrganization();
+  const navigate = useNavigate();
 
-const MonitorsContainer: React.FC = ({children}) => {
+  useEffect(() => {
+    if (organization.features.includes('insights-crons')) {
+      navigate(
+        normalizeUrl(`/organizations/${organization.slug}/insights/backend/crons/`),
+        {replace: true}
+      );
+    }
+  });
+
   return (
-    <Feature features={['monitors']} renderDisabled>
-      <PageFiltersContainer>
-        <PageContent>
-          <Body>{children}</Body>
-        </PageContent>
-      </PageFiltersContainer>
-    </Feature>
+    <NoProjectMessage organization={organization}>
+      <PageFiltersContainer>{children}</PageFiltersContainer>
+    </NoProjectMessage>
   );
-};
+}
 
-export default withPageFilters(MonitorsContainer);
+export default MonitorsContainer;

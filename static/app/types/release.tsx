@@ -1,12 +1,11 @@
-import type {PlatformKey} from 'sentry/data/platformCategories';
-
 import type {TimeseriesValue} from './core';
 import type {Commit} from './integrations';
+import type {PlatformKey} from './project';
 import type {User} from './user';
 
 export enum ReleaseStatus {
-  Active = 'open',
-  Archived = 'archived',
+  ACTIVE = 'open',
+  ARCHIVED = 'archived',
 }
 
 export type SourceMapsArchive = {
@@ -20,7 +19,7 @@ export type SourceMapsArchive = {
 export type Artifact = {
   dateCreated: string;
   dist: string | null;
-  headers: {'Content-Type': string};
+  headers: {'Content-Type': string} | {};
   id: string;
   name: string;
   sha1: string;
@@ -37,11 +36,24 @@ export type Deploy = {
   version: string;
 };
 
+interface RawVersion {
+  raw: string;
+}
+
+export interface SemverVersion extends RawVersion {
+  buildCode: string | null;
+  components: number;
+  major: number;
+  minor: number;
+  patch: number;
+  pre: string | null;
+}
+
 export type VersionInfo = {
   buildHash: string | null;
   description: string;
   package: string | null;
-  version: {raw: string};
+  version: RawVersion | SemverVersion;
 };
 
 export interface BaseRelease {
@@ -60,11 +72,11 @@ export interface Release extends BaseRelease, ReleaseData {
 }
 
 export interface ReleaseWithHealth extends BaseRelease, ReleaseData {
-  projects: Required<ReleaseProject>[];
+  projects: Array<Required<ReleaseProject>>;
 }
 
 interface ReleaseData {
-  authors: User[];
+  authors: Array<User | {email: string; name: string}>;
   commitCount: number;
   currentProjectMeta: {
     firstReleaseVersion: string | null;
@@ -93,6 +105,7 @@ interface ReleaseData {
   lastCommit?: Commit;
   lastDeploy?: Deploy;
   owner?: any;
+  userAgent?: string;
 }
 
 export type CurrentRelease = {
@@ -108,13 +121,13 @@ export type CurrentRelease = {
 };
 
 export type ReleaseProject = {
-  hasHealthData: boolean;
   id: number;
   name: string;
   newGroups: number;
   platform: PlatformKey;
   platforms: PlatformKey[];
   slug: string;
+  hasHealthData?: boolean;
   healthData?: Health;
 };
 
@@ -122,6 +135,8 @@ export type ReleaseMeta = {
   commitCount: number;
   commitFilesChanged: number;
   deployCount: number;
+  isArtifactBundle: boolean;
+  newGroups: number;
   projects: ReleaseProject[];
   releaseFileCount: number;
   released: string;
@@ -169,7 +184,6 @@ export enum ReleaseComparisonChartType {
   ERROR_COUNT = 'errorCount',
   TRANSACTION_COUNT = 'transactionCount',
   FAILURE_RATE = 'failureRate',
-  SESSION_DURATION = 'sessionDuration',
 }
 
 export enum HealthStatsPeriodOption {
@@ -177,10 +191,10 @@ export enum HealthStatsPeriodOption {
   TWENTY_FOUR_HOURS = '24h',
 }
 
-export type CrashFreeTimeBreakdown = {
+export type CrashFreeTimeBreakdown = Array<{
   crashFreeSessions: number | null;
   crashFreeUsers: number | null;
   date: string;
   totalSessions: number;
   totalUsers: number;
-}[];
+}>;

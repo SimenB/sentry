@@ -1,41 +1,29 @@
 from __future__ import annotations
 
-from datetime import datetime
 from typing import Any
 
-import pytz
 from django import forms
 from django.conf import settings
 from django.contrib.auth import authenticate, get_user_model
+from django.db.models import Field
+from django.http.request import HttpRequest
 from django.utils.safestring import mark_safe
 from django.utils.text import capfirst
-from django.utils.translation import ugettext_lazy as _
+from django.utils.translation import gettext_lazy as _
 
 from sentry import newsletter, options
 from sentry import ratelimits as ratelimiter
 from sentry.auth import password_validation
-from sentry.models import User
-from sentry.utils.auth import find_users, logger
+from sentry.users.models.user import User
+from sentry.utils.auth import logger
+from sentry.utils.dates import get_timezone_choices
 from sentry.web.forms.fields import AllowedEmailField, CustomTypedChoiceField
 
-
-def _get_timezone_choices():
-    results = []
-    for tz in pytz.common_timezones:
-        now = datetime.now(pytz.timezone(tz))
-        offset = now.strftime("%z")
-        results.append((int(offset), tz, f"(UTC{offset}) {tz}"))
-    results.sort()
-
-    for i in range(len(results)):
-        results[i] = results[i][1:]
-    return results
-
-
-TIMEZONE_CHOICES = _get_timezone_choices()
+TIMEZONE_CHOICES = get_timezone_choices()
 
 
 class AuthenticationForm(forms.Form):
+    username_field: Field[Any, Any]
     username = forms.CharField(
         label=_("Account"),
         max_length=128,
@@ -61,7 +49,7 @@ class AuthenticationForm(forms.Form):
         "inactive": _("This account is inactive."),
     }
 
-    def __init__(self, request=None, *args, **kwargs):
+    def __init__(self, request: HttpRequest, *args: Any, **kwargs: Any) -> None:
         """
         If request is passed in, the form will validate that cookies are
         enabled. Note that the request (a HttpRequest object) must have set a
@@ -69,7 +57,7 @@ class AuthenticationForm(forms.Form):
         running this validation.
         """
         self.request = request
-        self.user_cache = None
+        self.user_cache: User | None = None
         super().__init__(*args, **kwargs)
 
         # Set the label for the "username" field.
@@ -99,7 +87,7 @@ class AuthenticationForm(forms.Form):
             return False
 
         ip_address = self.request.META["REMOTE_ADDR"]
-        return ratelimiter.is_limited(f"auth:ip:{ip_address}", limit)
+        return ratelimiter.backend.is_limited(f"auth:ip:{ip_address}", limit)
 
     def _is_user_rate_limited(self):
         limit = options.get("auth.user-rate-limit")
@@ -110,7 +98,7 @@ class AuthenticationForm(forms.Form):
         if not username:
             return False
 
-        return ratelimiter.is_limited(f"auth:username:{username}", limit)
+        return ratelimiter.backend.is_limited(f"auth:username:{username}", limit)
 
     def clean(self) -> dict[str, Any] | None:
         username = self.cleaned_data.get("username")
@@ -140,11 +128,10 @@ class AuthenticationForm(forms.Form):
         return self.cleaned_data
 
     def check_for_test_cookie(self):
-        if self.request:
-            if not self.request.session.test_cookie_worked():
-                raise forms.ValidationError(self.error_messages["no_cookies"])
-            else:
-                self.request.session.delete_test_cookie()
+        if not self.request.session.test_cookie_worked():
+            raise forms.ValidationError(self.error_messages["no_cookies"])
+        else:
+            self.request.session.delete_test_cookie()
 
     def get_user_id(self):
         if self.user_cache:
@@ -182,7 +169,7 @@ class PasswordlessRegistrationForm(forms.ModelForm):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        if not newsletter.is_enabled():
+        if not newsletter.backend.is_enabled():
             del self.fields["subscribe"]
         else:
             # NOTE: the text here is duplicated within the ``NewsletterConsent`` component
@@ -218,8 +205,8 @@ class PasswordlessRegistrationForm(forms.ModelForm):
         if commit:
             user.save()
             if self.cleaned_data.get("subscribe"):
-                newsletter.create_or_update_subscriptions(
-                    user, list_ids=newsletter.get_default_list_ids()
+                newsletter.backend.create_or_update_subscriptions(
+                    user, list_ids=newsletter.backend.get_default_list_ids()
                 )
         return user
 
@@ -231,7 +218,12 @@ class RegistrationForm(PasswordlessRegistrationForm):
 
     def clean_password(self):
         password = self.cleaned_data["password"]
-        password_validation.validate_password(password)
+        user = (
+            User(username=self.cleaned_data["username"])
+            if "username" in self.cleaned_data
+            else None
+        )
+        password_validation.validate_password(password, user=user)
         return password
 
     def save(self, commit=True):
@@ -240,85 +232,10 @@ class RegistrationForm(PasswordlessRegistrationForm):
         if commit:
             user.save()
             if self.cleaned_data.get("subscribe"):
-                newsletter.create_or_update_subscriptions(
-                    user, list_ids=newsletter.get_default_list_ids()
+                newsletter.backend.create_or_update_subscriptions(
+                    user, list_ids=newsletter.backend.get_default_list_ids()
                 )
         return user
-
-
-class RecoverPasswordForm(forms.Form):
-    user = forms.CharField(
-        label=_("Account"),
-        max_length=128,
-        widget=forms.TextInput(attrs={"placeholder": _("username or email")}),
-    )
-
-    def clean_user(self):
-        value = (self.cleaned_data.get("user") or "").strip()
-        if not value:
-            return
-        users = find_users(value, with_valid_password=False)
-        if not users:
-            return
-
-        # If we find more than one user, we likely matched on email address.
-        # We silently bail here as we emailing the 'wrong' person isn't great.
-        # They will have to retry with their username which is guaranteed
-        # to be unique
-        if len(users) > 1:
-            return
-
-        users = [u for u in users if not u.is_managed]
-        if not users:
-            raise forms.ValidationError(
-                _(
-                    "The account you are trying to recover is managed and does not support password recovery."
-                )
-            )
-        return users[0]
-
-
-class ChangePasswordRecoverForm(forms.Form):
-    password = forms.CharField(widget=forms.PasswordInput())
-
-    def clean_password(self):
-        password = self.cleaned_data["password"]
-        password_validation.validate_password(password)
-        return password
-
-
-class EmailForm(forms.Form):
-    alt_email = AllowedEmailField(
-        label=_("New Email"),
-        required=False,
-        help_text="Designate an alternative email for this account",
-    )
-
-    password = forms.CharField(
-        label=_("Current password"),
-        widget=forms.PasswordInput(),
-        help_text=_("You will need to enter your current account password to make changes."),
-        required=True,
-    )
-
-    def __init__(self, user, *args, **kwargs):
-        self.user = user
-        super().__init__(*args, **kwargs)
-
-        needs_password = user.has_usable_password()
-
-        if not needs_password:
-            del self.fields["password"]
-
-    def clean_password(self):
-        value = self.cleaned_data.get("password")
-        if value and not self.user.check_password(value):
-            raise forms.ValidationError(_("The password you entered is not correct."))
-        elif not value:
-            raise forms.ValidationError(
-                _("You must confirm your current password to make changes.")
-            )
-        return value
 
 
 class TwoFactorForm(forms.Form):

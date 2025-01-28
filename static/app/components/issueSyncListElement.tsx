@@ -1,13 +1,14 @@
 import {useMemo} from 'react';
 import {ClassNames} from '@emotion/react';
 import styled from '@emotion/styled';
-import capitalize from 'lodash/capitalize';
 
+import {Button} from 'sentry/components/button';
 import {Body, Hovercard} from 'sentry/components/hovercard';
 import {IconAdd, IconClose} from 'sentry/icons';
 import {t} from 'sentry/locale';
-import space from 'sentry/styles/space';
+import {space} from 'sentry/styles/space';
 import {getIntegrationIcon} from 'sentry/utils/integrationUtil';
+import {capitalize} from 'sentry/utils/string/capitalize';
 
 type Props = {
   children?: React.ReactNode;
@@ -63,7 +64,10 @@ function IssueSyncListElement({
       case 'jira_server':
         return 'Jira Server';
       default:
-        return capitalize(integrationType);
+        if (typeof integrationType === 'string') {
+          return capitalize(integrationType);
+        }
+        return '';
     }
   }, [integrationType]);
 
@@ -81,7 +85,7 @@ function IssueSyncListElement({
   );
 
   return (
-    <IssueSyncListElementContainer>
+    <IssueSyncListElementContainer data-test-id="external-issue-item">
       <ClassNames>
         {({css}) => (
           <StyledHovercard
@@ -99,19 +103,21 @@ function IssueSyncListElement({
             bodyClassName="issue-list-body"
             forceVisible={showHoverCard}
           >
-            {icon}
-            {link}
+            <Label>
+              {icon}
+              {link}
+            </Label>
           </StyledHovercard>
         )}
       </ClassNames>
       {(onClose || onOpen) && (
-        <StyledIcon
-          role="button"
+        <Button
+          size="xs"
+          borderless
+          icon={isLinked ? <IconClose /> : onOpen ? <IconAdd /> : null}
           aria-label={isLinked ? t('Close') : t('Add')}
           onClick={handleIconClick}
-        >
-          {isLinked ? <IconClose /> : onOpen ? <IconAdd /> : null}
-        </StyledIcon>
+        />
       )}
     </IssueSyncListElementContainer>
   );
@@ -122,6 +128,7 @@ export const IssueSyncListElementContainer = styled('div')`
   display: flex;
   align-items: center;
   justify-content: space-between;
+  margin-right: -${space(1)};
 
   &:not(:last-child) {
     margin-bottom: ${space(2)};
@@ -133,13 +140,13 @@ export const IntegrationLink = styled('a')<{disabled?: boolean}>`
   margin-left: ${space(1)};
   color: ${p => p.theme.textColor};
   cursor: pointer;
-  line-height: 1;
+  line-height: 1.2;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 
   &:hover {
-    color: ${({disabled, theme}) => (disabled ? theme.disabled : theme.blue300)};
+    color: ${({disabled, theme}) => (disabled ? theme.disabled : theme.linkColor)};
   }
 `;
 
@@ -150,9 +157,9 @@ const StyledHovercard = styled(Hovercard)`
   }
 `;
 
-const StyledIcon = styled('span')`
-  color: ${p => p.theme.textColor};
-  cursor: pointer;
+const Label = styled('div')`
+  display: flex;
+  align-items: center;
 `;
 
 export default IssueSyncListElement;

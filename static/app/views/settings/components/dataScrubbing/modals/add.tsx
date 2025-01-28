@@ -1,17 +1,17 @@
 import {t} from 'sentry/locale';
 
-import {Rule} from '../types';
+import type {Rule} from '../types';
 
 import ModalManager from './modalManager';
 
 type ModalManagerProps = ModalManager['props'];
 type Props = Omit<ModalManagerProps, 'title' | 'initialValues' | 'onGetNewRules'>;
 
-const Add = ({savedRules, ...props}: Props) => {
+function Add({savedRules, ...props}: Props) {
   const handleGetNewRules = (
     values: Parameters<ModalManagerProps['onGetNewRules']>[0]
   ) => {
-    return [...savedRules, {...values, id: savedRules.length}] as Array<Rule>;
+    return [...savedRules, {...values, id: savedRules.length}] as Rule[];
   };
 
   return (
@@ -22,6 +22,6 @@ const Add = ({savedRules, ...props}: Props) => {
       onGetNewRules={handleGetNewRules}
     />
   );
-};
+}
 
 export default Add;

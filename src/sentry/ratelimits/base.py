@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING
 from sentry.utils.services import Service
 
 if TYPE_CHECKING:
-    from sentry.models import Project
+    from sentry.models.project import Project
 
 
 class RateLimiter(Service):
@@ -31,3 +31,6 @@ class RateLimiter(Service):
 
     def validate(self) -> None:
         raise NotImplementedError
+
+    def reset(self, key: str, project: Project | None = None, window: int | None = None) -> None:
+        return

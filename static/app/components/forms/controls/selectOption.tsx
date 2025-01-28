@@ -1,16 +1,13 @@
 import {Fragment} from 'react';
-import {components as selectComponents} from 'react-select';
+import type {components as selectComponents} from 'react-select';
 import {ClassNames} from '@emotion/react';
 import styled from '@emotion/styled';
 
 import MenuListItem from 'sentry/components/menuListItem';
-import {IconCheckmark} from 'sentry/icons';
+import {IconAdd, IconCheckmark} from 'sentry/icons';
 import {defined} from 'sentry/utils';
 
 type Props = React.ComponentProps<typeof selectComponents.Option>;
-
-// We still have some tests that find select options by the display name "Option".
-MenuListItem.displayName = 'Option';
 
 function SelectOption(props: Props) {
   const {
@@ -39,6 +36,8 @@ function SelectOption(props: Props) {
         <MenuListItem
           {...itemProps}
           {...innerProps}
+          role={isMultiple ? 'menuitemcheckbox' : 'menuitemradio'}
+          aria-checked={isSelected}
           ref={innerRef}
           className={cx({
             option: true,
@@ -57,17 +56,24 @@ function SelectOption(props: Props) {
           innerWrapProps={{'data-test-id': value}}
           labelProps={{as: typeof label === 'string' ? 'p' : 'div'}}
           leadingItems={
-            <Fragment>
-              <CheckWrap isMultiple={isMultiple} isSelected={isSelected}>
-                {isSelected && (
-                  <IconCheckmark
-                    size={isMultiple ? 'xs' : 'sm'}
-                    color={isMultiple ? 'white' : undefined}
-                  />
-                )}
-              </CheckWrap>
-              {data.leadingItems}
-            </Fragment>
+            itemProps.__isNew__ ? (
+              <Fragment>
+                <IconAdd size="sm" />
+                {data.leadingItems}
+              </Fragment>
+            ) : (
+              <Fragment>
+                <CheckWrap isMultiple={isMultiple} isSelected={isSelected}>
+                  {isSelected && (
+                    <IconCheckmark
+                      size={isMultiple ? 'xs' : 'sm'}
+                      color={isMultiple ? 'white' : undefined}
+                    />
+                  )}
+                </CheckWrap>
+                {data.leadingItems}
+              </Fragment>
+            )
           }
         />
       )}
@@ -91,7 +97,7 @@ const CheckWrap = styled('div')<{isMultiple: boolean; isSelected: boolean}>`
       border: solid 1px ${p.theme.border};
       background: ${p.theme.backgroundElevated};
       border-radius: 2px;
-      box-shadow: inset ${p.theme.dropShadowLight};
+      box-shadow: inset ${p.theme.dropShadowMedium};
       ${
         p.isSelected &&
         `

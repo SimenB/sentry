@@ -1,52 +1,66 @@
+import logging
 import math
 import time
 from datetime import timedelta
-from itertools import chain
 from uuid import uuid4
 
-from django.db import IntegrityError, transaction
+import orjson
+from django.db import IntegrityError, router, transaction
 from django.utils import timezone
+from drf_spectacular.utils import extend_schema, extend_schema_serializer
 from rest_framework import serializers, status
 from rest_framework.request import Request
 from rest_framework.response import Response
-from sentry_relay.processing import validate_sampling_condition, validate_sampling_configuration
+from rest_framework.serializers import ListField
 
 from sentry import audit_log, features
+from sentry.api.api_publish_status import ApiPublishStatus
 from sentry.api.base import region_silo_endpoint
 from sentry.api.bases.project import ProjectEndpoint, ProjectPermission
 from sentry.api.decorators import sudo_required
 from sentry.api.fields.empty_integer import EmptyIntegerField
+from sentry.api.fields.sentry_slug import SentrySerializerSlugField
+from sentry.api.permissions import StaffPermissionMixin
 from sentry.api.serializers import serialize
 from sentry.api.serializers.models.project import DetailedProjectSerializer
-from sentry.api.serializers.rest_framework.list import EmptyListField, ListField
+from sentry.api.serializers.rest_framework.list import EmptyListField
 from sentry.api.serializers.rest_framework.origin import OriginField
-from sentry.constants import RESERVED_PROJECT_SLUGS
-from sentry.datascrubbing import validate_pii_config_update
-from sentry.grouping.enhancer import Enhancements, InvalidEnhancerConfig
+from sentry.apidocs.constants import RESPONSE_FORBIDDEN, RESPONSE_NO_CONTENT, RESPONSE_NOT_FOUND
+from sentry.apidocs.examples.project_examples import ProjectExamples
+from sentry.apidocs.parameters import GlobalParams
+from sentry.constants import (
+    PROJECT_SLUG_MAX_LENGTH,
+    RESERVED_PROJECT_SLUGS,
+    SAMPLING_MODE_DEFAULT,
+    ObjectStatus,
+)
+from sentry.datascrubbing import validate_pii_config_update, validate_pii_selectors
+from sentry.deletions.models.scheduleddeletion import RegionScheduledDeletion
+from sentry.dynamic_sampling import get_supported_biases_ids, get_user_biases
+from sentry.dynamic_sampling.types import DynamicSamplingMode
+from sentry.dynamic_sampling.utils import has_custom_dynamic_sampling, has_dynamic_sampling
+from sentry.grouping.enhancer import Enhancements
+from sentry.grouping.enhancer.exceptions import InvalidEnhancerConfig
 from sentry.grouping.fingerprinting import FingerprintingRules, InvalidFingerprintingConfig
 from sentry.ingest.inbound_filters import FilterTypes
-from sentry.lang.native.symbolicator import (
+from sentry.issues.highlights import HighlightContextField
+from sentry.lang.native.sources import (
     InvalidSourcesError,
     parse_backfill_sources,
     parse_sources,
     redact_source_secrets,
 )
 from sentry.lang.native.utils import STORE_CRASH_REPORTS_MAX, convert_crashreport_count
-from sentry.models import (
-    Group,
-    GroupStatus,
-    NotificationSetting,
-    Project,
-    ProjectBookmark,
-    ProjectRedirect,
-    ProjectStatus,
-    ScheduledDeletion,
-)
-from sentry.notifications.types import NotificationSettingTypes
+from sentry.models.group import Group, GroupStatus
+from sentry.models.project import Project
+from sentry.models.projectbookmark import ProjectBookmark
+from sentry.models.projectredirect import ProjectRedirect
 from sentry.notifications.utils import has_alert_integration
-from sentry.notifications.utils.legacy_mappings import get_option_value_from_boolean
-from sentry.types.integrations import ExternalProviders
-from sentry.utils import json
+from sentry.tasks.delete_seer_grouping_records import call_seer_delete_project_grouping_records
+from sentry.tempest.utils import has_tempest_access
+
+logger = logging.getLogger(__name__)
+
 
 #: Maximum total number of characters in sensitiveFields.
 #: Relay compiles this list into a regex which cannot exceed a certain size.
@@ -65,165 +79,116 @@ def clean_newline_inputs(value, case_insensitive=True):
     return result
 
 
-class DynamicSamplingConditionSerializer(serializers.Serializer):
-    def to_representation(self, instance):
-        return instance
-
-    def to_internal_value(self, data):
-        return data
-
-    def validate(self, data):
-        if data is None:
-            raise serializers.ValidationError("Invalid sampling rule condition")
-
-        try:
-            condition_string = json.dumps(data)
-            validate_sampling_condition(condition_string)
-
-        except ValueError as err:
-            reason = err.args[0] if len(err.args) > 0 else "invalid condition"
-            raise serializers.ValidationError(reason)
-
-        return data
-
-
-class DynamicSamplingRuleSerializer(serializers.Serializer):
-    sampleRate = serializers.FloatField(min_value=0, max_value=1, required=True)
-    type = serializers.ChoiceField(
-        choices=(("trace", "trace"), ("transaction", "transaction"), ("error", "error")),
-        required=True,
-    )
-    condition = DynamicSamplingConditionSerializer()
+class DynamicSamplingBiasSerializer(serializers.Serializer):
+    id = serializers.ChoiceField(required=True, choices=get_supported_biases_ids())
     active = serializers.BooleanField(default=False)
-    # Setting the min value here to -1 because -1 is the rule id value for unassigned rules.
-    id = serializers.IntegerField(min_value=-1, required=False)
-
-
-class DynamicSamplingSerializer(serializers.Serializer):
-    rules = serializers.ListSerializer(child=DynamicSamplingRuleSerializer())
-    next_id = serializers.IntegerField(min_value=0, required=False)
-
-    @staticmethod
-    def fix_rule_ids(project, raw_dynamic_sampling):
-        """
-        Fixes rule ids in sampling configuration
-
-        When rules are changed or new rules are introduced they will get
-        new ids
-        :pparam raw_dynamic_sampling: the dynamic sampling config coming from UI
-            validated but without adjusted rule ids
-        :return: the dynamic sampling config with the rule ids adjusted to be
-        unique and with the next_id updated
-        """
-        # get the existing configuration for comparison.
-        original = project.get_option("sentry:dynamic_sampling")
-        original_rules = []
-
-        if original is None:
-            next_id = 1
-        else:
-            next_id = original.get("next_id", 1)
-            original_rules = original.get("rules", [])
-
-        # make a dictionary with the old rules to compare for changes
-        original_rules_dict = {rule["id"]: rule for rule in original_rules}
-
-        if raw_dynamic_sampling is not None:
-            rules = raw_dynamic_sampling.get("rules", [])
-
-            for rule in rules:
-                # We are setting the unassigned id to -1. It used to be 0 but we are modifying the behavior as 0 is a
-                # valid id according to relay's rule validation which states the a rule id is an unsigned integer.
-                rid = rule.get("id", -1)
-                original_rule = original_rules_dict.get(rid)
-                # ToDo(ahmed): Temporarily allowing for 0 to be the unassigned rule id for backwards compatibility,
-                #  and will remove that once the UI changes are deployed.
-                if rid in {0, -1} or original_rule is None:
-                    # a new or unknown rule give it a new id
-                    rule["id"] = next_id
-                    next_id += 1
-                else:
-                    if original_rule != rule:
-                        # something changed in this rule, give it a new id
-                        rule["id"] = next_id
-                        next_id += 1
-
-        raw_dynamic_sampling["next_id"] = next_id
-        return raw_dynamic_sampling
-
-    @staticmethod
-    def _is_uniform_sampling_rule(rule):
-        # A uniform sampling rule must be an 'and' with no rules. An 'or' with no rules will not
-        # match anything.
-        assert rule["condition"]["op"] == "and"
-        # Matching the uniform sampling rule check on UI because currently we only support
-        # uniform rules on traces, not on single transactions. If we change this spec in the
-        # future, we will have to update this to also support single transactions.
-        return len(rule["condition"]["inner"]) == 0 and rule["type"] == "trace"
-
-    def validate_uniform_sampling_rule(self, rules):
-        # Guards against deletion of uniform sampling rule i.e. sending a payload with no rules
-        if len(rules) == 0:
-            raise serializers.ValidationError(
-                "Payload must contain a uniform dynamic sampling rule"
-            )
-
-        uniform_rule = rules[-1]
-        # Guards against placing uniform sampling rule not in last position or adding multiple
-        # uniform sampling rules
-        for rule in rules[:-1]:
-            if self._is_uniform_sampling_rule(rule):
-                raise serializers.ValidationError("Uniform rule must be in the last position only")
-
-        # Ensures last rule in rules is always a uniform sampling rule
-        if not self._is_uniform_sampling_rule(uniform_rule):
-            raise serializers.ValidationError(
-                "Last rule is reserved for uniform rule which must have no conditions"
-            )
 
     def validate(self, data):
-        """
-        Additional validation using sentry-relay to make sure that
-        the config is kept in sync with Relay
-        :param data: the input data
-        :return: the validated data or raise in case of error
-        """
-        try:
-            data = self.fix_rule_ids(self.context["project"], data)
-            config_str = json.dumps(data)
-            validate_sampling_configuration(config_str)
-
-            # If the feature flag 'organizations:dynamic-sampling-demo' is enabled, we skip the uniform rule validation.
-            # This is useful for product demos, as the user will be able to delete uniform rules.
-            if (
-                features.has(
-                    "organizations:dynamic-sampling-demo",
-                    self.context["project"].organization,
-                    actor=self.context["request"].user,
-                )
-                is False
-            ):
-                self.validate_uniform_sampling_rule(data.get("rules", []))
-        except ValueError as err:
-            reason = err.args[0] if len(err.args) > 0 else "invalid configuration"
-            raise serializers.ValidationError(reason)
-
+        if data.keys() != {"id", "active"}:
+            raise serializers.ValidationError(
+                "Error: Only 'id' and 'active' fields are allowed for bias."
+            )
         return data
 
 
 class ProjectMemberSerializer(serializers.Serializer):
-    isBookmarked = serializers.BooleanField()
-    isSubscribed = serializers.BooleanField()
+    isBookmarked = serializers.BooleanField(
+        help_text="Enables starring the project within the projects tab. Can be updated with **`project:read`** permission.",
+        required=False,
+    )
 
 
+@extend_schema_serializer(
+    exclude_fields=[
+        "options",
+        "team",
+        "digestsMinDelay",
+        "digestsMaxDelay",
+        "securityToken",
+        "securityTokenHeader",
+        "verifySSL",
+        "defaultEnvironment",
+        "dataScrubber",
+        "dataScrubberDefaults",
+        "sensitiveFields",
+        "safeFields",
+        "storeCrashReports",
+        "relayPiiConfig",
+        "relayCustomMetricCardinalityLimit",
+        "builtinSymbolSources",
+        "symbolSources",
+        "scrubIPAddresses",
+        "groupingConfig",
+        "groupingEnhancements",
+        "fingerprintingRules",
+        "secondaryGroupingConfig",
+        "secondaryGroupingExpiry",
+        "scrapeJavaScript",
+        "allowedDomains",
+        "copy_from_project",
+        "targetSampleRate",
+        "dynamicSamplingBiases",
+        "performanceIssueCreationRate",
+        "performanceIssueCreationThroughPlatform",
+        "performanceIssueSendToPlatform",
+        "uptimeAutodetection",
+        "tempestFetchScreenshots",
+    ]
+)
 class ProjectAdminSerializer(ProjectMemberSerializer):
-    name = serializers.CharField(max_length=200)
-    slug = serializers.RegexField(r"^[a-z0-9_\-]+$", max_length=50)
+    name = serializers.CharField(
+        help_text="The name for the project",
+        max_length=200,
+        required=False,
+    )
+    slug = SentrySerializerSlugField(
+        help_text="Uniquely identifies a project and is used for the interface.",
+        max_length=PROJECT_SLUG_MAX_LENGTH,
+        required=False,
+    )
+    platform = serializers.CharField(
+        help_text="The platform for the project",
+        required=False,
+        allow_null=True,
+        allow_blank=True,
+    )
+
+    subjectPrefix = serializers.CharField(
+        help_text="Custom prefix for emails from this project.",
+        max_length=200,
+        allow_blank=True,
+        required=False,
+    )
+    subjectTemplate = serializers.CharField(
+        help_text="""The email subject to use (excluding the prefix) for individual alerts. Here are the list of variables you can use:
+- `$title`
+- `$shortID`
+- `$projectID`
+- `$orgID`
+- `${tag:key}` - such as `${tag:environment}` or `${tag:release}`.""",
+        max_length=200,
+        required=False,
+    )
+    resolveAge = EmptyIntegerField(
+        required=False,
+        allow_null=True,
+        help_text="Automatically resolve an issue if it hasn't been seen for this many hours. Set to `0` to disable auto-resolve.",
+    )
+    highlightContext = HighlightContextField(
+        required=False,
+        help_text="""A JSON mapping of context types to lists of strings for their keys.
+E.g. `{'user': ['id', 'email']}`""",
+    )
+    highlightTags = ListField(
+        child=serializers.CharField(),
+        required=False,
+        help_text="""A list of strings with tag keys to highlight on this project's issues.
+E.g. `['release', 'environment']`""",
+    )
+    # TODO: Add help_text to all the fields for public documentation, then remove them from 'exclude_fields'
     team = serializers.RegexField(r"^[a-z0-9_\-]+$", max_length=50)
     digestsMinDelay = serializers.IntegerField(min_value=60, max_value=3600)
     digestsMaxDelay = serializers.IntegerField(min_value=60, max_value=3600)
-    subjectPrefix = serializers.CharField(max_length=200, allow_blank=True)
-    subjectTemplate = serializers.CharField(max_length=200)
     securityToken = serializers.RegexField(
         r"^[-a-zA-Z0-9+/=\s]+$", max_length=255, allow_blank=True
     )
@@ -241,6 +206,7 @@ class ProjectAdminSerializer(ProjectMemberSerializer):
         min_value=-1, max_value=STORE_CRASH_REPORTS_MAX, required=False, allow_null=True
     )
     relayPiiConfig = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    relayCustomMetricCardinalityLimit = serializers.IntegerField(required=False, allow_null=True)
     builtinSymbolSources = ListField(child=serializers.CharField(), required=False)
     symbolSources = serializers.CharField(required=False, allow_blank=True, allow_null=True)
     scrubIPAddresses = serializers.BooleanField(required=False)
@@ -251,14 +217,24 @@ class ProjectAdminSerializer(ProjectMemberSerializer):
         required=False, allow_blank=True, allow_null=True
     )
     secondaryGroupingExpiry = serializers.IntegerField(min_value=1, required=False, allow_null=True)
-    groupingAutoUpdate = serializers.BooleanField(required=False)
     scrapeJavaScript = serializers.BooleanField(required=False)
     allowedDomains = EmptyListField(child=OriginField(allow_blank=True), required=False)
-    resolveAge = EmptyIntegerField(required=False, allow_null=True)
-    platform = serializers.CharField(required=False, allow_null=True, allow_blank=True)
+
     copy_from_project = serializers.IntegerField(required=False)
-    dynamicSampling = DynamicSamplingSerializer(required=False)
+    targetSampleRate = serializers.FloatField(required=False, min_value=0, max_value=1)
+    dynamicSamplingBiases = DynamicSamplingBiasSerializer(required=False, many=True)
     performanceIssueCreationRate = serializers.FloatField(required=False, min_value=0, max_value=1)
+    performanceIssueCreationThroughPlatform = serializers.BooleanField(required=False)
+    performanceIssueSendToPlatform = serializers.BooleanField(required=False)
+    uptimeAutodetection = serializers.BooleanField(required=False)
+    tempestFetchScreenshots = serializers.BooleanField(required=False)
+
+    # DO NOT ADD MORE TO OPTIONS
+    # Each param should be a field in the serializer like above.
+    # Keeping options here for backward compatibility but removing it from documentation.
+    options = serializers.DictField(
+        required=False,
+    )
 
     def validate(self, data):
         max_delay = (
@@ -287,7 +263,7 @@ class ProjectAdminSerializer(ProjectMemberSerializer):
             )
         return value
 
-    def validate_slug(self, slug):
+    def validate_slug(self, slug: str) -> str:
         if slug in RESERVED_PROJECT_SLUGS:
             raise serializers.ValidationError(f'The slug "{slug}" is reserved and not allowed.')
         project = self.context["project"]
@@ -306,6 +282,22 @@ class ProjectAdminSerializer(ProjectMemberSerializer):
         organization = self.context["project"].organization
         return validate_pii_config_update(organization, value)
 
+    def validate_relayCustomMetricCardinalityLimit(self, value):
+        if value is None:
+            return value
+
+        if value < 0:
+            raise serializers.ValidationError("Cardinality limit must be a non-negative integer.")
+
+        # Value is stored as uint32 in relay
+        # TODO: find a way to share this constant between relay and sentry
+        if value > 4_294_967_295:
+            raise serializers.ValidationError(
+                "Cardinality limit must be smaller or equal to 4,294,967,295."
+            )
+
+        return value
+
     def validate_builtinSymbolSources(self, value):
         if not value:
             return value
@@ -321,7 +313,7 @@ class ProjectAdminSerializer(ProjectMemberSerializer):
 
         return value
 
-    def validate_symbolSources(self, sources_json):
+    def validate_symbolSources(self, sources_json) -> str:
         if not sources_json:
             return sources_json
 
@@ -334,7 +326,8 @@ class ProjectAdminSerializer(ProjectMemberSerializer):
             # We should really only grab and parse if there are sources in sources_json whose
             # secrets are set to {"hidden-secret":true}
             orig_sources = parse_sources(
-                self.context["project"].get_option("sentry:symbol_sources")
+                self.context["project"].get_option("sentry:symbol_sources"),
+                filter_appconnect=True,
             )
             sources = parse_backfill_sources(sources_json.strip(), orig_sources)
         except InvalidSourcesError as e:
@@ -344,7 +337,7 @@ class ProjectAdminSerializer(ProjectMemberSerializer):
         # This is always allowed.
         added_or_modified_sources = [s for s in sources if s not in orig_sources]
         if not added_or_modified_sources:
-            return json.dumps(sources) if sources else ""
+            return orjson.dumps(sources).decode() if sources else ""
 
         # All modified sources should get a new UUID, as a way to invalidate caches.
         # Downstream symbolicator uses this ID as part of a cache key, so assigning
@@ -352,13 +345,9 @@ class ProjectAdminSerializer(ProjectMemberSerializer):
         # * negative cache entries (eg auth errors) are retried immediately.
         # * positive caches are re-fetches as well, making it less effective.
         for source in added_or_modified_sources:
-            # This should only apply to sources which are being fed to symbolicator.
-            # App Store Connect in particular is managed in a completely different
-            # way, and needs its `id` to stay valid for a longer time.
-            if source["type"] != "appStoreConnect":
-                source["id"] = str(uuid4())
+            source["id"] = str(uuid4())
 
-        sources_json = json.dumps(sources) if sources else ""
+        sources_json = orjson.dumps(sources).decode() if sources else ""
 
         # Adding sources is only allowed if custom symbol sources are enabled.
         has_sources = features.has(
@@ -368,15 +357,6 @@ class ProjectAdminSerializer(ProjectMemberSerializer):
         if not has_sources:
             raise serializers.ValidationError(
                 "Organization is not allowed to set custom symbol sources"
-            )
-
-        has_multiple_appconnect = features.has(
-            "organizations:app-store-connect-multiple", organization, actor=request.user
-        )
-        appconnect_sources = [s for s in sources if s.get("type") == "appStoreConnect"]
-        if not has_multiple_appconnect and len(appconnect_sources) > 1:
-            raise serializers.ValidationError(
-                "Only one Apple App Store Connect application is allowed in this project"
             )
 
         return sources_json
@@ -452,6 +432,36 @@ class ProjectAdminSerializer(ProjectMemberSerializer):
             raise serializers.ValidationError("List of sensitive fields is too long.")
         return value
 
+    def validate_safeFields(self, value):
+        return validate_pii_selectors(value)
+
+    def validate_targetSampleRate(self, value):
+        organization = self.context["project"].organization
+        actor = self.context["request"].user
+        if not has_custom_dynamic_sampling(organization, actor=actor):
+            raise serializers.ValidationError(
+                "Organization does not have the custom dynamic sample rate feature enabled."
+            )
+
+        if (
+            organization.get_option("sentry:sampling_mode", SAMPLING_MODE_DEFAULT)
+            != DynamicSamplingMode.PROJECT.value
+        ):
+            raise serializers.ValidationError(
+                "Must enable Manual Mode to configure project sample rates."
+            )
+
+        return value
+
+    def validate_tempestFetchScreenshots(self, value):
+        organization = self.context["project"].organization
+        actor = self.context["request"].user
+        if not has_tempest_access(organization, actor=actor):
+            raise serializers.ValidationError(
+                "Organization does not have the tempest feature enabled."
+            )
+        return value
+
 
 class RelaxedProjectPermission(ProjectPermission):
     scope_map = {
@@ -463,9 +473,19 @@ class RelaxedProjectPermission(ProjectPermission):
     }
 
 
+class RelaxedProjectAndStaffPermission(StaffPermissionMixin, RelaxedProjectPermission):
+    pass
+
+
+@extend_schema(tags=["Projects"])
 @region_silo_endpoint
 class ProjectDetailsEndpoint(ProjectEndpoint):
-    permission_classes = [RelaxedProjectPermission]
+    publish_status = {
+        "DELETE": ApiPublishStatus.PUBLIC,
+        "GET": ApiPublishStatus.PUBLIC,
+        "PUT": ApiPublishStatus.PUBLIC,
+    }
+    permission_classes = (RelaxedProjectAndStaffPermission,)
 
     def _get_unresolved_count(self, project):
         queryset = Group.objects.filter(status=GroupStatus.UNRESOLVED, project=project)
@@ -478,17 +498,20 @@ class ProjectDetailsEndpoint(ProjectEndpoint):
 
         return queryset.count()
 
-    def get(self, request: Request, project) -> Response:
+    @extend_schema(
+        operation_id="Retrieve a Project",
+        parameters=[GlobalParams.ORG_ID_OR_SLUG, GlobalParams.PROJECT_ID_OR_SLUG],
+        request=None,
+        responses={
+            200: DetailedProjectSerializer,
+            403: RESPONSE_FORBIDDEN,
+            404: RESPONSE_NOT_FOUND,
+        },
+        examples=ProjectExamples.DETAILED_PROJECT,
+    )
+    def get(self, request: Request, project: Project) -> Response:
         """
-        Retrieve a Project
-        ``````````````````
-
         Return details on an individual project.
-
-        :pparam string organization_slug: the slug of the organization the
-                                          project belongs to.
-        :pparam string project_slug: the slug of the project to retrieve.
-        :auth: required
         """
         data = serialize(project, request.user, DetailedProjectSerializer())
 
@@ -501,38 +524,54 @@ class ProjectDetailsEndpoint(ProjectEndpoint):
         if "hasAlertIntegration" in expand:
             data["hasAlertIntegrationInstalled"] = has_alert_integration(project)
 
+        # Dynamic Sampling Logic
+        if has_dynamic_sampling(project.organization):
+            ds_bias_serializer = DynamicSamplingBiasSerializer(
+                data=get_user_biases(project.get_option("sentry:dynamic_sampling_biases", None)),
+                many=True,
+            )
+            if not ds_bias_serializer.is_valid():
+                return Response(ds_bias_serializer.errors, status=400)
+            data["dynamicSamplingBiases"] = ds_bias_serializer.data
+        else:
+            data["dynamicSamplingBiases"] = None
+
+        # filter for enabled plugins o/w the response body is gigantic and difficult to read
+        data["plugins"] = [plugin for plugin in data["plugins"] if plugin.get("enabled")]
+
         return Response(data)
 
+    @extend_schema(
+        operation_id="Update a Project",
+        parameters=[
+            GlobalParams.ORG_ID_OR_SLUG,
+            GlobalParams.PROJECT_ID_OR_SLUG,
+        ],
+        request=ProjectAdminSerializer,
+        responses={
+            200: DetailedProjectSerializer,
+            403: RESPONSE_FORBIDDEN,
+            404: RESPONSE_NOT_FOUND,
+        },
+        examples=ProjectExamples.DETAILED_PROJECT,
+    )
     def put(self, request: Request, project) -> Response:
         """
-        Update a Project
-        ````````````````
+        Update various attributes and configurable settings for the given project.
 
-        Update various attributes and configurable settings for the given
-        project.  Only supplied values are updated.
-
-        :pparam string organization_slug: the slug of the organization the
-                                          project belongs to.
-        :pparam string project_slug: the slug of the project to update.
-        :param string name: the new name for the project.
-        :param string slug: the new slug for the project.
-        :param string platform: the new platform for the project.
-        :param boolean isBookmarked: in case this API call is invoked with a
-                                     user context this allows changing of
-                                     the bookmark flag.
-        :param int digestsMinDelay:
-        :param int digestsMaxDelay:
-        :auth: required
+        Note that solely having the **`project:read`** scope restricts updatable settings to
+        `isBookmarked`.
         """
 
         old_data = serialize(project, request.user, DetailedProjectSerializer())
+        has_elevated_scopes = request.access and (
+            request.access.has_scope("project:write")
+            or request.access.has_scope("project:admin")
+            or request.access.has_any_project_scope(project, ["project:write", "project:admin"])
+        )
 
-        has_project_write = request.access and request.access.has_scope("project:write")
-
-        changed_proj_settings = {}
-
-        if has_project_write:
-            serializer_cls = ProjectAdminSerializer
+        if has_elevated_scopes:
+            serializer_cls: type[ProjectMemberSerializer] = ProjectAdminSerializer
         else:
             serializer_cls = ProjectMemberSerializer
 
@@ -543,30 +582,23 @@ class ProjectDetailsEndpoint(ProjectEndpoint):
 
         result = serializer.validated_data
 
-        allow_dynamic_sampling = features.has(
-            "organizations:server-side-sampling", project.organization, actor=request.user
-        )
-
-        if not allow_dynamic_sampling and result.get("dynamicSampling"):
-            # trying to set sampling with feature disabled
+        if result.get("dynamicSamplingBiases") and not (has_dynamic_sampling(project.organization)):
             return Response(
-                {"detail": ["You do not have permission to set sampling."]},
+                {"detail": "dynamicSamplingBiases is not a valid field"},
                 status=403,
             )
-
         if not serializer.is_valid():
             return Response(serializer.errors, status=400)
 
-        if not has_project_write:
-            # options isn't part of the serializer, but should not be editable by members
-            for key in chain(ProjectAdminSerializer().fields.keys(), ["options"]):
+        if not has_elevated_scopes:
+            for key in ProjectAdminSerializer().fields.keys():
                 if request.data.get(key) and not result.get(key):
                     return Response(
-                        {"detail": ["You do not have permission to perform this action."]},
+                        {"detail": "You do not have permission to perform this action."},
                         status=403,
                     )
-
         changed = False
+        changed_proj_settings = {}
 
         old_slug = None
         if result.get("slug"):
@@ -592,12 +624,12 @@ class ProjectDetailsEndpoint(ProjectEndpoint):
 
         if result.get("isBookmarked"):
             try:
-                with transaction.atomic():
-                    ProjectBookmark.objects.create(project_id=project.id, user=request.user)
+                with transaction.atomic(router.db_for_write(ProjectBookmark)):
+                    ProjectBookmark.objects.create(project_id=project.id, user_id=request.user.id)
             except IntegrityError:
                 pass
         elif result.get("isBookmarked") is False:
-            ProjectBookmark.objects.filter(project_id=project.id, user=request.user).delete()
+            ProjectBookmark.objects.filter(project_id=project.id, user_id=request.user.id).delete()
 
         if result.get("digestsMinDelay"):
             project.update_option("digests:mail:minimum_delay", result["digestsMinDelay"])
@@ -638,9 +670,6 @@ class ProjectDetailsEndpoint(ProjectEndpoint):
                 changed_proj_settings["sentry:secondary_grouping_expiry"] = result[
                     "secondaryGroupingExpiry"
                 ]
-        if result.get("groupingAutoUpdate") is not None:
-            if project.update_option("sentry:grouping_auto_update", result["groupingAutoUpdate"]):
-                changed_proj_settings["sentry:grouping_auto_update"] = result["groupingAutoUpdate"]
         if result.get("securityToken") is not None:
             if project.update_option("sentry:token", result["securityToken"]):
                 changed_proj_settings["sentry:token"] = result["securityToken"]
@@ -662,7 +691,13 @@ class ProjectDetailsEndpoint(ProjectEndpoint):
         if result.get("safeFields") is not None:
             if project.update_option("sentry:safe_fields", result["safeFields"]):
                 changed_proj_settings["sentry:safe_fields"] = result["safeFields"]
-        if "storeCrashReports" in result is not None:
+        if result.get("highlightContext") is not None:
+            if project.update_option("sentry:highlight_context", result["highlightContext"]):
+                changed_proj_settings["sentry:highlight_context"] = result["highlightContext"]
+        if result.get("highlightTags") is not None:
+            if project.update_option("sentry:highlight_tags", result["highlightTags"]):
+                changed_proj_settings["sentry:highlight_tags"] = result["highlightTags"]
+        if "storeCrashReports" in result:
             if project.get_option("sentry:store_crash_reports") != result["storeCrashReports"]:
                 changed_proj_settings["sentry:store_crash_reports"] = result["storeCrashReports"]
                 if result["storeCrashReports"] is None:
@@ -674,6 +709,25 @@ class ProjectDetailsEndpoint(ProjectEndpoint):
                 changed_proj_settings["sentry:relay_pii_config"] = (
                     result["relayPiiConfig"].strip() or None
                 )
+        if "relayCustomMetricCardinalityLimit" in result:
+            limit = result.get("relayCustomMetricCardinalityLimit")
+            cardinality_limits = []
+            if limit is not None:
+                # For now we only allow setting a single limit
+                # TODO: validate this with rust validator
+                cardinality_limits = [
+                    {
+                        "limit": {
+                            "id": "project-override-custom",
+                            "window": {"windowSeconds": 3600, "granularitySeconds": 600},
+                            "limit": limit,
+                            "namespace": "custom",
+                            "scope": "name",
+                        }
+                    }
+                ]
+            if project.update_option("relay.cardinality-limiter.limits", cardinality_limits):
+                changed_proj_settings["relay.cardinality-limiter.limits"] = cardinality_limits
         if result.get("builtinSymbolSources") is not None:
             if project.update_option(
                 "sentry:builtin_symbol_sources", result["builtinSymbolSources"]
@@ -686,7 +740,7 @@ class ProjectDetailsEndpoint(ProjectEndpoint):
                 # Redact secrets so they don't get logged directly to the Audit Log
                 sources_json = result["symbolSources"] or None
                 try:
-                    sources = parse_sources(sources_json)
+                    sources = parse_sources(sources_json, filter_appconnect=True)
                 except Exception:
                     sources = []
                 redacted_sources = redact_source_secrets(sources)
@@ -709,31 +763,33 @@ class ProjectDetailsEndpoint(ProjectEndpoint):
         if result.get("allowedDomains"):
             if project.update_option("sentry:origins", result["allowedDomains"]):
                 changed_proj_settings["sentry:origins"] = result["allowedDomains"]
-
-        if "isSubscribed" in result:
-            NotificationSetting.objects.update_settings(
-                ExternalProviders.EMAIL,
-                NotificationSettingTypes.ISSUE_ALERTS,
-                get_option_value_from_boolean(result.get("isSubscribed")),
-                user=request.user,
-                project=project,
-            )
-
-        if "dynamicSampling" in result:
-            fixed_rules = result["dynamicSampling"]
-            if project.update_option("sentry:dynamic_sampling", fixed_rules):
-                changed_proj_settings["sentry:dynamic_sampling"] = result["dynamicSampling"]
-
-        if "performanceIssueCreationRate" in result:
+        if result.get("tempestFetchScreenshots") is not None:
             if project.update_option(
-                "sentry:performance_issue_creation_rate", result["performanceIssueCreationRate"]
+                "sentry:tempest_fetch_screenshots", result["tempestFetchScreenshots"]
             ):
-                changed_proj_settings["sentry:performance_issue_creation_rate"] = result[
-                    "performanceIssueCreationRate"
+                changed_proj_settings["sentry:tempest_fetch_screenshots"] = result[
+                    "tempestFetchScreenshots"
                 ]
-        # TODO(dcramer): rewrite options to use standard API config
-        if has_project_write:
-            options = request.data.get("options", {})
+        if result.get("targetSampleRate") is not None:
+            if project.update_option(
+                "sentry:target_sample_rate", round(result["targetSampleRate"], 4)
+            ):
+                changed_proj_settings["sentry:target_sample_rate"] = round(
+                    result["targetSampleRate"], 4
+                )
+        if "dynamicSamplingBiases" in result:
+            updated_biases = get_user_biases(user_set_biases=result["dynamicSamplingBiases"])
+            if project.update_option("sentry:dynamic_sampling_biases", updated_biases):
+                changed_proj_settings["sentry:dynamic_sampling_biases"] = result[
+                    "dynamicSamplingBiases"
+                ]
+
+        if result.get("uptimeAutodetection") is not None:
+            if project.update_option("sentry:uptime_autodetection", result["uptimeAutodetection"]):
+                changed_proj_settings["sentry:uptime_autodetection"] = result["uptimeAutodetection"]
+
+        if has_elevated_scopes:
+            options = result.get("options", {})
             if "sentry:origins" in options:
                 project.update_option(
                     "sentry:origins", clean_newline_inputs(options["sentry:origins"])
@@ -748,7 +804,8 @@ class ProjectDetailsEndpoint(ProjectEndpoint):
                 )
             if "sentry:safe_fields" in options:
                 project.update_option(
-                    "sentry:safe_fields", [s.strip().lower() for s in options["sentry:safe_fields"]]
+                    "sentry:safe_fields",
+                    [s.strip().lower() for s in options["sentry:safe_fields"]],
                 )
             if "sentry:store_crash_reports" in options:
                 project.update_option(
@@ -759,7 +816,8 @@ class ProjectDetailsEndpoint(ProjectEndpoint):
                 )
             if "sentry:relay_pii_config" in options:
                 project.update_option(
-                    "sentry:relay_pii_config", options["sentry:relay_pii_config"].strip() or None
+                    "sentry:relay_pii_config",
+                    options["sentry:relay_pii_config"].strip() or None,
                 )
             if "sentry:sensitive_fields" in options:
                 project.update_option(
@@ -801,9 +859,40 @@ class ProjectDetailsEndpoint(ProjectEndpoint):
                 project.update_option(
                     "feedback:branding", "1" if options["feedback:branding"] else "0"
                 )
-            if "sentry:reprocessing_active" in options:
+            if "sentry:replay_rage_click_issues" in options:
                 project.update_option(
-                    "sentry:reprocessing_active", bool(options["sentry:reprocessing_active"])
+                    "sentry:replay_rage_click_issues",
+                    bool(options["sentry:replay_rage_click_issues"]),
+                )
+            if "sentry:replay_hydration_error_issues" in options:
+                project.update_option(
+                    "sentry:replay_hydration_error_issues",
+                    bool(options["sentry:replay_hydration_error_issues"]),
+                )
+            if "sentry:feedback_user_report_notifications" in options:
+                project.update_option(
+                    "sentry:feedback_user_report_notifications",
+                    bool(options["sentry:feedback_user_report_notifications"]),
+                )
+            if "sentry:feedback_ai_spam_detection" in options:
+                project.update_option(
+                    "sentry:feedback_ai_spam_detection",
+                    bool(options["sentry:feedback_ai_spam_detection"]),
+                )
+            if "sentry:toolbar_allowed_origins" in options:
+                project.update_option(
+                    "sentry:toolbar_allowed_origins",
+                    clean_newline_inputs(options["sentry:toolbar_allowed_origins"]),
+                )
+            if "filters:react-hydration-errors" in options:
+                project.update_option(
+                    "filters:react-hydration-errors",
+                    "1" if bool(options["filters:react-hydration-errors"]) else "0",
+                )
+            if "filters:chunk-load-error" in options:
+                project.update_option(
+                    "filters:chunk-load-error",
+                    "1" if bool(options["filters:chunk-load-error"]) else "0",
                 )
             if "filters:blacklisted_ips" in options:
                 project.update_option(
@@ -817,9 +906,7 @@ class ProjectDetailsEndpoint(ProjectEndpoint):
                         clean_newline_inputs(options[f"filters:{FilterTypes.RELEASES}"]),
                     )
                 else:
-                    return Response(
-                        {"detail": ["You do not have that feature enabled"]}, status=400
-                    )
+                    return Response({"detail": "You do not have that feature enabled"}, status=400)
             if f"filters:{FilterTypes.ERROR_MESSAGES}" in options:
                 if features.has("projects:custom-inbound-filters", project, actor=request.user):
                     project.update_option(
@@ -830,23 +917,26 @@ class ProjectDetailsEndpoint(ProjectEndpoint):
                         ),
                     )
                 else:
-                    return Response(
-                        {"detail": ["You do not have that feature enabled"]}, status=400
-                    )
+                    return Response({"detail": "You do not have that feature enabled"}, status=400)
             if "copy_from_project" in result:
                 if not project.copy_settings_from(result["copy_from_project"]):
-                    return Response({"detail": ["Copy project settings failed."]}, status=409)
+                    return Response({"detail": "Copy project settings failed."}, status=409)
 
-            if "sentry:dynamic_sampling" in changed_proj_settings:
-                self.dynamic_sampling_audit_log(
+            if "sentry:dynamic_sampling_biases" in changed_proj_settings:
+                self.dynamic_sampling_biases_audit_log(
                     project,
                     request,
-                    old_data.get("dynamicSampling"),
-                    result.get("dynamicSampling"),
+                    old_data.get("dynamicSamplingBiases"),
+                    result.get("dynamicSamplingBiases"),
                 )
                 if len(changed_proj_settings) == 1:
                     data = serialize(project, request.user, DetailedProjectSerializer())
                     return Response(data)
+
+            if "sentry:uptime_autodetection" in options:
+                project.update_option(
+                    "sentry:uptime_autodetection", bool(options["sentry:uptime_autodetection"])
+                )
 
         self.create_audit_entry(
             request=request,
@@ -857,24 +947,29 @@ class ProjectDetailsEndpoint(ProjectEndpoint):
         )
 
         data = serialize(project, request.user, DetailedProjectSerializer())
+        if not has_dynamic_sampling(project.organization):
+            data["dynamicSamplingBiases"] = None
+        # If here because the case of when no dynamic sampling is enabled at all, you would want to kick
+        # out both keys actually
+
         return Response(data)
 
+    @extend_schema(
+        operation_id="Delete a Project",
+        parameters=[GlobalParams.ORG_ID_OR_SLUG, GlobalParams.PROJECT_ID_OR_SLUG],
+        responses={
+            204: RESPONSE_NO_CONTENT,
+            403: RESPONSE_FORBIDDEN,
+            404: RESPONSE_NOT_FOUND,
+        },
+    )
     @sudo_required
     def delete(self, request: Request, project) -> Response:
         """
-        Delete a Project
-        ````````````````
-
         Schedules a project for deletion.
 
-        Deletion happens asynchronously and therefore is not immediate.
-        However once deletion has begun the state of a project changes and
-        will be hidden from most public views.
-
-        :pparam string organization_slug: the slug of the organization the
-                                          project belongs to.
-        :pparam string project_slug: the slug of the project to delete.
-        :auth: required
+        Deletion happens asynchronously and therefore is not immediate. However once deletion has
+        begun the state of a project changes and will be hidden from most public views.
         """
         if project.is_internal_project():
             return Response(
@@ -882,91 +977,75 @@ class ProjectDetailsEndpoint(ProjectEndpoint):
                 status=status.HTTP_403_FORBIDDEN,
             )
 
-        updated = Project.objects.filter(id=project.id, status=ProjectStatus.VISIBLE).update(
-            status=ProjectStatus.PENDING_DELETION
+        updated = Project.objects.filter(id=project.id, status=ObjectStatus.ACTIVE).update(
+            status=ObjectStatus.PENDING_DELETION
         )
         if updated:
-            scheduled = ScheduledDeletion.schedule(project, days=0, actor=request.user)
+            scheduled = RegionScheduledDeletion.schedule(project, days=0, actor=request.user)
 
-            self.create_audit_entry(
-                request=request,
-                organization=project.organization,
-                target_object=project.id,
-                event=audit_log.get_event_id("PROJECT_REMOVE"),
-                data=project.get_audit_log_data(),
-                transaction_id=scheduled.id,
-            )
+            common_audit_data = {
+                "request": request,
+                "organization": project.organization,
+                "target_object": project.id,
+                "transaction_id": scheduled.id,
+            }
+
+            if request.data.get("origin"):
+                self.create_audit_entry(
+                    **common_audit_data,
+                    event=audit_log.get_event_id("PROJECT_REMOVE_WITH_ORIGIN"),
+                    data={
+                        **project.get_audit_log_data(),
+                        "origin": request.data.get("origin"),
+                    },
+                )
+            else:
+                self.create_audit_entry(
+                    **common_audit_data,
+                    event=audit_log.get_event_id("PROJECT_REMOVE"),
+                    data={**project.get_audit_log_data()},
+                )
+
             project.rename_on_pending_deletion()
+
+            # Tell seer to delete all the project's grouping records
+            if project.get_option("sentry:similarity_backfill_completed"):
+                call_seer_delete_project_grouping_records.apply_async(args=[project.id])
 
         return Response(status=204)
 
-    def dynamic_sampling_audit_log(
-        self, project, request, old_raw_dynamic_sampling, new_raw_dynamic_sampling
+    def dynamic_sampling_biases_audit_log(
+        self, project, request, old_raw_dynamic_sampling_biases, new_raw_dynamic_sampling_biases
     ):
         """
-        Compares the previous and next dynamic sampling object, triggering audit logs according to the changes and early returns.
-
+        Compares the previous and next dynamic sampling biases object, triggering audit logs according to the changes.
         We are currently verifying the following cases:
 
-        Creation
-            Triggered when the next dynamic sampling object contains more rules than the previous
+        Enabling
+            We make a loop through the whole object, comparing next with previous biases.
+            If we detect that the current bias is disabled and the updated same bias is enabled, this is triggered
 
-        Deletion
-            Triggered when the next dynamic sampling object contains less rules than the previous
+        Disabling
+            We make a loop through the whole object, comparing next with previous biases.
+            If we detect that the current bias is enabled and the updated same bias is disabled, this is triggered
 
-        Activation
-            We make a loop through the whole object, comparing next with previous rules.
-            If we detect that the rule is different from the another and that the next rule is positive, this is triggered
 
-        Deactivation
-            We make a loop through the whole object, comparing next with previous rules.
-            If we detect that the rule is different from the another and that the next rule is negative, this is triggered
-
-        Other Changes
-            Triggered when all other changes have been made to the next dynamic sampling object
-
-        :old_raw_dynamic_sampling: The dynamic sampling object before the changes
-        :new_raw_dynamic_sampling: The updated dynamic sampling object
-
+        :old_raw_dynamic_sampling_biases: The dynamic sampling biases object before the changes
+        :new_raw_dynamic_sampling_biases: The updated dynamic sampling biases object
         """
 
-        common_audit_data = {
-            "request": request,
-            "organization": project.organization,
-            "target_object": project.id,
-            "data": project.get_audit_log_data(),
-        }
-
-        def create_audit_entry_for_event(audit_data, event_text):
-            self.create_audit_entry(**audit_data, event=audit_log.get_event_id(event_text))
-
-        if old_raw_dynamic_sampling is None:
-            if new_raw_dynamic_sampling is not None:
-                create_audit_entry_for_event(common_audit_data, "SAMPLING_RULE_ADD")
+        if old_raw_dynamic_sampling_biases is None:
             return
 
-        old_rules = old_raw_dynamic_sampling.get("rules", [])
-        new_rules = new_raw_dynamic_sampling.get("rules", [])
-
-        if len(new_rules) > len(old_rules):
-            create_audit_entry_for_event(common_audit_data, "SAMPLING_RULE_ADD")
-            return
-
-        if len(new_rules) < len(old_rules):
-            create_audit_entry_for_event(common_audit_data, "SAMPLING_RULE_REMOVE")
-            return
-
-        for index, rule in enumerate(new_rules):
-            if rule["active"] != old_rules[index]["active"]:
-                create_audit_entry_for_event(
-                    common_audit_data,
-                    "SAMPLING_RULE_ACTIVATE" if rule["active"] else "SAMPLING_RULE_DEACTIVATE",
+        for index, rule in enumerate(new_raw_dynamic_sampling_biases):
+            if rule["active"] != old_raw_dynamic_sampling_biases[index]["active"]:
+                self.create_audit_entry(
+                    request=request,
+                    organization=project.organization,
+                    target_object=project.id,
+                    event=audit_log.get_event_id(
+                        "SAMPLING_BIAS_ENABLED" if rule["active"] else "SAMPLING_BIAS_DISABLED"
+                    ),
+                    data={**project.get_audit_log_data(), "name": rule["id"]},
                 )
                 return
-
-        common_audit_data["data"].update(new_raw_dynamic_sampling)
-
-        create_audit_entry_for_event(
-            common_audit_data,
-            "SAMPLING_RULE_EDIT",
-        )

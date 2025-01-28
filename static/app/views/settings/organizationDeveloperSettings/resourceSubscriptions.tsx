@@ -1,16 +1,15 @@
 import {Component, Fragment} from 'react';
 import styled from '@emotion/styled';
 
-import {Context} from 'sentry/components/deprecatedforms/form';
 import FormContext from 'sentry/components/forms/formContext';
-import {Permissions, WebhookEvent} from 'sentry/types';
+import type {Permissions, WebhookEvent} from 'sentry/types/integrations';
 import {
   EVENT_CHOICES,
   PERMISSIONS_MAP,
 } from 'sentry/views/settings/organizationDeveloperSettings/constants';
 import SubscriptionBox from 'sentry/views/settings/organizationDeveloperSettings/subscriptionBox';
 
-type Resource = typeof EVENT_CHOICES[number];
+type Resource = (typeof EVENT_CHOICES)[number];
 
 type DefaultProps = {
   webhookDisabled: boolean;
@@ -27,7 +26,7 @@ export default class Subscriptions extends Component<Props> {
     webhookDisabled: false,
   };
 
-  constructor(props: Props, context: Context) {
+  constructor(props: Props, context: any) {
     super(props, context);
     this.context.form.setValue('events', this.props.events);
   }
@@ -50,11 +49,16 @@ export default class Subscriptions extends Component<Props> {
     }
   }
 
+  declare context: Required<React.ContextType<typeof FormContext>>;
   static contextType = FormContext;
 
   onChange = (resource: Resource, checked: boolean) => {
     const events = new Set(this.props.events);
-    checked ? events.add(resource) : events.delete(resource);
+    if (checked) {
+      events.add(resource);
+    } else {
+      events.delete(resource);
+    }
     this.save(Array.from(events));
   };
 
@@ -80,7 +84,7 @@ export default class Subscriptions extends Component<Props> {
                 checked={events.includes(choice) && !disabledFromPermissions}
                 resource={choice}
                 onChange={this.onChange}
-                isNew={choice === 'comment'}
+                isNew={false}
               />
             </Fragment>
           );

@@ -1,23 +1,23 @@
 import {useCallback, useMemo} from 'react';
-import {WithRouterProps} from 'react-router';
-import {Location} from 'history';
+import type {Location} from 'history';
 
 import {updateProjects} from 'sentry/actionCreators/pageFilters';
-import Alert from 'sentry/components/alert';
-import {GlobalSdkUpdateAlert} from 'sentry/components/globalSdkUpdateAlert';
+import {Alert} from 'sentry/components/alert';
 import ExternalLink from 'sentry/components/links/externalLink';
 import Link from 'sentry/components/links/link';
 import {SidebarPanelKey} from 'sentry/components/sidebar/types';
 import {t, tct} from 'sentry/locale';
 import SidebarPanelStore from 'sentry/stores/sidebarPanelStore';
-import {Organization, Project} from 'sentry/types';
-import EventView from 'sentry/utils/discover/eventView';
-import {MetricDataSwitcherOutcome} from 'sentry/utils/performance/contexts/metricsCardinality';
+import type {WithRouterProps} from 'sentry/types/legacyReactRouter';
+import type {Organization} from 'sentry/types/organization';
+import type {Project} from 'sentry/types/project';
+import type EventView from 'sentry/utils/discover/eventView';
+import type {MetricDataSwitcherOutcome} from 'sentry/utils/performance/contexts/metricsCardinality';
 
+import type {DiscoverQueryPageSource} from '../utils';
 import {
-  areMultipleProjectsSelected,
   createUnnamedTransactionsDiscoverTarget,
-  DiscoverQueryPageSource,
+  getIsMultiProject,
   getSelectedProjectPlatformsArray,
 } from '../utils';
 
@@ -57,8 +57,12 @@ const UNSUPPORTED_TRANSACTION_NAME_DOCS = [
 export function MetricsDataSwitcherAlert(
   props: MetricEnhancedDataAlertProps
 ): React.ReactElement | null {
+  const isOnFallbackThresolds = props.organization.features.includes(
+    'performance-mep-bannerless-ui'
+  );
+
   const handleReviewUpdatesClick = useCallback(() => {
-    SidebarPanelStore.activatePanel(SidebarPanelKey.Broadcasts);
+    SidebarPanelStore.activatePanel(SidebarPanelKey.BROADCASTS);
   }, []);
 
   const docsLink = useMemo(() => {
@@ -67,7 +71,7 @@ export function MetricsDataSwitcherAlert(
       return null;
     }
 
-    const platform = platforms[0];
+    const platform = platforms[0]!;
     if (UNSUPPORTED_TRANSACTION_NAME_DOCS.includes(platform)) {
       return null;
     }
@@ -89,10 +93,14 @@ export function MetricsDataSwitcherAlert(
 
   if (!props.shouldNotifyUnnamedTransactions && !props.shouldWarnIncompatibleSDK) {
     // Control showing generic sdk-alert here since stacking alerts is noisy.
-    return <GlobalSdkUpdateAlert />;
+    return null;
   }
 
   const discoverTarget = createUnnamedTransactionsDiscoverTarget(props);
+
+  if (isOnFallbackThresolds) {
+    return null;
+  }
 
   if (props.shouldWarnIncompatibleSDK) {
     const updateSDK = (
@@ -100,7 +108,7 @@ export function MetricsDataSwitcherAlert(
         {t('update your SDK version')}
       </Link>
     );
-    if (areMultipleProjectsSelected(props.eventView)) {
+    if (getIsMultiProject(props.eventView.project)) {
       if ((props.compatibleProjects ?? []).length === 0) {
         return (
           <Alert

@@ -1,14 +1,14 @@
 import MarkLine from 'sentry/components/charts/components/markLine';
-import {LineChartSeries} from 'sentry/components/charts/lineChart';
+import type {LineChartSeries} from 'sentry/components/charts/lineChart';
 import {t} from 'sentry/locale';
-import {Series} from 'sentry/types/echarts';
+import type {Series} from 'sentry/types/echarts';
 import {MINUTE} from 'sentry/utils/formatters';
 import theme from 'sentry/utils/theme';
-import {
+import type {
   AlertRuleThresholdType,
-  AlertRuleTriggerType,
   Trigger,
 } from 'sentry/views/alerts/rules/metric/types';
+import {AlertRuleTriggerType} from 'sentry/views/alerts/rules/metric/types';
 import {getChangeStatus} from 'sentry/views/alerts/utils/getChangeStatus';
 
 export const getComparisonMarkLines = (
@@ -18,7 +18,7 @@ export const getComparisonMarkLines = (
   triggers: Trigger[],
   thresholdType: AlertRuleThresholdType
 ): LineChartSeries[] => {
-  const changeStatuses: {name: number | string; status: string}[] = [];
+  const changeStatuses: Array<{name: number | string; status: string}> = [];
 
   if (
     timeseriesData?.[0]?.data !== undefined &&
@@ -31,9 +31,9 @@ export const getComparisonMarkLines = (
 
     if (triggers.some(({alertThreshold}) => typeof alertThreshold === 'number')) {
       const lastPointLimit =
-        (baseData[changeData.length - 1].name as number) - timeWindow * MINUTE;
+        (baseData[changeData.length - 1]!.name as number) - timeWindow * MINUTE;
       changeData.forEach(({name, value: comparisonValue}, idx) => {
-        const baseValue = baseData[idx].value;
+        const baseValue = baseData[idx]!.value;
         const comparisonPercentage =
           comparisonValue === 0
             ? baseValue === 0
@@ -44,7 +44,7 @@ export const getComparisonMarkLines = (
         if (
           idx === 0 ||
           idx === changeData.length - 1 ||
-          status !== changeStatuses[changeStatuses.length - 1].status
+          status !== changeStatuses[changeStatuses.length - 1]!.status
         ) {
           changeStatuses.push({name, status});
         }
@@ -60,8 +60,8 @@ export const getComparisonMarkLines = (
               status === AlertRuleTriggerType.CRITICAL
                 ? theme.red300
                 : status === AlertRuleTriggerType.WARNING
-                ? theme.yellow300
-                : theme.green300,
+                  ? theme.yellow300
+                  : theme.green300,
             type: 'solid',
             width: 4,
           },
@@ -70,7 +70,7 @@ export const getComparisonMarkLines = (
               {coord: [name, 0]},
               {
                 coord: [
-                  Math.min(changeStatuses[idx + 1].name as number, lastPointLimit),
+                  Math.min(changeStatuses[idx + 1]!.name as number, lastPointLimit),
                   0,
                 ],
               },

@@ -1,112 +1,149 @@
 import {useEffect} from 'react';
-import {browserHistory} from 'react-router';
-import {Query} from 'history';
+import type {Query} from 'history';
+import type * as qs from 'query-string';
 
-import {DeepPartial} from 'sentry/types/utils';
+import type {DeepPartial} from 'sentry/types/utils';
+import {browserHistory} from 'sentry/utils/browserHistory';
 import {useFlamegraphState} from 'sentry/utils/profiling/flamegraph/hooks/useFlamegraphState';
-import {Rect} from 'sentry/utils/profiling/gl/utils';
+import {Rect} from 'sentry/utils/profiling/speedscope';
 import {useLocalStorageState} from 'sentry/utils/useLocalStorageState';
 import {useLocation} from 'sentry/utils/useLocation';
 
-import {
-  FlamegraphAxisOptions,
-  FlamegraphColorCodings,
-  FlamegraphSorting,
-  FlamegraphViewOptions,
-} from './reducers/flamegraphPreferences';
-import {DEFAULT_FLAMEGRAPH_STATE, FlamegraphState} from './flamegraphContext';
+import type {FlamegraphState} from './flamegraphContext';
+import {DEFAULT_FLAMEGRAPH_STATE} from './flamegraphContext';
 
 // Intersect the types so we can properly guard
 type PossibleQuery =
   | Query
-  | (Pick<FlamegraphState['preferences'], 'colorCoding' | 'sorting' | 'view' | 'xAxis'> &
+  | (Pick<FlamegraphState['preferences'], 'colorCoding' | 'sorting' | 'view'> &
       Pick<FlamegraphState['search'], 'query'>);
 
 function isColorCoding(
   value: PossibleQuery['colorCoding'] | FlamegraphState['preferences']['colorCoding']
 ): value is FlamegraphState['preferences']['colorCoding'] {
-  const values: FlamegraphColorCodings = [
-    'by symbol name',
-    'by system / application',
-    'by library',
-    'by recursion',
-    'by frequency',
-  ];
+  if (typeof value !== 'string') {
+    return false;
+  }
 
-  return values.includes(value as any);
+  return (
+    value === 'by symbol name' ||
+    value === 'by system frame' ||
+    value === 'by application frame' ||
+    value === 'by library' ||
+    value === 'by recursion' ||
+    value === 'by frequency' ||
+    value === 'by system vs application frame'
+  );
 }
 
 function isLayout(
   value: PossibleQuery['colorCoding'] | FlamegraphState['preferences']['colorCoding']
 ): value is FlamegraphState['preferences']['layout'] {
+  if (typeof value !== 'string') {
+    return false;
+  }
   return value === 'table right' || value === 'table bottom' || value === 'table left';
 }
 
 function isSorting(
   value: PossibleQuery['sorting'] | FlamegraphState['preferences']['sorting']
 ): value is FlamegraphState['preferences']['sorting'] {
-  const values: FlamegraphSorting = ['left heavy', 'call order'];
-  return values.includes(value as any);
+  if (typeof value !== 'string') {
+    return false;
+  }
+  return value === 'left heavy' || value === 'call order' || value === 'alphabetical';
 }
 
 function isView(
   value: PossibleQuery['view'] | FlamegraphState['preferences']['view']
 ): value is FlamegraphState['preferences']['view'] {
-  const values: FlamegraphViewOptions = ['top down', 'bottom up'];
-  return values.includes(value as any);
-}
-
-function isXAxis(
-  value: PossibleQuery['xAxis'] | FlamegraphState['preferences']['xAxis']
-): value is FlamegraphState['preferences']['xAxis'] {
-  const values: FlamegraphAxisOptions = ['standalone', 'transaction'];
-  return values.includes(value as any);
+  if (typeof value !== 'string') {
+    return false;
+  }
+  return value === 'top down' || value === 'bottom up';
 }
 
 export function decodeFlamegraphStateFromQueryParams(
-  query: Query
+  query: qs.ParsedQuery
 ): DeepPartial<FlamegraphState> {
-  return {
-    profiles: {
-      highlightFrame:
-        typeof query.frameName === 'string' && typeof query.framePackage === 'string'
-          ? {
-              name: query.frameName,
-              package: query.framePackage,
-            }
-          : null,
-      threadId:
-        typeof query.tid === 'string' && !isNaN(parseInt(query.tid, 10))
-          ? parseInt(query.tid, 10)
-          : null,
-    },
-    position: {view: Rect.decode(query.fov) ?? Rect.Empty()},
-    preferences: {
-      layout: isLayout(query.layout)
-        ? query.layout
-        : DEFAULT_FLAMEGRAPH_STATE.preferences.layout,
-      colorCoding: isColorCoding(query.colorCoding)
-        ? query.colorCoding
-        : DEFAULT_FLAMEGRAPH_STATE.preferences.colorCoding,
-      sorting: isSorting(query.sorting)
-        ? query.sorting
-        : DEFAULT_FLAMEGRAPH_STATE.preferences.sorting,
-      view: isView(query.view) ? query.view : DEFAULT_FLAMEGRAPH_STATE.preferences.view,
-      xAxis: isXAxis(query.xAxis)
-        ? query.xAxis
-        : DEFAULT_FLAMEGRAPH_STATE.preferences.xAxis,
-    },
-    search: {
-      query: typeof query.query === 'string' ? query.query : '',
-    },
-  };
+  const decoded: DeepPartial<FlamegraphState> = {};
+
+  // Similarly to how we encode frame name and values, we want to
+  // omit the field entirely if it is not present in the query string or
+  // if it is an empty string.
+  if (typeof query.frameName === 'string') {
+    decoded.search = {
+      ...(decoded.search ?? {}),
+      highlightFrames: {
+        ...(decoded.search?.highlightFrames ?? {}),
+        name: query.frameName ? query.frameName : undefined,
+      },
+    };
+  }
+
+  if (typeof query.framePackage === 'string') {
+    decoded.search = {
+      ...(decoded.search ?? {}),
+      highlightFrames: {
+        ...(decoded.search?.highlightFrames ?? {}),
+        package: query.framePackage ? query.framePackage : undefined,
+      },
+    };
+  }
+
+  if (typeof query.tid === 'string' && !isNaN(parseInt(query.tid, 10))) {
+    decoded.profiles = {
+      ...(decoded.profiles ?? {}),
+      threadId: parseInt(query.tid, 10),
+    };
+  }
+
+  const fov = Rect.decode(query.fov);
+  if (fov) {
+    decoded.position = {view: fov};
+  }
+
+  decoded.preferences = {};
+  decoded.search = decoded.search || {};
+
+  if (isLayout(query.layout)) {
+    decoded.preferences.layout = query.layout;
+  }
+  if (isColorCoding(query.colorCoding)) {
+    decoded.preferences.colorCoding = query.colorCoding;
+  }
+  if (isSorting(query.sorting)) {
+    decoded.preferences.sorting = query.sorting;
+  }
+
+  if (isView(query.view)) {
+    decoded.preferences.view = query.view;
+  }
+  if (typeof query.query === 'string') {
+    decoded.search.query = query.query;
+  }
+
+  return decoded;
 }
 
 export function encodeFlamegraphStateToQueryParams(state: FlamegraphState) {
-  const highlightFrame = state.profiles.highlightFrame
+  const highlightFrameToEncode: Record<string, string> = {};
+
+  // For some frames we do not have a package (or name) if that happens we want to omit
+  // the field entirely from the query string. This is to avoid default values being used
+  // as qs.parse will initialize empty values to "" which can differ from the respective
+  // frame values which are undefined.
+  if (state.search.highlightFrames?.name) {
+    highlightFrameToEncode.frameName = state.search.highlightFrames.name;
+  }
+  if (state.search.highlightFrames?.package) {
+    highlightFrameToEncode.framePackage = state.search.highlightFrames.package;
+  }
+
+  const highlightFrame = state.search.highlightFrames
     ? {
-        frameName: state.profiles.highlightFrame?.name,
-        framePackage: state.profiles.highlightFrame?.package,
+        frameName: state.search.highlightFrames?.name,
+        framePackage: state.search.highlightFrames?.package,
       }
     : {};
 
@@ -114,7 +151,6 @@ export function encodeFlamegraphStateToQueryParams(state: FlamegraphState) {
     colorCoding: state.preferences.colorCoding,
     sorting: state.preferences.sorting,
     view: state.preferences.view,
-    xAxis: state.preferences.xAxis,
     query: state.search.query,
     ...highlightFrame,
     ...(state.position.view.isEmpty()
@@ -127,7 +163,7 @@ export function encodeFlamegraphStateToQueryParams(state: FlamegraphState) {
 }
 
 function maybeOmitHighlightedFrame(query: Query, state: FlamegraphState) {
-  if (!state.profiles.highlightFrame && query.frameName && query.framePackage) {
+  if (!state.search.highlightFrames && query.frameName && query.framePackage) {
     const {frameName: _, framePackage: __, ...rest} = query;
     return rest;
   }
@@ -161,6 +197,10 @@ export function FlamegraphStateLocalStorageSync() {
     {
       preferences: {
         layout: DEFAULT_FLAMEGRAPH_STATE.preferences.layout,
+        timelines: DEFAULT_FLAMEGRAPH_STATE.preferences.timelines,
+        view: DEFAULT_FLAMEGRAPH_STATE.preferences.view,
+        colorCoding: DEFAULT_FLAMEGRAPH_STATE.preferences.colorCoding,
+        sorting: DEFAULT_FLAMEGRAPH_STATE.preferences.sorting,
       },
     }
   );
@@ -169,11 +209,20 @@ export function FlamegraphStateLocalStorageSync() {
     setState({
       preferences: {
         layout: state.preferences.layout,
+        timelines: state.preferences.timelines,
+        view: state.preferences.view,
+        colorCoding: state.preferences.colorCoding,
+        sorting: state.preferences.sorting,
       },
     });
-    // We only want to sync the local storage when the state changes
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [state.preferences.layout]);
+  }, [
+    state.preferences.sorting,
+    state.preferences.layout,
+    state.preferences.timelines,
+    state.preferences.view,
+    state.preferences.colorCoding,
+    setState,
+  ]);
 
   return null;
 }

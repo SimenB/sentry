@@ -1,11 +1,11 @@
-import {Authenticator} from 'sentry/types';
+import type {Authenticator} from 'sentry/types/auth';
 
 import U2fSign from './u2fsign';
 
 type U2FSignProps = React.ComponentProps<typeof U2fSign>;
 
 type Props = {
-  authenticators: Array<Authenticator>;
+  authenticators: Authenticator[];
   onTap: U2FSignProps['onTap'];
   className?: string;
   displayMode?: U2FSignProps['displayMode'];

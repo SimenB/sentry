@@ -1,8 +1,11 @@
-import {mountWithTheme} from 'sentry-test/enzyme';
-import {initializeOrg} from 'sentry-test/initializeOrg';
-import {act} from 'sentry-test/reactTestingLibrary';
+import {LocationFixture} from 'sentry-fixture/locationFixture';
+import {OrganizationFixture} from 'sentry-fixture/organization';
+import {ProjectFixture} from 'sentry-fixture/project';
 
-import {t} from 'sentry/locale';
+import {initializeOrg} from 'sentry-test/initializeOrg';
+import {act, render, screen} from 'sentry-test/reactTestingLibrary';
+import {textWithMarkupMatcher} from 'sentry-test/utils';
+
 import ProjectsStore from 'sentry/stores/projectsStore';
 import EventView from 'sentry/utils/discover/eventView';
 import {
@@ -10,21 +13,19 @@ import {
   SPAN_OP_RELATIVE_BREAKDOWN_FIELD,
 } from 'sentry/utils/discover/fields';
 import {WebVital} from 'sentry/utils/fields';
+import {useLocation} from 'sentry/utils/useLocation';
 import {OrganizationContext} from 'sentry/views/organizationContext';
 import {SpanOperationBreakdownFilter} from 'sentry/views/performance/transactionSummary/filter';
 import EventsPageContent from 'sentry/views/performance/transactionSummary/transactionEvents/content';
 import {EventsDisplayFilterName} from 'sentry/views/performance/transactionSummary/transactionEvents/utils';
 
-type Data = {
-  features?: string[];
-};
+jest.mock('sentry/utils/useLocation');
 
-function initializeData({features: additionalFeatures = []}: Data = {}) {
-  const features = ['discover-basic', 'performance-view', ...additionalFeatures];
-  const organization = TestStubs.Organization({
-    features,
-    projects: [TestStubs.Project()],
-    apdexThreshold: 400,
+const mockUseLocation = jest.mocked(useLocation);
+
+function initializeData() {
+  const organization = OrganizationFixture({
+    features: ['discover-basic', 'performance-view'],
   });
   const initialData = initializeOrg({
     organization,
@@ -32,31 +33,27 @@ function initializeData({features: additionalFeatures = []}: Data = {}) {
       location: {
         query: {
           transaction: '/performance',
-          project: 1,
+          project: '1',
           transactionCursor: '1:0:0',
         },
       },
     },
-    project: 1,
     projects: [],
   });
-  act(() => void ProjectsStore.loadInitialData(initialData.organization.projects));
+  act(() => void ProjectsStore.loadInitialData(initialData.projects));
   return initialData;
 }
 
 describe('Performance Transaction Events Content', function () {
-  let fields;
-  let organization;
-  let data;
-  let transactionName;
-  let eventView;
-  let totalEventCount;
-  let initialData;
+  let fields: string[];
+  let data: any[];
+  let transactionName: string;
+  let eventView: EventView;
+  let initialData: ReturnType<typeof initializeData>;
   const query =
     'transaction.duration:<15m event.type:transaction transaction:/api/0/organizations/{organization_slug}/events/';
   beforeEach(function () {
     transactionName = 'transactionName';
-    totalEventCount = '200';
     fields = [
       'id',
       'user.display',
@@ -67,13 +64,15 @@ describe('Performance Transaction Events Content', function () {
       'spans.total.time',
       ...SPAN_OP_BREAKDOWN_FIELDS,
     ];
-    organization = TestStubs.Organization();
+    mockUseLocation.mockReturnValue(
+      LocationFixture({pathname: '/organizations/org-slug/performance/summary'})
+    );
     MockApiClient.addMockResponse({
       url: '/organizations/org-slug/projects/',
       body: [],
     });
     MockApiClient.addMockResponse({
-      url: '/prompts-activity/',
+      url: '/organizations/org-slug/prompts-activity/',
       body: {},
     });
     MockApiClient.addMockResponse({
@@ -110,6 +109,29 @@ describe('Performance Transaction Events Content', function () {
         'spans.total.time': 600,
       },
     ];
+    // Total events count response
+    MockApiClient.addMockResponse({
+      url: '/organizations/org-slug/events/',
+      headers: {
+        Link:
+          '<http://localhost/api/0/organizations/org-slug/events/?cursor=2:0:0>; rel="next"; results="true"; cursor="2:0:0",' +
+          '<http://localhost/api/0/organizations/org-slug/events/?cursor=1:0:0>; rel="previous"; results="false"; cursor="1:0:0"',
+      },
+      body: {
+        meta: {
+          fields: {
+            'count()': 'integer',
+          },
+        },
+        data: [{'count()': 200}],
+      },
+      match: [
+        (_url, options) => {
+          return options.query?.field?.includes('count()');
+        },
+      ],
+    });
+
     // Transaction list response
     MockApiClient.addMockResponse({
       url: '/organizations/org-slug/events/',
@@ -140,6 +162,14 @@ describe('Performance Transaction Events Content', function () {
       url: '/organizations/org-slug/events-has-measurements/',
       body: {measurements: false},
     });
+    MockApiClient.addMockResponse({
+      url: `/organizations/org-slug/recent-searches/`,
+      body: [],
+    });
+    MockApiClient.addMockResponse({
+      url: `/organizations/org-slug/tags/`,
+      body: [],
+    });
     initialData = initializeData();
     eventView = EventView.fromNewQueryWithLocation(
       {
@@ -162,78 +192,116 @@ describe('Performance Transaction Events Content', function () {
   });
 
   it('basic rendering', async function () {
-    const wrapper = mountWithTheme(
-      <OrganizationContext.Provider value={organization}>
+    render(
+      <OrganizationContext.Provider value={initialData.organization}>
         <EventsPageContent
-          totalEventCount={totalEventCount}
           eventView={eventView}
-          organization={organization}
+          organization={initialData.organization}
           location={initialData.router.location}
           transactionName={transactionName}
-          spanOperationBreakdownFilter={SpanOperationBreakdownFilter.None}
+          spanOperationBreakdownFilter={SpanOperationBreakdownFilter.NONE}
           onChangeSpanOperationBreakdownFilter={() => {}}
-          eventsDisplayFilterName={EventsDisplayFilterName.p100}
+          eventsDisplayFilterName={EventsDisplayFilterName.P100}
           onChangeEventsDisplayFilter={() => {}}
           setError={() => {}}
+          projectId="123"
+          projects={[]}
         />
       </OrganizationContext.Provider>,
-      initialData.routerContext
+      {router: initialData.router}
     );
-    await tick();
-    wrapper.update();
 
-    expect(wrapper.find('EventsTable')).toHaveLength(1);
-    expect(wrapper.find('CompactSelect')).toHaveLength(1);
-    expect(wrapper.find('StyledSearchBar')).toHaveLength(1);
-    expect(wrapper.find('Filter')).toHaveLength(1);
+    expect(await screen.findByTestId('events-table')).toBeInTheDocument();
+    expect(screen.getByText(textWithMarkupMatcher('Percentilep100'))).toBeInTheDocument();
+    expect(
+      screen.getByPlaceholderText('Search for events, users, tags, and more')
+    ).toBeInTheDocument();
+    expect(screen.getByRole('button', {name: 'Filter by operation'})).toBeInTheDocument();
 
-    const columnTitles = wrapper.find('EventsTable').props().columnTitles;
+    const columnTitles = screen
+      .getAllByRole('columnheader')
+      .map(elem => elem.textContent?.trim());
     expect(columnTitles).toEqual([
-      t('event id'),
-      t('user'),
-      t('operation duration'),
-      t('total duration'),
-      t('trace id'),
-      t('timestamp'),
+      'event id',
+      'user',
+      'operation duration',
+      'total duration',
+      'trace id',
+      'timestamp',
     ]);
   });
 
   it('rendering with webvital selected', async function () {
-    const wrapper = mountWithTheme(
-      <OrganizationContext.Provider value={organization}>
+    render(
+      <OrganizationContext.Provider value={initialData.organization}>
         <EventsPageContent
-          totalEventCount={totalEventCount}
           eventView={eventView}
-          organization={organization}
+          organization={initialData.organization}
           location={initialData.router.location}
           transactionName={transactionName}
-          spanOperationBreakdownFilter={SpanOperationBreakdownFilter.None}
+          spanOperationBreakdownFilter={SpanOperationBreakdownFilter.NONE}
           onChangeSpanOperationBreakdownFilter={() => {}}
-          eventsDisplayFilterName={EventsDisplayFilterName.p100}
+          eventsDisplayFilterName={EventsDisplayFilterName.P100}
           onChangeEventsDisplayFilter={() => {}}
           webVital={WebVital.LCP}
           setError={() => {}}
+          projectId="123"
+          projects={[]}
         />
       </OrganizationContext.Provider>,
-      initialData.routerContext
+      {router: initialData.router}
     );
-    await tick();
-    wrapper.update();
 
-    expect(wrapper.find('EventsTable')).toHaveLength(1);
-    expect(wrapper.find('CompactSelect')).toHaveLength(1);
-    expect(wrapper.find('StyledSearchBar')).toHaveLength(1);
-    expect(wrapper.find('Filter')).toHaveLength(1);
+    expect(await screen.findByTestId('events-table')).toBeInTheDocument();
+    expect(screen.getByText(textWithMarkupMatcher('Percentilep100'))).toBeInTheDocument();
+    expect(
+      screen.getByPlaceholderText('Search for events, users, tags, and more')
+    ).toBeInTheDocument();
+    expect(screen.getByRole('button', {name: 'Filter by operation'})).toBeInTheDocument();
 
-    const columnTitles = wrapper.find('EventsTable').props().columnTitles;
-    expect(columnTitles).toEqual([
-      t('event id'),
-      t('user'),
-      t('operation duration'),
-      t('measurements.lcp'),
-      t('total duration'),
-      t('trace id'),
-      t('timestamp'),
-    ]);
+    const columnTitles = screen
+      .getAllByRole('columnheader')
+      .map(elem => elem.textContent?.trim());
+    expect(columnTitles).toStrictEqual(expect.arrayContaining(['measurements.lcp']));
+  });
+
+  it('rendering with http.method', async function () {
+    const _eventView = EventView.fromNewQueryWithLocation(
+      {
+        id: undefined,
+        version: 2,
+        name: 'transactionName',
+        fields,
+        query,
+        projects: [1],
+        orderby: '-timestamp',
+      },
+      initialData.router.location
+    );
+    render(
+      <OrganizationContext.Provider value={initialData.organization}>
+        <EventsPageContent
+          eventView={_eventView}
+          organization={initialData.organization}
+          location={initialData.router.location}
+          transactionName={transactionName}
+          spanOperationBreakdownFilter={SpanOperationBreakdownFilter.NONE}
+          onChangeSpanOperationBreakdownFilter={() => {}}
+          eventsDisplayFilterName={EventsDisplayFilterName.P100}
+          onChangeEventsDisplayFilter={() => {}}
+          webVital={WebVital.LCP}
+          setError={() => {}}
+          projectId="1"
+          projects={[ProjectFixture({id: '1', platform: 'python'})]}
+        />
+      </OrganizationContext.Provider>,
+      {router: initialData.router}
+    );
+
+    expect(await screen.findByTestId('events-table')).toBeInTheDocument();
+    const columnTitles = screen
+      .getAllByRole('columnheader')
+      .map(elem => elem.textContent);
+    expect(columnTitles).toStrictEqual(expect.arrayContaining(['http.method']));
   });
 });

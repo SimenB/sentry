@@ -22,14 +22,13 @@ type Options = {
 export default function parseHtmlMarks({key, htmlString, markTags}: Options) {
   const {highlightPreTag, highlightPostTag} = markTags;
 
-  const indices: [number, number][] = [];
+  const indices: Array<[number, number]> = [];
   let value = htmlString;
 
-  // eslint-disable-next-line no-constant-condition
   while (true) {
     const openIndex = value.indexOf(highlightPreTag);
     const openIndexEnd = openIndex + highlightPreTag.length;
-    if (openIndex === -1 || value.indexOf(highlightPostTag) === -1) {
+    if (openIndex === -1 || !value.includes(highlightPostTag)) {
       break;
     }
     value = value.slice(0, openIndex) + value.slice(openIndexEnd);

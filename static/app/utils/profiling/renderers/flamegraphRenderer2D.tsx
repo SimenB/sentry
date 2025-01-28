@@ -1,74 +1,69 @@
-import {mat3, vec2} from 'gl-matrix';
+import type {mat3} from 'gl-matrix';
 
-import {Flamegraph} from 'sentry/utils/profiling/flamegraph';
-import {FlamegraphSearch} from 'sentry/utils/profiling/flamegraph/flamegraphStateProvider/reducers/flamegraphSearch';
-import {FlamegraphTheme} from 'sentry/utils/profiling/flamegraph/flamegraphTheme';
-import {FlamegraphFrame} from 'sentry/utils/profiling/flamegraphFrame';
-import {Rect} from 'sentry/utils/profiling/gl/utils';
+import type {Flamegraph} from 'sentry/utils/profiling/flamegraph';
+import type {FlamegraphSearch} from 'sentry/utils/profiling/flamegraph/flamegraphStateProvider/reducers/flamegraphSearch';
+import type {FlamegraphTheme} from 'sentry/utils/profiling/flamegraph/flamegraphTheme';
+import type {FlamegraphFrame} from 'sentry/utils/profiling/flamegraphFrame';
+import {getFlamegraphFrameSearchId} from 'sentry/utils/profiling/flamegraphFrame';
+import {getContext, resizeCanvasToDisplaySize} from 'sentry/utils/profiling/gl/utils';
+import type {FlamegraphRendererOptions} from 'sentry/utils/profiling/renderers/flamegraphRenderer';
+import {
+  DEFAULT_FLAMEGRAPH_RENDERER_OPTIONS,
+  FlamegraphRenderer,
+} from 'sentry/utils/profiling/renderers/flamegraphRenderer';
+import {Rect} from 'sentry/utils/profiling/speedscope';
 
-// Convert color component from 0-1 to 0-255 range
 function colorComponentsToRgba(color: number[]): string {
-  return `rgba(${Math.floor(color[0] * 255)}, ${Math.floor(color[1] * 255)}, ${Math.floor(
-    color[2] * 255
+  return `rgba(${Math.floor(color[0]! * 255)}, ${Math.floor(color[1]! * 255)}, ${Math.floor(
+    color[2]! * 255
   )}, ${color[3] ?? 1})`;
 }
 
-export class FlamegraphRenderer2d {
-  canvas: HTMLCanvasElement | null;
-  flamegraph: Flamegraph;
-  theme: FlamegraphTheme;
-  options: {draw_border: boolean};
-
-  frames: ReadonlyArray<FlamegraphFrame> = [];
-  colorMap: Map<string | number, number[]> = new Map();
+export class FlamegraphRenderer2D extends FlamegraphRenderer {
+  ctx: CanvasRenderingContext2D | null = null;
+  searchResults: FlamegraphSearch['results']['frames'] = new Map();
+  isSearching = false;
 
   constructor(
     canvas: HTMLCanvasElement,
     flamegraph: Flamegraph,
     theme: FlamegraphTheme,
-    options: {draw_border: boolean} = {draw_border: false}
+    options: FlamegraphRendererOptions = DEFAULT_FLAMEGRAPH_RENDERER_OPTIONS
   ) {
-    this.canvas = canvas;
+    super(canvas, flamegraph, theme, options);
+
     this.flamegraph = flamegraph;
     this.theme = theme;
     this.options = options;
+    this.canvas = canvas;
 
-    this.init();
+    this.initCanvasContext();
   }
 
-  init() {
-    this.frames = [...this.flamegraph.frames];
-    const {colorMap} = this.theme.COLORS.STACK_TO_COLOR(
-      this.frames,
-      this.theme.COLORS.COLOR_MAP,
-      this.theme.COLORS.COLOR_BUCKET
-    );
+  initCanvasContext(): boolean {
+    if (!this.canvas) {
+      throw new Error('Cannot initialize context from null canvas');
+    }
 
-    this.colorMap = colorMap;
+    this.ctx = getContext(this.canvas, '2d');
+    if (!this.ctx) {
+      throw new Error('Could not get canvas 2d context');
+    }
+
+    resizeCanvasToDisplaySize(this.canvas);
+    return true;
   }
 
-  getColorForFrame(frame: FlamegraphFrame): number[] {
-    return this.colorMap.get(frame.key) ?? this.theme.COLORS.FRAME_FALLBACK_COLOR;
-  }
-
-  // We dont really need this in node, it's just here for completeness and it makes
-  // the flamegraph UI not throw errors when used in dev
-  getHoveredNode(_configSpaceCursor: vec2): FlamegraphFrame | null {
-    return null;
-  }
-
-  draw(configViewToPhysicalSpace: mat3, _searchResults: FlamegraphSearch['results']) {
+  draw(configViewToPhysicalSpace: mat3) {
     if (!this.canvas) {
       throw new Error('No canvas to draw on');
     }
 
-    const context = this.canvas.getContext('2d');
-
-    if (!context) {
-      throw new Error('Could not get canvas 2d context');
+    if (!this.ctx) {
+      throw new Error('No canvas context to draw with');
     }
 
-    context.clearRect(0, 0, this.canvas.width, this.canvas.height);
+    this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
     const border = window.devicePixelRatio;
 
     const queue: FlamegraphFrame[] = [...this.flamegraph.root.children];
@@ -82,12 +77,14 @@ export class FlamegraphRenderer2d {
         1
       ).transformRect(configViewToPhysicalSpace);
 
-      const colors =
-        this.colorMap.get(frame.key) ?? this.theme.COLORS.FRAME_FALLBACK_COLOR;
-      const color = colorComponentsToRgba(colors);
+      const color = this.colorMap.get(frame.key) ?? this.theme.COLORS.SPAN_FALLBACK_COLOR;
 
-      context.fillStyle = color;
-      context.fillRect(
+      this.ctx.fillStyle =
+        this.isSearching && !this.searchResults.has(getFlamegraphFrameSearchId(frame))
+          ? colorComponentsToRgba(this.theme.COLORS.FRAME_FALLBACK_COLOR)
+          : colorComponentsToRgba(color);
+
+      this.ctx.fillRect(
         rect.x + border,
         rect.y + border,
         rect.width - border,
@@ -95,8 +92,17 @@ export class FlamegraphRenderer2d {
       );
 
       for (let i = 0; i < frame.children.length; i++) {
-        queue.push(frame.children[i]);
+        queue.push(frame.children[i]!);
       }
     }
+  }
+
+  setSearchResults(query: string, searchResults: FlamegraphSearch['results']['frames']) {
+    if (!this.ctx) {
+      return;
+    }
+
+    this.isSearching = query.length > 0;
+    this.searchResults = searchResults;
   }
 }

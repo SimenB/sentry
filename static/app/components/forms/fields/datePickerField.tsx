@@ -2,15 +2,17 @@ import isPropValid from '@emotion/is-prop-valid';
 import {useTheme} from '@emotion/react';
 import styled from '@emotion/styled';
 import {FocusScope} from '@react-aria/focus';
-import moment from 'moment';
+import moment from 'moment-timezone';
 
 import {DatePicker} from 'sentry/components/calendar';
+import FormField from 'sentry/components/forms/formField';
 import Input from 'sentry/components/input';
 import {Overlay, PositionWrapper} from 'sentry/components/overlay';
 import {IconCalendar} from 'sentry/icons';
 import useOverlay from 'sentry/utils/useOverlay';
 
-import InputField, {InputFieldProps, OnEvent} from './inputField';
+// XXX(epurkhiser): This is wrong, it should not be inheriting these props
+import type {InputFieldProps, OnEvent} from './inputField';
 
 interface DatePickerFieldProps extends Omit<InputFieldProps, 'field'> {}
 
@@ -37,9 +39,8 @@ export default function DatePickerField(props: DatePickerFieldProps) {
   const theme = useTheme();
 
   return (
-    <InputField
-      {...props}
-      field={({onChange, onBlur, value, id, size, ...inputProps}) => {
+    <FormField {...props}>
+      {({children: _children, onChange, onBlur, value, id, size, ...inputProps}: any) => {
         const dateObj = new Date(value);
         const inputValue = !isNaN(dateObj.getTime()) ? dateObj : new Date();
         const dateString = moment(inputValue).format('LL');
@@ -74,7 +75,7 @@ export default function DatePickerField(props: DatePickerFieldProps) {
           </div>
         );
       }}
-    />
+    </FormField>
   );
 }
 
@@ -89,9 +90,9 @@ const StyledInput = styled(Input)`
   ${p.theme.iconSizes.sm}
 )`};
 
-  &:focus:not(.focus-visible) {
+  &:focus:not(:focus-visible) {
     border-color: ${p => p.theme.border};
-    box-shadow: inset ${p => p.theme.dropShadowLight};
+    box-shadow: inset ${p => p.theme.dropShadowMedium};
   }
 `;
 

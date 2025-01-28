@@ -1,22 +1,22 @@
 {
   "get": {
     "tags": ["Organizations"],
-    "description": "This resolves a short ID to the project slug and internal issue ID.",
+    "description": "This resolves a short ID or internal issue ID to the project slug and group details.",
     "operationId": "Resolve a Short ID",
     "parameters": [
       {
-        "name": "organization_slug",
+        "name": "organization_id_or_slug",
         "in": "path",
-        "description": "The slug of the organization the short ID should be looked up in.",
+        "description": "The ID or slug of the organization the short ID should be looked up in.",
         "required": true,
         "schema": {
           "type": "string"
         }
       },
       {
-        "name": "short_id",
+        "name": "issue_id",
         "in": "path",
-        "description": "The short ID to look up.",
+        "description": "The short ID or issue ID to look up.",
         "required": true,
         "schema": {
           "type": "string"

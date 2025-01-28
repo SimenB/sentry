@@ -14,12 +14,15 @@ concurrency:
 
 # hack for https://github.com/actions/cache/issues/810#issuecomment-1222550359
 env:
-  SEGMENT_DOWNLOAD_TIMEOUT_MIN: 3
+  SEGMENT_DOWNLOAD_TIMEOUT_MINS: 3
+  # Disables sentry reporting for devservices
+  DEVSERVICES_DISABLE_SENTRY: 1
+  SNUBA_NO_WORKERS: 1
 
 jobs:
   files-changed:
     name: detect what files changed
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 3
     # Map a step output to a job output
     outputs:
@@ -28,12 +31,11 @@ jobs:
       backend_dependencies: ${{ steps.changes.outputs.backend_dependencies }}
       backend_any_type: ${{ steps.changes.outputs.backend_any_type }}
       migration_lockfile: ${{ steps.changes.outputs.migration_lockfile }}
-      plugins: ${{ steps.changes.outputs.plugins }}
     steps:
-      - uses: actions/checkout@7884fcad6b5d53d10323aee724dc68d8b9096a2e  # v2
+      - uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4.1.7
 
       - name: Check for backend file changes
-        uses: getsentry/paths-filter@66f7f1844185eb7fb6738ea4ea59d74bb99199e5  # v2
+        uses: dorny/paths-filter@0bc4621a3135347011ad047f9ecf449bf72ce2bd # v3.0.0
         id: changes
         with:
           token: ${{ github.token }}
@@ -43,17 +45,20 @@ jobs:
     if: needs.files-changed.outputs.api_docs == 'true'
     needs: files-changed
     name: api docs test
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@7884fcad6b5d53d10323aee724dc68d8b9096a2e  # v2
+      - uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4.1.7
 
-      - uses: getsentry/action-setup-volta@54775a59c41065f54ecc76d1dd5f2cdc7a1550cb  # v1.1.0
+      - uses: actions/setup-node@1e60f620b9541d16bece96c5465dc8ee9832be0b # v4
+        id: setup-node
+        with:
+          node-version-file: '.volta.json'
 
       - name: Setup sentry python env
         uses: ./.github/actions/setup-sentry
         id: setup
         with:
-          snuba: true
+          mode: default
 
       - name: Run API docs tests
         # install ts-node for ts build scripts to execute properly without potentially installing
@@ -62,239 +67,204 @@ jobs:
         run: |
           yarn add ts-node && make test-api-docs
 
+      - name: Inspect failure
+        if: failure()
+        run: |
+          if command -v devservices; then
+            devservices logs
+          fi
+
   backend-test:
     if: needs.files-changed.outputs.backend == 'true'
     needs: files-changed
     name: backend test
-    runs-on: ubuntu-20.04
-    timeout-minutes: 20
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      id-token: write
     strategy:
       # This helps not having to run multiple jobs because one fails, thus, reducing resource usage
       # and reducing the risk that one of many runs would turn red again (read: intermittent tests)
       fail-fast: false
       matrix:
         # XXX: When updating this, make sure you also update MATRIX_INSTANCE_TOTAL.
-        instance: [0, 1, 2, 3]
-        pg-version: ['9.6']
+        instance: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+        pg-version: ['14']
 
     env:
-      # XXX: MATRIX_INSTANCE_TOTAL must be hardcoded to the length of strategy.matrix.instance.
-      MATRIX_INSTANCE_TOTAL: 4
-      MIGRATIONS_TEST_MIGRATE: 1
+      # XXX: `MATRIX_INSTANCE_TOTAL` must be hardcoded to the length of `strategy.matrix.instance`.
+      # If this increases, make sure to also increase `flags.backend.after_n_builds` in `codecov.yml`.
+      MATRIX_INSTANCE_TOTAL: 11
 
     steps:
-      - uses: actions/checkout@7884fcad6b5d53d10323aee724dc68d8b9096a2e  # v2
-        with:
-          # Avoid codecov error message related to SHA resolution:
-          # https://github.com/codecov/codecov-bash/blob/7100762afbc822b91806a6574658129fe0d23a7d/codecov#L891
-          fetch-depth: '2'
+      - uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4.1.7
 
       - name: Setup sentry env
         uses: ./.github/actions/setup-sentry
         id: setup
         with:
-          snuba: true
-          # Right now, we run so few bigtable related tests that the
-          # overhead of running bigtable in all backend tests
-          # is way smaller than the time it would take to run in its own job.
-          bigtable: true
-          pg-version: ${{ matrix.pg-version }}
+          mode: backend-ci
 
       - name: Run backend test (${{ steps.setup.outputs.matrix-instance-number }} of ${{ steps.setup.outputs.matrix-instance-total }})
         run: |
           make test-python-ci
 
-      - name: Handle artifacts
-        uses: ./.github/actions/artifacts
+      - name: Inspect failure
+        if: failure()
+        run: |
+          if command -v devservices; then
+            devservices logs
+          fi
 
-  backend-test-snuba-contains-metrics-tag-values:
+      - name: Collect test data
+        uses: ./.github/actions/collect-test-data
+        if: ${{ !cancelled() }}
+        with:
+          artifact_path: .artifacts/pytest.json
+          gcs_bucket: ${{ secrets.COLLECT_TEST_DATA_GCS_BUCKET }}
+          gcp_project_id: ${{ secrets.COLLECT_TEST_DATA_GCP_PROJECT_ID }}
+          workload_identity_provider: ${{ secrets.SENTRY_GCP_DEV_WORKLOAD_IDENTITY_POOL }}
+          service_account_email: ${{ secrets.COLLECT_TEST_DATA_SERVICE_ACCOUNT_EMAIL }}
+          matrix_instance_number: ${{ steps.setup.outputs.matrix-instance-number }}
+
+      # Upload coverage data even if running the tests step fails since
+      # it reduces large coverage fluctuations
+      - name: Handle artifacts
+        if: ${{ always() }}
+        uses: ./.github/actions/artifacts
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          commit_sha: ${{ github.event.pull_request.head.sha }}
+
+  backend-migration-tests:
     if: needs.files-changed.outputs.backend == 'true'
     needs: files-changed
-    name: backend test (snuba contains metrics tag values)
-    runs-on: ubuntu-20.04
-    timeout-minutes: 20
+    name: backend migration tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
     strategy:
-      # This helps not having to run multiple jobs because one fails, thus, reducing resource usage
-      # and reducing the risk that one of many runs would turn red again (read: intermittent tests)
-      fail-fast: false
       matrix:
-        # XXX: When updating this, make sure you also update MATRIX_INSTANCE_TOTAL.
-        instance: [0]
-        pg-version: ['9.6']
-
-    env:
-      # XXX: MATRIX_INSTANCE_TOTAL must be hardcoded to the length of strategy.matrix.instance.
-      MATRIX_INSTANCE_TOTAL: 1
-      MIGRATIONS_TEST_MIGRATE: 1
+        pg-version: ['14']
 
     steps:
-      - uses: actions/checkout@7884fcad6b5d53d10323aee724dc68d8b9096a2e  # v2
-        with:
-          # Avoid codecov error message related to SHA resolution:
-          # https://github.com/codecov/codecov-bash/blob/7100762afbc822b91806a6574658129fe0d23a7d/codecov#L891
-          fetch-depth: '2'
+      - uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4.1.7
 
       - name: Setup sentry env
         uses: ./.github/actions/setup-sentry
         id: setup
         with:
-          snuba: true
-          # Right now, we run so few bigtable related tests that the
-          # overhead of running bigtable in all backend tests
-          # is way smaller than the time it would take to run in its own job.
-          bigtable: true
-          pg-version: ${{ matrix.pg-version }}
+          mode: default
 
-      - name: Run backend test (${{ steps.setup.outputs.matrix-instance-number }} of ${{ steps.setup.outputs.matrix-instance-total }})
+      - name: run tests
         run: |
-          export PYTEST_ADDOPTS="-m 'sentry_metrics and not broken_under_tags_values_as_strings'"
-          export SENTRY_METRICS_SIMULATE_TAG_VALUES_IN_CLICKHOUSE=1
-          make test-python-ci
-          make test-snuba
+          PYTEST_ADDOPTS="$PYTEST_ADDOPTS -m migrations --migrations --reruns 0" make test-python-ci
 
+      - name: Inspect failure
+        if: failure()
+        run: |
+          if command -v devservices; then
+            devservices logs
+          fi
+
+      # Upload coverage data even if running the tests step fails since
+      # it reduces large coverage fluctuations
       - name: Handle artifacts
+        if: ${{ always() }}
         uses: ./.github/actions/artifacts
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          commit_sha: ${{ github.event.pull_request.head.sha }}
 
   cli:
     if: needs.files-changed.outputs.backend == 'true'
     needs: files-changed
     name: cli test
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     strategy:
       matrix:
-        pg-version: ['9.6']
+        pg-version: ['14']
     steps:
-      - uses: actions/checkout@7884fcad6b5d53d10323aee724dc68d8b9096a2e  # v2
+      - uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4.1.7
 
       - name: Setup sentry env
         uses: ./.github/actions/setup-sentry
         id: setup
         with:
-          pg-version: ${{ matrix.pg-version }}
+          mode: migrations
 
       - name: Run test
         run: |
           make test-cli
 
+      - name: Inspect failure
+        if: failure()
+        run: |
+          if command -v devservices; then
+            devservices logs
+          fi
+
+      # Upload coverage data even if running the tests step fails since
+      # it reduces large coverage fluctuations
       - name: Handle artifacts
+        if: ${{ always() }}
         uses: ./.github/actions/artifacts
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          commit_sha: ${{ github.event.pull_request.head.sha }}
 
   requirements:
     if: needs.files-changed.outputs.backend_dependencies == 'true'
     needs: files-changed
     name: requirements check
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 3
     steps:
-      - uses: getsentry/action-github-app-token@38a3ce582e170ddfe8789f509597c6944f2292a9  # v1
+      - uses: getsentry/action-github-app-token@d4b5da6c5e37703f8c3b3e43abb5705b46e159cc # v3.0.0
         id: token
         continue-on-error: true
         with:
-          app_id: ${{ secrets.SENTRY_INTERNAL_APP_ID }}
+          app_id: ${{ vars.SENTRY_INTERNAL_APP_ID }}
           private_key: ${{ secrets.SENTRY_INTERNAL_APP_PRIVATE_KEY }}
-      - uses: actions/checkout@2541b1294d2704b0964813337f33b291d3f8596b  # v3
-      - uses: actions/setup-python@13ae5bb136fac2878aff31522b9efb785519f984  # v4.3.0
+      - uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4.1.7
+      - uses: getsentry/action-setup-venv@a133e6fd5fa6abd3f590a1c106abda344f5df69f # v2.1.0
         with:
-          python-version: 3.8.13
+          python-version: 3.13.1
+          cache-dependency-path: requirements-dev-frozen.txt
+          install-cmd: pip install -q --constraint requirements-dev-frozen.txt pip-tools
       - name: check requirements
         run: |
-          python -m pip install -q "$(grep '^pip-tools==' requirements-dev-frozen.txt)"
-          python -S -m tools.freeze_requirements sentry
+          python -S -m tools.freeze_requirements
           if ! git diff --exit-code; then
             echo $'\n\nrun `make freeze-requirements` locally to update requirements'
             exit 1
           fi
       - name: apply any requirements changes
         if: steps.token.outcome == 'success' && github.ref != 'refs/heads/master' && always()
-        uses: getsentry/action-github-commit@1761f891f036c3efc813b2ba963b121120c1587a  # main
+        uses: getsentry/action-github-commit@31f6706ca1a7b9ad6d22c1b07bf3a92eabb05632 # v2.0.0
         with:
           github-token: ${{ steps.token.outputs.token }}
           message: ':snowflake: re-freeze requirements'
-
-  lint:
-    if: needs.files-changed.outputs.backend == 'true'
-    needs: files-changed
-    name: backend lint
-    runs-on: ubuntu-20.04
-    timeout-minutes: 10
-    steps:
-      - uses: getsentry/action-github-app-token@38a3ce582e170ddfe8789f509597c6944f2292a9  # v1
-        id: token
-        continue-on-error: true
-        with:
-          app_id: ${{ secrets.SENTRY_INTERNAL_APP_ID }}
-          private_key: ${{ secrets.SENTRY_INTERNAL_APP_PRIVATE_KEY }}
-
-      - uses: actions/checkout@7884fcad6b5d53d10323aee724dc68d8b9096a2e  # v2
-
-      - uses: getsentry/paths-filter@66f7f1844185eb7fb6738ea4ea59d74bb99199e5  # v2
-        id: files
-        with:
-          # Enable listing of files matching each filter.
-          # Paths to files will be available in `${FILTER_NAME}_files` output variable.
-          # Paths will be escaped and space-delimited.
-          # Output is usable as command line argument list in linux shell
-          list-files: shell
-
-          # It doesn't make sense to lint deleted files.
-          # Therefore we specify we are only interested in added or modified files.
-          filters: |
-            all:
-              - added|modified: '**/*.py'
-              - added|modified: 'requirements-*.txt'
-
-      - uses: actions/setup-python@13ae5bb136fac2878aff31522b9efb785519f984  # v4.3.0
-        with:
-          python-version: 3.8.13
-          cache: pip
-          cache-dependency-path: requirements-dev-only-frozen.txt
-
-      - uses: actions/cache@56046cbc4743437ac40542086317b1561d7705f8  # v3.0.8
-        with:
-          path: ~/.cache/pre-commit
-          key: cache-epoch-1|${{ env.pythonLocation }}|${{ hashFiles('.pre-commit-config.yaml') }}
-
-      - name: Setup pre-commit
-        # We don't use make setup-git because we're only interested in installing
-        # requirements-dev-only-frozen.txt as a fast path.
-        # We don't need pre-commit install --install-hooks since we're just interested
-        # in running the hooks.
-        run: |
-          pip install -r requirements-dev-only-frozen.txt
-          pre-commit install-hooks
-
-      - name: Run pre-commit on changed files
-        run: |
-          # Run pre-commit to lint and format check files that were changed (but not deleted) compared to master.
-          # XXX: there is a very small chance that it'll expand to exceed Linux's limits
-          #      `getconf ARG_MAX` - max # bytes of args + environ for exec()
-          pre-commit run --files ${{ steps.files.outputs.all_files }}
-
-      - name: Apply any pre-commit fixed files
-        if: steps.token.outcome == 'success' && github.ref != 'refs/heads/master' && always()
-        uses: getsentry/action-github-commit@1761f891f036c3efc813b2ba963b121120c1587a  # main
-        with:
-          github-token: ${{ steps.token.outputs.token }}
 
   migration:
     if: needs.files-changed.outputs.migration_lockfile == 'true'
     needs: files-changed
     name: check migration
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-24.04
     strategy:
       matrix:
-        pg-version: ['9.6']
+        pg-version: ['14']
 
     steps:
       - name: Checkout sentry
-        uses: actions/checkout@7884fcad6b5d53d10323aee724dc68d8b9096a2e  # v2
+        uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4.1.7
 
       - name: Setup sentry env
         uses: ./.github/actions/setup-sentry
         id: setup
         with:
-          pg-version: ${{ matrix.pg-version }}
+          mode: migrations
 
       - name: Migration & lockfile checks
         env:
@@ -303,208 +273,147 @@ jobs:
         run: |
           ./.github/workflows/scripts/migration-check.sh
 
-  plugins:
-    if: needs.files-changed.outputs.plugins == 'true'
-    needs: files-changed
-    name: plugins test
-    runs-on: ubuntu-20.04
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@7884fcad6b5d53d10323aee724dc68d8b9096a2e  # v2
-
-      - name: Setup sentry env
-        uses: ./.github/actions/setup-sentry
-        id: setup
-        with:
-          snuba: true
-
-      - name: Run test
+      - name: Inspect failure
+        if: failure()
         run: |
-          make test-plugins
+          if command -v devservices; then
+            devservices logs
+          fi
 
-  region-to-control:
+  monolith-dbs:
     if: needs.files-changed.outputs.backend == 'true'
     needs: files-changed
-    name: region-to-control test
-    runs-on: ubuntu-20.04
+    name: monolith-dbs test
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
+    permissions:
+      contents: read
+      id-token: write
     steps:
-      - uses: actions/checkout@7884fcad6b5d53d10323aee724dc68d8b9096a2e  # v2
-        with:
-          # Avoid codecov error message related to SHA resolution:
-          # https://github.com/codecov/codecov-bash/blob/7100762afbc822b91806a6574658129fe0d23a7d/codecov#L891
-          fetch-depth: '2'
+      - uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4.1.7
 
       - name: Setup sentry env
         uses: ./.github/actions/setup-sentry
         id: setup
         with:
-          kafka: true
+          mode: migrations
 
       - name: Run test
         run: |
-          make test-region-to-control-integration
+          make test-monolith-dbs
 
+      - name: Inspect failure
+        if: failure()
+        run: |
+          if command -v devservices; then
+            devservices logs
+          fi
+
+      - name: Collect test data
+        uses: ./.github/actions/collect-test-data
+        if: ${{ !cancelled() }}
+        with:
+          artifact_path: .artifacts/pytest.monolith-dbs.json
+          gcs_bucket: ${{ secrets.COLLECT_TEST_DATA_GCS_BUCKET }}
+          gcp_project_id: ${{ secrets.COLLECT_TEST_DATA_GCP_PROJECT_ID }}
+          workload_identity_provider: ${{ secrets.SENTRY_GCP_DEV_WORKLOAD_IDENTITY_POOL }}
+          service_account_email: ${{ secrets.COLLECT_TEST_DATA_SERVICE_ACCOUNT_EMAIL }}
+
+      # Upload coverage data even if running the tests step fails since
+      # it reduces large coverage fluctuations
       - name: Handle artifacts
+        if: ${{ always() }}
         uses: ./.github/actions/artifacts
-
-  relay:
-    if: needs.files-changed.outputs.backend == 'true'
-    needs: files-changed
-    name: relay test
-    runs-on: ubuntu-20.04
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@7884fcad6b5d53d10323aee724dc68d8b9096a2e  # v2
         with:
-          # Avoid codecov error message related to SHA resolution:
-          # https://github.com/codecov/codecov-bash/blob/7100762afbc822b91806a6574658129fe0d23a7d/codecov#L891
-          fetch-depth: '2'
-
-      - name: Setup sentry env
-        uses: ./.github/actions/setup-sentry
-        id: setup
-        with:
-          snuba: true
-          kafka: true
-
-      - name: Pull relay image
-        run: |
-          # pull relay we'll run and kill it for each test
-          docker pull us.gcr.io/sentryio/relay:nightly
-          docker ps -a
-
-      - name: Run test
-        run: |
-          make test-relay-integration
-
-      - name: Handle artifacts
-        uses: ./.github/actions/artifacts
-
-  snuba:
-    if: needs.files-changed.outputs.backend == 'true'
-    needs: files-changed
-    name: snuba test
-    runs-on: ubuntu-20.04
-    timeout-minutes: 30
-    strategy:
-      # This helps not having to run multiple jobs because one fails, thus, reducing resource usage
-      # and reducing the risk that one of many runs would turn red again (read: intermittent tests)
-      fail-fast: false
-      matrix:
-        # XXX: When updating this, make sure you also update MATRIX_INSTANCE_TOTAL.
-        instance: [0, 1]
-    env:
-      # XXX: MATRIX_INSTANCE_TOTAL must be hardcoded to the length of strategy.matrix.instance.
-      MATRIX_INSTANCE_TOTAL: 2
-      MIGRATIONS_TEST_MIGRATE: 1
-
-    steps:
-      - uses: actions/checkout@7884fcad6b5d53d10323aee724dc68d8b9096a2e  # v2
-        with:
-          # Avoid codecov error message related to SHA resolution:
-          # https://github.com/codecov/codecov-bash/blob/7100762afbc822b91806a6574658129fe0d23a7d/codecov#L891
-          fetch-depth: '2'
-
-      - name: Setup sentry env
-        uses: ./.github/actions/setup-sentry
-        id: setup
-        with:
-          snuba: true
-          kafka: true
-
-      - name: Run snuba test (${{ steps.setup.outputs.matrix-instance-number }} of ${{ steps.setup.outputs.matrix-instance-total }})
-        run: |
-          make test-snuba
-
-      - name: Handle artifacts
-        uses: ./.github/actions/artifacts
-
-  symbolicator:
-    if: needs.files-changed.outputs.backend == 'true'
-    needs: files-changed
-    name: symbolicator test
-    runs-on: ubuntu-20.04
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@7884fcad6b5d53d10323aee724dc68d8b9096a2e  # v2
-        with:
-          # Avoid codecov error message related to SHA resolution:
-          # https://github.com/codecov/codecov-bash/blob/7100762afbc822b91806a6574658129fe0d23a7d/codecov#L891
-          fetch-depth: '2'
-
-      - name: Setup sentry env
-        uses: ./.github/actions/setup-sentry
-        id: setup
-        with:
-          snuba: true
-          kafka: true
-
-      - name: Start symbolicator
-        run: |
-          echo $PWD
-          docker run \
-            -d \
-            -v $PWD/config/symbolicator/:/etc/symbolicator \
-            --network host \
-            --name symbolicator \
-            us.gcr.io/sentryio/symbolicator:nightly \
-            run -c /etc/symbolicator/config.yml
-          docker ps -a
-
-      - name: Run test
-        run: |
-          make test-symbolicator
-
-      - name: Handle artifacts
-        uses: ./.github/actions/artifacts
+          token: ${{ secrets.CODECOV_TOKEN }}
+          commit_sha: ${{ github.event.pull_request.head.sha }}
 
   typing:
     if: needs.files-changed.outputs.backend == 'true'
     needs: files-changed
     name: backend typing
-    runs-on: ubuntu-20.04
-    timeout-minutes: 12
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
     steps:
-      - uses: actions/checkout@7884fcad6b5d53d10323aee724dc68d8b9096a2e  # v2
+      - uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4.1.7
 
-      - name: Setup Python
-        uses: actions/setup-python@13ae5bb136fac2878aff31522b9efb785519f984  # v4.3.0
+      - uses: getsentry/action-setup-venv@a133e6fd5fa6abd3f590a1c106abda344f5df69f # v2.1.0
         with:
-          python-version: 3.8.13
-          cache: pip
+          python-version: 3.13.1
           cache-dependency-path: requirements-dev-frozen.txt
+          install-cmd: pip install -r requirements-dev-frozen.txt
 
-      # We don't call setup-sentry, because we don't need devservices.
-      - name: Setup backend typing
-        run: pip install -r requirements-dev-frozen.txt
+      - name: setup sentry (lite)
+        run: |
+          python3 -m tools.fast_editable --path .
+          sentry init
 
-      - name: Run backend typing (${{ steps.setup.outputs.matrix-instance-number }} of ${{ strategy.job-total }})
-        run: make backend-typing
+      - run: PYTHONWARNINGS=error::RuntimeWarning mypy
+        id: run
 
-  # This check runs once all dependant jobs have passed
+      - uses: getsentry/action-github-app-token@d4b5da6c5e37703f8c3b3e43abb5705b46e159cc # v3.0.0
+        id: token
+        continue-on-error: true
+        with:
+          app_id: ${{ vars.SENTRY_INTERNAL_APP_ID }}
+          private_key: ${{ secrets.SENTRY_INTERNAL_APP_PRIVATE_KEY }}
+
+      # only if `mypy` succeeds should we try and trim the blocklist
+      - run: python3 -m tools.mypy_helpers.make_module_ignores
+        id: regen-blocklist
+
+      - run: git diff --exit-code
+
+      - run: |
+          # mypy does not have granular codes so don't allow specific messages to regress
+          set -euo pipefail
+          ! grep "'Settings' object has no attribute" .artifacts/mypy-all
+          ! grep 'Argument .* of "dispatch" is incompatible with' .artifacts/mypy-all
+          ! grep 'Cannot override class variable' .artifacts/mypy-all
+          ! grep 'Exception type must be derived from BaseException' .artifacts/mypy-all
+          ! grep 'Incompatible default for argument' .artifacts/mypy-all
+          ! grep 'Incompatible return value type (got "HttpResponseBase"' .artifacts/mypy-all
+          ! grep 'Incompatible types in "yield"' .artifacts/mypy-all
+          ! grep 'Module "sentry.*has no attribute' .artifacts/mypy-all
+          ! grep 'No return value expected' .artifacts/mypy-all
+          ! grep 'Return value expected' .artifacts/mypy-all
+          ! grep 'Unpacking a string is disallowed' .artifacts/mypy-all
+          ! grep 'base class .* defined the type as.*Permission' .artifacts/mypy-all
+          ! grep 'does not explicitly export attribute' .artifacts/mypy-all
+          ! grep 'gets multiple values for' .artifacts/mypy-all
+
+      - name: apply blocklist changes
+        if: |
+          steps.token.outcome == 'success' &&
+          steps.run.outcome == 'success' &&
+          steps.regen-blocklist.outcome == 'success' &&
+          github.ref != 'refs/heads/master' &&
+          always()
+        uses: getsentry/action-github-commit@31f6706ca1a7b9ad6d22c1b07bf3a92eabb05632 # v2.0.0
+        with:
+          github-token: ${{ steps.token.outputs.token }}
+          message: ':knife: regenerate mypy module blocklist'
+
+  # This check runs once all dependent jobs have passed
   # It symbolizes that all required Backend checks have succesfully passed (Or skipped)
-  # This check is the only required Github check
+  # This step is the only required backend check
   backend-required-check:
     needs:
       [
         api-docs,
         backend-test,
+        backend-migration-tests,
         cli,
-        lint,
+        files-changed,
         requirements,
         migration,
-        plugins,
-        relay,
-        region-to-control,
-        snuba,
-        symbolicator,
+        monolith-dbs,
         typing,
       ]
     name: Backend
     # This is necessary since a failed/skipped dependent job would cause this job to be skipped
     if: always()
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-24.04
     steps:
       # If any jobs we depend on fail, we will fail since this is a required check
       # NOTE: A timeout is considered a failure

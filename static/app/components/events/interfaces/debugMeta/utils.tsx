@@ -1,7 +1,8 @@
 import {Fragment} from 'react';
 
 import {formatAddress, getImageRange} from 'sentry/components/events/interfaces/utils';
-import {Image, ImageStatus} from 'sentry/types/debugImage';
+import type {Image} from 'sentry/types/debugImage';
+import {ImageStatus} from 'sentry/types/debugImage';
 import {defined} from 'sentry/utils';
 
 const IMAGE_ADDR_LEN = 12;
@@ -43,10 +44,7 @@ export function normalizeId(id?: string) {
   return id?.trim().toLowerCase().replace(/[- ]/g, '') ?? '';
 }
 
-export function shouldSkipSection(
-  filteredImages: Array<Image>,
-  images: Array<Image | null>
-) {
+export function shouldSkipSection(filteredImages: Image[], images: Array<Image | null>) {
   if (filteredImages.length) {
     return false;
   }
@@ -57,7 +55,7 @@ export function shouldSkipSection(
     return true;
   }
 
-  if ((definedImages as Array<Image>).every(image => image.type === 'proguard')) {
+  if (definedImages.every(image => image.type === 'proguard')) {
     return true;
   }
 

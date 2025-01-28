@@ -1,259 +1,286 @@
-import {useCallback, useEffect, useMemo, useState} from 'react';
-import * as Sentry from '@sentry/react';
+import {useCallback, useMemo, useRef} from 'react';
 
-import parseLinkHeader, {ParsedHeader} from 'sentry/utils/parseLinkHeader';
-import flattenListOfObjects from 'sentry/utils/replays/flattenListOfObjects';
+import {ALL_ACCESS_PROJECTS} from 'sentry/constants/pageFilters';
+import useFetchParallelPages from 'sentry/utils/api/useFetchParallelPages';
+import useFetchSequentialPages from 'sentry/utils/api/useFetchSequentialPages';
+import {DiscoverDatasets} from 'sentry/utils/discover/types';
+import parseLinkHeader from 'sentry/utils/parseLinkHeader';
+import type {ApiQueryKey} from 'sentry/utils/queryClient';
+import {useApiQuery, useQueryClient} from 'sentry/utils/queryClient';
+import {useReplayProjectSlug} from 'sentry/utils/replays/hooks/useReplayProjectSlug';
 import {mapResponseToReplayRecord} from 'sentry/utils/replays/replayDataUtils';
-import ReplayReader from 'sentry/utils/replays/replayReader';
-import RequestError from 'sentry/utils/requestError/requestError';
-import useApi from 'sentry/utils/useApi';
-import type {
-  RecordingEvent,
-  ReplayCrumb,
-  ReplayError,
-  ReplayRecord,
-  ReplaySpan,
-} from 'sentry/views/replays/types';
-
-type State = {
-  breadcrumbs: undefined | ReplayCrumb[];
-
-  /**
-   * List of errors that occurred during replay
-   */
-  errors: undefined | ReplayError[];
-
-  /**
-   * If any request returned an error then nothing is being returned
-   */
-  fetchError: undefined | RequestError;
-
-  /**
-   * If a fetch is underway for the requested root reply.
-   * This includes fetched all the sub-resources like attachments and `sentry-replay-event`
-   */
-  fetching: boolean;
-
-  /**
-   * The root replay event
-   */
-  replayRecord: undefined | ReplayRecord;
-
-  /**
-   * The flattened list of rrweb events. These are stored as multiple attachments on the root replay object: the `event` prop.
-   */
-  rrwebEvents: undefined | RecordingEvent[];
-
-  spans: undefined | ReplaySpan[];
-};
+import type RequestError from 'sentry/utils/requestError/requestError';
+import type {ReplayError, ReplayRecord} from 'sentry/views/replays/types';
 
 type Options = {
   /**
    * The organization slug
    */
-
   orgSlug: string;
+
   /**
-   * The projectSlug and replayId concatenated together
+   * The replayId
    */
-  replaySlug: string;
+  replayId: string | undefined;
+
+  /**
+   * Default: 50
+   * You can override this for testing
+   */
+  errorsPerPage?: number;
+
+  /**
+   * Default: 100
+   * You can override this for testing
+   */
+  segmentsPerPage?: number;
 };
 
-// Errors if it is an interface
-// See https://github.com/microsoft/TypeScript/issues/15300
-type ReplayAttachment = {
-  breadcrumbs: ReplayCrumb[];
-  recording: RecordingEvent[];
-  replaySpans: ReplaySpan[];
-};
-
-interface Result extends Pick<State, 'fetchError' | 'fetching'> {
+interface Result {
+  attachments: unknown[];
+  errors: ReplayError[];
+  fetchError: undefined | RequestError;
+  fetching: boolean;
   onRetry: () => void;
-  replay: ReplayReader | null;
+  projectSlug: string | null;
   replayRecord: ReplayRecord | undefined;
 }
-
-export function mapRRWebAttachments(unsortedReplayAttachments): ReplayAttachment {
-  const replayAttachments: ReplayAttachment = {
-    breadcrumbs: [],
-    replaySpans: [],
-    recording: [],
-  };
-
-  unsortedReplayAttachments.forEach(attachment => {
-    if (attachment.data?.tag === 'performanceSpan') {
-      replayAttachments.replaySpans.push(attachment.data.payload);
-    } else if (attachment?.data?.tag === 'breadcrumb') {
-      replayAttachments.breadcrumbs.push(attachment.data.payload);
-    } else {
-      replayAttachments.recording.push(attachment);
-    }
-  });
-
-  return replayAttachments;
-}
-
-const INITIAL_STATE: State = Object.freeze({
-  breadcrumbs: undefined,
-  errors: undefined,
-  fetchError: undefined,
-  fetching: true,
-  replayRecord: undefined,
-  rrwebEvents: undefined,
-  spans: undefined,
-});
 
 /**
  * A react hook to load core replay data over the network.
  *
  * Core replay data includes:
  * 1. The root replay EventTransaction object
- *    - This includes `startTimestamp` and `tags` data
- * 2. Breadcrumb and Span data from all the related Event objects
- *    - Data is merged for consumption
- * 3. RRWeb payloads for the replayer video stream
- *    - TODO(replay): incrementally load the stream to speedup pageload
+ *    - This includes `startTimestamp`, and `tags`
+ * 2. RRWeb, Breadcrumb, and Span attachment data
+ *    - We make an API call to get a list of segments, each segment contains a
+ *      list of attachments
+ *    - There may be a few large segments, or many small segments. It depends!
+ *      ie: If the replay has many events/errors then there will be many small segments,
+ *      or if the page changes rapidly across each pageload, then there will be
+ *      larger segments, but potentially fewer of them.
+ * 3. Related Event data
+ *    - Event details are not part of the attachments payload, so we have to
+ *      request them separately
  *
  * This function should stay focused on loading data over the network.
  * Front-end processing, filtering and re-mixing of the different data streams
  * must be delegated to the `ReplayReader` class.
  *
- * @param {orgSlug, replaySlug} Where to find the root replay event
+ * @param {orgSlug, replayId} Where to find the root replay event
  * @returns An object representing a unified result of the network requests. Either a single `ReplayReader` data object or fetch errors.
  */
-function useReplayData({replaySlug, orgSlug}: Options): Result {
-  const [projectSlug, replayId] = replaySlug.split(':');
+function useReplayData({
+  replayId,
+  orgSlug,
+  errorsPerPage = 50,
+  segmentsPerPage = 100,
+}: Options): Result {
+  const hasFetchedAttachments = useRef(false);
+  const queryClient = useQueryClient();
 
-  const api = useApi();
-  const [state, setState] = useState<State>(INITIAL_STATE);
+  // Fetch every field of the replay. The TS type definition lists every field
+  // that's available. It's easier to ask for them all and not have to deal with
+  // partial types or nullable fields.
+  // We're overfetching for sure.
+  const {
+    data: replayData,
+    isFetching: isFetchingReplay,
+    error: fetchReplayError,
+  } = useApiQuery<{data: unknown}>([`/organizations/${orgSlug}/replays/${replayId}/`], {
+    staleTime: Infinity,
+    retry: false,
+    enabled: Boolean(replayId),
+  });
+  const replayRecord = useMemo(
+    () => (replayData?.data ? mapResponseToReplayRecord(replayData.data) : undefined),
+    [replayData?.data]
+  );
 
-  // Fetch every field of the replay. We're overfetching, not every field is needed
-  const fetchReplay = useCallback(async () => {
-    const response = await api.requestPromise(
-      `/projects/${orgSlug}/${projectSlug}/replays/${replayId}/`
-    );
-    return response.data;
-  }, [api, orgSlug, projectSlug, replayId]);
+  const projectSlug = useReplayProjectSlug({replayRecord});
 
-  const fetchAllRRwebEvents = useCallback(async () => {
-    const rootUrl = `/projects/${orgSlug}/${projectSlug}/replays/${replayId}/recording-segments/?download`;
-    let next: ParsedHeader = {
-      href: rootUrl,
-      results: true,
-      cursor: '',
-    };
+  const getAttachmentsQueryKey = useCallback(
+    ({cursor, per_page}: any): ApiQueryKey => {
+      return [
+        `/projects/${orgSlug}/${projectSlug}/replays/${replayId}/recording-segments/`,
+        {
+          query: {
+            download: true,
+            per_page,
+            cursor,
+          },
+        },
+      ];
+    },
+    [orgSlug, projectSlug, replayId]
+  );
 
-    const segmentRanges: any = [];
-    // TODO(replay): It would be good to load the first page of results then
-    // start to render the UI while the next N pages continue to get fetched in
-    // the background.
-    while (next.results) {
-      const url = rootUrl + '&cursor=' + next.cursor;
+  const {
+    pages: attachmentPages,
+    isFetching: isFetchingAttachments,
+    error: fetchAttachmentsError,
+  } = useFetchParallelPages({
+    enabled:
+      !fetchReplayError &&
+      Boolean(replayId) &&
+      Boolean(projectSlug) &&
+      Boolean(replayRecord),
+    hits: replayRecord?.count_segments ?? 0,
+    getQueryKey: getAttachmentsQueryKey,
+    perPage: segmentsPerPage,
+  });
 
-      const [data, _textStatus, resp] = await api.requestPromise(url, {
-        includeAllArgs: true,
-      });
-      segmentRanges.push(data);
-      const links = parseLinkHeader(resp?.getResponseHeader('Link') ?? '');
-      next = links.next;
-    }
+  const getErrorsQueryKey = useCallback(
+    ({cursor, per_page}: any): ApiQueryKey => {
+      // Clone the `finished_at` time and bump it up one second because finishedAt
+      // has the `ms` portion truncated, while replays-events-meta operates on
+      // timestamps with `ms` attached. So finishedAt could be at time `12:00:00.000Z`
+      // while the event is saved with `12:00:00.450Z`.
+      const finishedAtClone = new Date(replayRecord?.finished_at ?? '');
+      finishedAtClone.setSeconds(finishedAtClone.getSeconds() + 1);
 
-    const rrwebEvents = segmentRanges
-      .flatMap(segment => segment)
-      .flatMap(attachments => mapRRWebAttachments(attachments));
-
-    return flattenListOfObjects(rrwebEvents);
-  }, [api, orgSlug, projectSlug, replayId]);
-
-  const fetchErrors = useCallback(
-    async (replayRecord: ReplayRecord) => {
-      if (!replayRecord.errorIds.length) {
-        return [];
-      }
-
-      const response = await api.requestPromise(
+      return [
         `/organizations/${orgSlug}/replays-events-meta/`,
         {
           query: {
-            start: replayRecord.startedAt.toISOString(),
-            end: replayRecord.finishedAt.toISOString(),
-            query: `id:[${String(replayRecord.errorIds)}]`,
+            dataset: DiscoverDatasets.DISCOVER,
+            start: replayRecord?.started_at.toISOString(),
+            end: finishedAtClone.toISOString(),
+            project: ALL_ACCESS_PROJECTS,
+            query: `replayId:[${replayRecord?.id}]`,
+            per_page,
+            cursor,
           },
-        }
-      );
-      return response.data;
+        },
+      ];
     },
-    [api, orgSlug]
+    [orgSlug, replayRecord]
   );
 
-  const fetchReplayAndErrors = useCallback(async (): Promise<[ReplayRecord, any]> => {
-    const fetchedRecord = await fetchReplay();
-    const mappedRecord = mapResponseToReplayRecord(fetchedRecord);
-    setState(prev => ({
-      ...prev,
-      replayRecord: mappedRecord,
-    }));
-    const fetchedErrors = await fetchErrors(mappedRecord);
-    return [mappedRecord, fetchedErrors];
-  }, [fetchReplay, fetchErrors]);
+  const getPlatformErrorsQueryKey = useCallback(
+    ({cursor, per_page}: any): ApiQueryKey => {
+      // Clone the `finished_at` time and bump it up one second because finishedAt
+      // has the `ms` portion truncated, while replays-events-meta operates on
+      // timestamps with `ms` attached. So finishedAt could be at time `12:00:00.000Z`
+      // while the event is saved with `12:00:00.450Z`.
+      const finishedAtClone = new Date(replayRecord?.finished_at ?? '');
+      finishedAtClone.setSeconds(finishedAtClone.getSeconds() + 1);
 
-  const loadEvents = useCallback(async () => {
-    setState(INITIAL_STATE);
+      return [
+        `/organizations/${orgSlug}/replays-events-meta/`,
+        {
+          query: {
+            dataset: DiscoverDatasets.ISSUE_PLATFORM,
+            start: replayRecord?.started_at.toISOString(),
+            end: finishedAtClone.toISOString(),
+            project: ALL_ACCESS_PROJECTS,
+            query: `replayId:[${replayRecord?.id}]`,
+            per_page,
+            cursor,
+          },
+        },
+      ];
+    },
+    [orgSlug, replayRecord]
+  );
 
-    try {
-      const [replayAndErrors, attachments] = await Promise.all([
-        fetchReplayAndErrors(),
-        fetchAllRRwebEvents(),
-      ]);
-      const [replayRecord, errors] = replayAndErrors;
+  const {
+    pages: errorPages,
+    isFetching: isFetchingErrors,
+    getLastResponseHeader: lastErrorsResponseHeader,
+  } = useFetchParallelPages<{data: ReplayError[]}>({
+    enabled: !fetchReplayError && Boolean(projectSlug) && Boolean(replayRecord),
+    hits: replayRecord?.count_errors ?? 0,
+    getQueryKey: getErrorsQueryKey,
+    perPage: errorsPerPage,
+  });
 
-      setState(prev => ({
-        ...prev,
-        breadcrumbs: attachments.breadcrumbs,
-        errors,
-        fetchError: undefined,
-        fetching: false,
-        replayRecord,
-        rrwebEvents: attachments.recording,
-        spans: attachments.replaySpans,
-      }));
-    } catch (error) {
-      Sentry.captureException(error);
-      setState({
-        ...INITIAL_STATE,
-        fetchError: error,
-        fetching: false,
-      });
-    }
-  }, [fetchReplayAndErrors, fetchAllRRwebEvents]);
-
-  useEffect(() => {
-    loadEvents();
-  }, [loadEvents]);
-
-  const replay = useMemo(() => {
-    return ReplayReader.factory({
-      breadcrumbs: state.breadcrumbs,
-      errors: state.errors,
-      replayRecord: state.replayRecord,
-      rrwebEvents: state.rrwebEvents,
-      spans: state.spans,
+  const linkHeader = lastErrorsResponseHeader?.('Link') ?? null;
+  const links = parseLinkHeader(linkHeader);
+  const {pages: extraErrorPages, isFetching: isFetchingExtraErrors} =
+    useFetchSequentialPages<{data: ReplayError[]}>({
+      enabled:
+        !fetchReplayError &&
+        !isFetchingErrors &&
+        (!replayRecord?.count_errors || Boolean(links.next?.results)),
+      initialCursor: links.next?.cursor,
+      getQueryKey: getErrorsQueryKey,
+      perPage: errorsPerPage,
     });
-  }, [
-    state.breadcrumbs,
-    state.errors,
-    state.replayRecord,
-    state.rrwebEvents,
-    state.spans,
-  ]);
 
-  return {
-    fetchError: state.fetchError,
-    fetching: state.fetching,
-    onRetry: loadEvents,
-    replay,
-    replayRecord: state.replayRecord,
-  };
+  const {pages: platformErrorPages, isFetching: isFetchingPlatformErrors} =
+    useFetchSequentialPages<{data: ReplayError[]}>({
+      enabled: true,
+      getQueryKey: getPlatformErrorsQueryKey,
+      perPage: errorsPerPage,
+    });
+
+  const clearQueryCache = useCallback(() => {
+    queryClient.invalidateQueries({
+      queryKey: [`/organizations/${orgSlug}/replays/${replayId}/`],
+    });
+    queryClient.invalidateQueries({
+      queryKey: [
+        `/projects/${orgSlug}/${projectSlug}/replays/${replayId}/recording-segments/`,
+      ],
+    });
+    // The next one isn't optimized
+    // This statement will invalidate the cache of fetched error events for all replayIds
+    queryClient.invalidateQueries({
+      queryKey: [`/organizations/${orgSlug}/replays-events-meta/`],
+    });
+  }, [orgSlug, replayId, projectSlug, queryClient]);
+
+  return useMemo(() => {
+    // This hook can enter a state where `fetching` below is false
+    // before it is entirely ready (i.e. it has not fetched
+    // attachemnts yet). This can cause downstream components to
+    // think it is no longer fetching and will display an error
+    // because there are no attachments. The below will require
+    // that we have attempted to fetch an attachment once (or it
+    // errors) before we toggle fetching state to false.
+    hasFetchedAttachments.current =
+      hasFetchedAttachments.current || isFetchingAttachments;
+
+    const fetching =
+      isFetchingReplay ||
+      isFetchingAttachments ||
+      isFetchingErrors ||
+      isFetchingExtraErrors ||
+      isFetchingPlatformErrors ||
+      (!hasFetchedAttachments.current &&
+        !fetchAttachmentsError &&
+        Boolean(replayRecord?.count_segments));
+
+    const allErrors = errorPages
+      .concat(extraErrorPages)
+      .concat(platformErrorPages)
+      .flatMap(page => page.data);
+    return {
+      attachments: attachmentPages.flat(2),
+      errors: allErrors,
+      fetchError: fetchReplayError ?? undefined,
+      fetching,
+      onRetry: clearQueryCache,
+      projectSlug,
+      replayRecord,
+    };
+  }, [
+    attachmentPages,
+    clearQueryCache,
+    errorPages,
+    extraErrorPages,
+    fetchReplayError,
+    fetchAttachmentsError,
+    isFetchingAttachments,
+    isFetchingErrors,
+    isFetchingExtraErrors,
+    isFetchingPlatformErrors,
+    isFetchingReplay,
+    platformErrorPages,
+    projectSlug,
+    replayRecord,
+  ]);
 }
 
 export default useReplayData;

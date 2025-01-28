@@ -1,20 +1,18 @@
+import type {Theme} from '@emotion/react';
 import {css} from '@emotion/react';
 import styled from '@emotion/styled';
 import forOwn from 'lodash/forOwn';
-import isNil from 'lodash/isNil';
-import isObject from 'lodash/isObject';
 
 import {AnnotatedText} from 'sentry/components/events/meta/annotatedText';
 import {Hovercard} from 'sentry/components/hovercard';
 import ExternalLink from 'sentry/components/links/externalLink';
 import Pill from 'sentry/components/pill';
 import Pills from 'sentry/components/pills';
-import {IconInfo, IconOpen} from 'sentry/icons';
+import {IconOpen} from 'sentry/icons';
 import {t} from 'sentry/locale';
-import space from 'sentry/styles/space';
-import {StackTraceMechanism} from 'sentry/types/stacktrace';
-import {isUrl} from 'sentry/utils';
-import {Theme} from 'sentry/utils/theme';
+import {space} from 'sentry/styles/space';
+import type {StackTraceMechanism} from 'sentry/types/stacktrace';
+import {isUrl} from 'sentry/utils/string/isUrl';
 
 type Props = {
   data: StackTraceMechanism;
@@ -22,7 +20,8 @@ type Props = {
 };
 
 export function Mechanism({data: mechanism, meta: mechanismMeta}: Props) {
-  const {type, description, help_link, handled, meta = {}, data = {}} = mechanism;
+  const {type, description, help_link, handled, source, meta = {}, data = {}} = mechanism;
+
   const {errno, signal, mach_exception} = meta;
 
   const linkElement = help_link && isUrl(help_link) && (
@@ -31,26 +30,35 @@ export function Mechanism({data: mechanism, meta: mechanismMeta}: Props) {
     </StyledExternalLink>
   );
 
-  const descriptionElement = description && (
-    <Hovercard
-      header={
-        <span>
-          <Details>{t('Details')}</Details> {linkElement}
-        </span>
-      }
-      body={description}
-    >
-      <StyledIconInfo size="14px" />
-    </Hovercard>
-  );
+  const typeName = type || 'unknown';
 
   const pills = [
-    <Pill key="mechanism" name="mechanism" value={type || 'unknown'}>
-      {descriptionElement || linkElement}
+    <Pill key="mechanism" name="mechanism">
+      {description ? (
+        <Hovercard
+          showUnderline
+          header={
+            <Details>
+              {t('Details')}
+              {linkElement}
+            </Details>
+          }
+          body={description}
+        >
+          {typeName}
+        </Hovercard>
+      ) : linkElement ? (
+        <Name>
+          {typeName}
+          {linkElement}
+        </Name>
+      ) : (
+        typeName
+      )}
     </Pill>,
   ];
 
-  if (!isNil(handled)) {
+  if (handled !== null && handled !== undefined) {
     pills.push(<Pill key="handled" name="handled" value={handled} />);
   }
 
@@ -64,15 +72,20 @@ export function Mechanism({data: mechanism, meta: mechanismMeta}: Props) {
     pills.push(<Pill key="mach" name="mach exception" value={value} />);
   }
 
+  if (source) {
+    pills.push(<Pill key="source" name="source" value={source} />);
+  }
+
   if (signal) {
     const code = signal.code_name || `${t('code')} ${signal.code}`;
     const name = signal.name || signal.number;
-    const value = isNil(signal.code) ? name : `${name} (${code})`;
+    const value =
+      signal.code === null || signal.code === undefined ? name : `${name} (${code})`;
     pills.push(<Pill key="signal" name="signal" value={value} />);
   }
 
   forOwn(data, (value, key) => {
-    if (!isObject(value)) {
+    if (!value || typeof value !== 'object') {
       pills.push(
         <Pill key={`data:${key}`} name={key}>
           {mechanismMeta?.data?.[key]?.[''] && !value ? (
@@ -93,7 +106,7 @@ export function Mechanism({data: mechanism, meta: mechanismMeta}: Props) {
 }
 
 const Wrapper = styled('div')`
-  margin: ${space(2)} 0;
+  margin: ${space(2)} 0 ${space(0.5)} 0;
 `;
 
 const iconStyle = (p: {theme: Theme}) => css`
@@ -109,8 +122,15 @@ const StyledExternalLink = styled(ExternalLink)`
   ${iconStyle};
 `;
 
-const Details = styled('span')`
-  margin-right: ${space(1)};
+const Name = styled('span')`
+  display: grid;
+  grid-template-columns: max-content max-content;
+  gap: ${space(0.5)};
+  align-items: center;
+`;
+
+const Details = styled(Name)`
+  gap: ${space(1)};
 `;
 
 const StyledPills = styled(Pills)`
@@ -120,9 +140,4 @@ const StyledPills = styled(Pills)`
     overflow: hidden;
     text-overflow: ellipsis;
   }
-`;
-
-const StyledIconInfo = styled(IconInfo)`
-  display: flex;
-  ${iconStyle};
 `;

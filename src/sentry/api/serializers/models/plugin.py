@@ -4,13 +4,11 @@ from django.utils.text import slugify
 
 from sentry import features
 from sentry.api.serializers import Serializer
-from sentry.models import ProjectOption
+from sentry.models.options.project_option import ProjectOption
 from sentry.models.project import Project
-from sentry.utils.assets import get_asset_url
-from sentry.utils.http import absolute_uri
 
 # Dict with the plugin_name as the key, and enabling_feature_name as the value
-SHADOW_DEPRECATED_PLUGINS = {
+SHADOW_DEPRECATED_PLUGINS: dict[str, str] = {
     # "exampleslug": "organizations:integrations-ignore-exampleslug-deprecation"
 }
 
@@ -27,7 +25,7 @@ def is_plugin_deprecated(plugin, project: Project) -> bool:
     return is_past_deprecation_date or (
         plugin.slug in SHADOW_DEPRECATED_PLUGINS
         and not features.has(
-            SHADOW_DEPRECATED_PLUGINS.get(plugin.slug), getattr(project, "organization", None)
+            SHADOW_DEPRECATED_PLUGINS[plugin.slug], getattr(project, "organization", None)
         )
     )
 
@@ -36,7 +34,7 @@ class PluginSerializer(Serializer):
     def __init__(self, project=None):
         self.project = project
 
-    def serialize(self, obj, attrs, user):
+    def serialize(self, obj, attrs, user, **kwargs):
         from sentry.api.endpoints.project_releases_token import _get_webhook_url
 
         doc = ""
@@ -52,7 +50,7 @@ class PluginSerializer(Serializer):
                     except NotImplementedError:
                         pass
 
-        contexts = []
+        contexts: list[str] = []
         if hasattr(obj, "get_custom_contexts"):
             contexts.extend(x.type for x in obj.get_custom_contexts() or ())
 
@@ -69,16 +67,11 @@ class PluginSerializer(Serializer):
             "hasConfiguration": obj.has_project_conf(),
             "metadata": obj.get_metadata(),
             "contexts": contexts,
-            "status": obj.get_status(),
-            "assets": [
-                {"url": absolute_uri(get_asset_url(obj.asset_key or obj.slug, asset))}
-                for asset in obj.get_assets()
-            ],
             "doc": doc,
             "firstPartyAlternative": getattr(obj, "alternative", None),
-            "deprecationDate": deprecation_date.strftime("%b %-d, %Y")
-            if deprecation_date
-            else None,
+            "deprecationDate": (
+                deprecation_date.strftime("%b %-d, %Y") if deprecation_date else None
+            ),
             "altIsSentryApp": getattr(obj, "alt_is_sentry_app", None),
         }
         if self.project:
@@ -119,12 +112,22 @@ class PluginWithConfigSerializer(PluginSerializer):
     def __init__(self, project=None):
         self.project = project
 
-    def serialize(self, obj, attrs, user):
+    def get_attrs(self, item_list, user, **kwargs):
+        return {
+            item: {
+                "config": [
+                    serialize_field(self.project, item, c)
+                    for c in item.get_config(
+                        project=self.project, user=user, add_additional_fields=True
+                    )
+                ]
+            }
+            for item in item_list
+        }
+
+    def serialize(self, obj, attrs, user, **kwargs):
         d = super().serialize(obj, attrs, user)
-        d["config"] = [
-            serialize_field(self.project, obj, c)
-            for c in obj.get_config(project=self.project, user=user, add_additial_fields=True)
-        ]
+        d["config"] = attrs.get("config")
         return d
 
 

@@ -1,12 +1,18 @@
+from unittest.mock import patch
 from urllib.parse import parse_qs
 
+import orjson
 import responses
 from django.urls import reverse
 
 from fixtures.gitlab import GitLabTestCase
-from sentry.utils import json
+from sentry.integrations.models.organization_integration import OrganizationIntegration
+from sentry.integrations.types import EventLifecycleOutcome
+from sentry.testutils.asserts import assert_middleware_metrics
+from sentry.testutils.silo import control_silo_test
 
 
+@control_silo_test
 class GitlabSearchTest(GitLabTestCase):
     provider = "gitlab"
 
@@ -15,14 +21,15 @@ class GitlabSearchTest(GitLabTestCase):
         self.url = reverse(
             "sentry-extensions-gitlab-search",
             kwargs={
-                "organization_slug": self.organization.slug,
+                "organization_id_or_slug": self.organization.slug,
                 "integration_id": self.installation.model.id,
             },
         )
 
     # Happy Paths
     @responses.activate
-    def test_finds_external_issue_results(self):
+    @patch("sentry.integrations.utils.metrics.EventLifecycle.record_event")
+    def test_finds_external_issue_results(self, mock_record):
         responses.add(
             responses.GET,
             "https://example.gitlab.com/api/v4/projects/5/issues?scope=all&search=AEIOU",
@@ -40,6 +47,16 @@ class GitlabSearchTest(GitLabTestCase):
             {"value": "5#25", "label": "(#25) AEIOU Error"},
             {"value": "5#45", "label": "(#45) AEIOU Error"},
         ]
+        assert len(mock_record.mock_calls) == 8
+        middleware_calls = mock_record.mock_calls[:3] + mock_record.mock_calls[-1:]
+        assert_middleware_metrics(middleware_calls)
+        product_calls = mock_record.mock_calls[3:-1]
+        start1, start2, halt1, halt2 = product_calls  # calls get, which calls handle_search_issues
+        assert start1.args[0] == EventLifecycleOutcome.STARTED
+        assert start1.args[0] == EventLifecycleOutcome.STARTED
+        assert start2.args[0] == EventLifecycleOutcome.STARTED
+        assert halt1.args[0] == EventLifecycleOutcome.SUCCESS
+        assert halt2.args[0] == EventLifecycleOutcome.SUCCESS
 
     @responses.activate
     def test_finds_external_issue_results_with_iid(self):
@@ -56,7 +73,8 @@ class GitlabSearchTest(GitLabTestCase):
         assert resp.data == [{"value": "5#25", "label": "(#25) AEIOU Error"}]
 
     @responses.activate
-    def test_finds_project_results(self):
+    @patch("sentry.integrations.utils.metrics.EventLifecycle.record_event")
+    def test_finds_project_results(self, mock_record):
         responses.add(
             responses.GET,
             "https://example.gitlab.com/api/v4/groups/1/projects?search=GetSentry&simple=True&include_subgroups=False&page=1&per_page=100&order_by=last_activity_at",
@@ -80,6 +98,18 @@ class GitlabSearchTest(GitLabTestCase):
             {"value": "1", "label": "GetSentry / Sentry"},
             {"value": "2", "label": "GetSentry2 / Sentry2"},
         ]
+        assert len(mock_record.mock_calls) == 8
+        middleware_calls = mock_record.mock_calls[:3] + mock_record.mock_calls[-1:]
+        assert_middleware_metrics(middleware_calls)
+        product_calls = mock_record.mock_calls[3:-1]
+        start1, start2, halt1, halt2 = (
+            product_calls  # calls get, which calls handle_search_repositories
+        )
+        assert start1.args[0] == EventLifecycleOutcome.STARTED
+        assert start1.args[0] == EventLifecycleOutcome.STARTED
+        assert start2.args[0] == EventLifecycleOutcome.STARTED
+        assert halt1.args[0] == EventLifecycleOutcome.SUCCESS
+        assert halt2.args[0] == EventLifecycleOutcome.SUCCESS
 
     @responses.activate
     def test_finds_project_results_with_pagination(self):
@@ -101,7 +131,7 @@ class GitlabSearchTest(GitLabTestCase):
                 projects = [project_a, project_b] * 10
             else:
                 projects = [project_a, project_b] * 50
-            return (200, {}, json.dumps(projects))
+            return 200, {}, orjson.dumps(projects).decode()
 
         responses.add_callback(
             responses.GET,
@@ -189,7 +219,10 @@ class GitlabSearchTest(GitLabTestCase):
     def test_missing_integration(self):
         url = reverse(
             "sentry-extensions-gitlab-search",
-            kwargs={"organization_slug": self.organization.slug, "integration_id": "1234567890"},
+            kwargs={
+                "organization_id_or_slug": self.organization.slug,
+                "integration_id": "1234567890",
+            },
         )
         resp = self.client.get(url, data={"field": "project", "query": "GetSentry"})
 
@@ -197,21 +230,50 @@ class GitlabSearchTest(GitLabTestCase):
 
     def test_missing_installation(self):
         # remove organization integration aka "uninstalling" installation
-        self.installation.org_integration.delete()
+        assert self.installation.org_integration is not None
+        org_integration = OrganizationIntegration.objects.get(
+            id=self.installation.org_integration.id
+        )
+        org_integration.delete()
         resp = self.client.get(self.url, data={"field": "project", "query": "GetSentry"})
 
         assert resp.status_code == 404
 
     # Distributed System Issues
     @responses.activate
-    def test_search_issues_request_fails(self):
+    @patch("sentry.integrations.utils.metrics.EventLifecycle.record_event")
+    def test_search_issues_request_fails(self, mock_record):
         responses.add(responses.GET, "https://example.gitlab.com/api/v4/issues", status=503)
         resp = self.client.get(
             self.url, data={"field": "externalIssue", "query": "GetSentry", "project": "5"}
         )
         assert resp.status_code == 400
+        assert len(mock_record.mock_calls) == 8
+        middleware_calls = mock_record.mock_calls[:3] + mock_record.mock_calls[-1:]
+        assert_middleware_metrics(middleware_calls)
+        product_calls = mock_record.mock_calls[3:-1]
+        start1, start2, halt1, halt2 = product_calls
+        assert start1.args[0] == EventLifecycleOutcome.STARTED
+        assert start2.args[0] == EventLifecycleOutcome.STARTED
+        assert halt1.args[0] == EventLifecycleOutcome.FAILURE
+        # NOTE: handle_search_issues returns without raising an API error, so for the
+        # purposes of logging the GET request completes successfully
+        assert halt2.args[0] == EventLifecycleOutcome.SUCCESS
 
-    def test_projects_request_fails(self):
+    @responses.activate
+    @patch("sentry.integrations.utils.metrics.EventLifecycle.record_event")
+    def test_projects_request_fails(self, mock_record):
         responses.add(responses.GET, "https://example.gitlab.com/api/v4/projects", status=503)
         resp = self.client.get(self.url, data={"field": "project", "query": "GetSentry"})
         assert resp.status_code == 400
+        assert len(mock_record.mock_calls) == 8
+        middleware_calls = mock_record.mock_calls[:3] + mock_record.mock_calls[-1:]
+        assert_middleware_metrics(middleware_calls)
+        product_calls = mock_record.mock_calls[3:-1]
+        start1, start2, halt1, halt2 = product_calls
+        assert start1.args[0] == EventLifecycleOutcome.STARTED
+        assert start2.args[0] == EventLifecycleOutcome.STARTED
+        assert halt1.args[0] == EventLifecycleOutcome.FAILURE
+        # NOTE: handle_search_issues returns without raising an API error, so for the
+        # purposes of logging the GET request completes successfully
+        assert halt2.args[0] == EventLifecycleOutcome.SUCCESS

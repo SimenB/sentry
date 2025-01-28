@@ -17,7 +17,7 @@ type Props = {
   size?: 'sm' | 'lg';
 };
 
-const Switch = ({
+function Switch({
   forwardedRef,
   size = 'sm',
   isActive,
@@ -29,31 +29,33 @@ const Switch = ({
   name,
   className,
   ...props
-}: Props) => (
-  <SwitchButton
-    ref={forwardedRef}
-    id={id}
-    name={name}
-    type="button"
-    className={className}
-    onClick={isDisabled ? undefined : toggle}
-    role="checkbox"
-    aria-checked={isActive}
-    isLoading={isLoading}
-    disabled={isDisabled}
-    isActive={isActive}
-    size={size}
-    data-test-id="switch"
-    {...props}
-  >
-    <Toggle
-      isDisabled={isDisabled}
+}: Props) {
+  return (
+    <SwitchButton
+      ref={forwardedRef}
+      id={id}
+      name={name}
+      type="button"
+      className={className}
+      onClick={isDisabled ? undefined : toggle}
+      role="checkbox"
+      aria-checked={isActive}
+      isLoading={isLoading}
+      disabled={isDisabled}
       isActive={isActive}
-      forceActiveColor={forceActiveColor}
       size={size}
-    />
-  </SwitchButton>
-);
+      data-test-id="switch"
+      {...props}
+    >
+      <Toggle
+        isDisabled={isDisabled}
+        isActive={isActive}
+        forceActiveColor={forceActiveColor}
+        size={size}
+      />
+    </SwitchButton>
+  );
+}
 
 type StyleProps = Partial<Props>;
 
@@ -69,18 +71,20 @@ const SwitchButton = styled('button')<StyleProps>`
   padding: 0;
   border: 1px solid ${p => p.theme.border};
   position: relative;
-  box-shadow: inset ${p => p.theme.dropShadowLight};
+  box-shadow: inset ${p => p.theme.dropShadowMedium};
   height: ${getSize}px;
   width: ${p => getSize(p) * 1.875}px;
   border-radius: ${getSize}px;
-  transition: border 0.1s, box-shadow 0.1s;
+  transition:
+    border 0.1s,
+    box-shadow 0.1s;
 
   &[disabled] {
     cursor: not-allowed;
   }
 
   &:focus,
-  &.focus-visible {
+  &:focus-visible {
     outline: none;
     border-color: ${p => p.theme.focusBorder};
     box-shadow: ${p => p.theme.focusBorder} 0 0 0 1px;

@@ -1,34 +1,53 @@
+import logging
+
 from django.conf import settings
-from django.db import IntegrityError, transaction
+from django.db import IntegrityError
 from django.db.models import Count, Q, Sum
+from drf_spectacular.utils import extend_schema
 from rest_framework import serializers, status
 from rest_framework.request import Request
 from rest_framework.response import Response
 
 from sentry import analytics, audit_log, features, options
 from sentry import ratelimits as ratelimiter
-from sentry import roles
+from sentry.api.api_publish_status import ApiPublishStatus
 from sentry.api.base import Endpoint, region_silo_endpoint
 from sentry.api.bases.organization import OrganizationPermission
 from sentry.api.paginator import DateTimePaginator, OffsetPaginator
 from sentry.api.serializers import serialize
-from sentry.api.serializers.models.organization import BaseOrganizationSerializer
+from sentry.api.serializers.models.organization import (
+    BaseOrganizationSerializer,
+    OrganizationSerializerResponse,
+)
+from sentry.apidocs.constants import RESPONSE_FORBIDDEN, RESPONSE_NOT_FOUND, RESPONSE_UNAUTHORIZED
+from sentry.apidocs.examples.user_examples import UserExamples
+from sentry.apidocs.parameters import CursorQueryParam, OrganizationParams
+from sentry.apidocs.utils import inline_sentry_response_serializer
 from sentry.auth.superuser import is_active_superuser
 from sentry.db.models.query import in_iexact
-from sentry.models import (
-    Organization,
-    OrganizationMember,
-    OrganizationMemberTeam,
-    OrganizationStatus,
-    ProjectPlatform,
-)
+from sentry.hybridcloud.rpc import IDEMPOTENCY_KEY_LENGTH
+from sentry.issues.streamline import apply_streamline_rollout_group
+from sentry.models.organization import Organization, OrganizationStatus
+from sentry.models.organizationmember import OrganizationMember
+from sentry.models.projectplatform import ProjectPlatform
 from sentry.search.utils import tokenize_query
-from sentry.signals import terms_accepted
+from sentry.services.organization import (
+    OrganizationOptions,
+    OrganizationProvisioningOptions,
+    PostProvisionOptions,
+)
+from sentry.services.organization.provisioning import organization_provisioning_service
+from sentry.signals import org_setup_complete, terms_accepted
+from sentry.users.services.user.service import user_service
+
+logger = logging.getLogger(__name__)
 
 
-class OrganizationSerializer(BaseOrganizationSerializer):
+class OrganizationPostSerializer(BaseOrganizationSerializer):
     defaultTeam = serializers.BooleanField(required=False)
     agreeTerms = serializers.BooleanField(required=True)
+    aggregatedDataConsent = serializers.BooleanField(required=False)
+    idempotencyKey = serializers.CharField(max_length=IDEMPOTENCY_KEY_LENGTH, required=False)
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -43,24 +62,38 @@ class OrganizationSerializer(BaseOrganizationSerializer):
         return value
 
 
+@extend_schema(tags=["Users"])
 @region_silo_endpoint
 class OrganizationIndexEndpoint(Endpoint):
+    publish_status = {
+        "GET": ApiPublishStatus.PUBLIC,
+        "POST": ApiPublishStatus.PRIVATE,
+    }
     permission_classes = (OrganizationPermission,)
 
+    @extend_schema(
+        operation_id="List Your Organizations",
+        parameters=[
+            OrganizationParams.OWNER,
+            CursorQueryParam,
+            OrganizationParams.QUERY,
+            OrganizationParams.SORT_BY,
+        ],
+        request=None,
+        responses={
+            200: inline_sentry_response_serializer(
+                "ListOrganizations", list[OrganizationSerializerResponse]
+            ),
+            401: RESPONSE_UNAUTHORIZED,
+            403: RESPONSE_FORBIDDEN,
+            404: RESPONSE_NOT_FOUND,
+        },
+        examples=UserExamples.LIST_ORGANIZATIONS,
+    )
     def get(self, request: Request) -> Response:
         """
-        List your Organizations
-        ```````````````````````
-
-        Return a list of organizations available to the authenticated
-        session.  This is particularly useful for requests with an
-        user bound context.  For API key based requests this will
-        only return the organization that belongs to the key.
-
-        :qparam bool owner: restrict results to organizations in which you are
-                            an organization owner
-
-        :auth: required
+        Return a list of organizations available to the authenticated session in a region.
+        This is particularly useful for requests with a user bound context. For API key-based requests this will only return the organization that belongs to the key.
         """
         owner_only = request.GET.get("owner") in ("1", "true")
 
@@ -69,15 +102,15 @@ class OrganizationIndexEndpoint(Endpoint):
         if request.auth and not request.user.is_authenticated:
             if hasattr(request.auth, "project"):
                 queryset = queryset.filter(id=request.auth.project.organization_id)
-            elif request.auth.organization is not None:
-                queryset = queryset.filter(id=request.auth.organization.id)
+            elif request.auth.organization_id is not None:
+                queryset = queryset.filter(id=request.auth.organization_id)
 
         elif owner_only:
             # This is used when closing an account
-            queryset = queryset.filter(
-                member_set__role=roles.get_top_dog().id,
-                member_set__user=request.user,
-                status=OrganizationStatus.VISIBLE,
+
+            # also fetches organizations in which you are a member of an owner team
+            queryset = Organization.objects.get_organizations_where_user_is_owner(
+                user_id=request.user.id
             )
             org_results = []
             for org in sorted(queryset, key=lambda x: x.name):
@@ -90,8 +123,13 @@ class OrganizationIndexEndpoint(Endpoint):
 
         elif not (is_active_superuser(request) and request.GET.get("show") == "all"):
             queryset = queryset.filter(
-                id__in=OrganizationMember.objects.filter(user=request.user).values("organization")
+                id__in=OrganizationMember.objects.filter(user_id=request.user.id).values(
+                    "organization"
+                )
             )
+            if request.auth and request.auth.organization_id is not None and queryset.count() > 1:
+                # If a token is limited to one organization, this endpoint should only return that one organization
+                queryset = queryset.filter(id=request.auth.organization_id)
 
         query = request.GET.get("query")
         if query:
@@ -99,15 +137,23 @@ class OrganizationIndexEndpoint(Endpoint):
             for key, value in tokens.items():
                 if key == "query":
                     value = " ".join(value)
+                    user_ids = {
+                        u.id
+                        for u in user_service.get_many_by_email(emails=[value], is_verified=False)
+                    }
                     queryset = queryset.filter(
                         Q(name__icontains=value)
                         | Q(slug__icontains=value)
-                        | Q(members__email__iexact=value)
+                        | Q(member_set__user_id__in=user_ids)
                     )
                 elif key == "slug":
                     queryset = queryset.filter(in_iexact("slug", value))
                 elif key == "email":
-                    queryset = queryset.filter(in_iexact("members__email", value))
+                    user_ids = {
+                        u.id
+                        for u in user_service.get_many_by_email(emails=value, is_verified=False)
+                    }
+                    queryset = queryset.filter(Q(member_set__user_id__in=user_ids))
                 elif key == "platform":
                     queryset = queryset.filter(
                         project__in=ProjectPlatform.objects.filter(platform__in=value).values(
@@ -185,7 +231,7 @@ class OrganizationIndexEndpoint(Endpoint):
             )
 
         limit = options.get("api.rate-limit.org-create")
-        if limit and ratelimiter.is_limited(
+        if limit and ratelimiter.backend.is_limited(
             f"org-create:{request.user.id}", limit=limit, window=3600
         ):
             return Response(
@@ -193,53 +239,75 @@ class OrganizationIndexEndpoint(Endpoint):
                 status=429,
             )
 
-        serializer = OrganizationSerializer(data=request.data)
+        serializer = OrganizationPostSerializer(data=request.data)
 
-        if serializer.is_valid():
-            result = serializer.validated_data
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
-            try:
-                with transaction.atomic():
-                    org = Organization.objects.create(name=result["name"], slug=result.get("slug"))
+        result = serializer.validated_data
 
-                    om = OrganizationMember.objects.create(
-                        organization=org, user=request.user, role=roles.get_top_dog().id
-                    )
+        try:
+            create_default_team = bool(result.get("defaultTeam"))
+            provision_args = OrganizationProvisioningOptions(
+                provision_options=OrganizationOptions(
+                    name=result["name"],
+                    slug=result.get("slug") or result["name"],
+                    owning_user_id=request.user.id,
+                    create_default_team=create_default_team,
+                ),
+                post_provision_options=PostProvisionOptions(
+                    getsentry_options=None, sentry_options=None
+                ),
+            )
 
-                    if result.get("defaultTeam"):
-                        team = org.team_set.create(name=org.name)
+            rpc_org = organization_provisioning_service.provision_organization_in_region(
+                region_name=settings.SENTRY_REGION or settings.SENTRY_MONOLITH_REGION,
+                provisioning_options=provision_args,
+            )
+            org = Organization.objects.get(id=rpc_org.id)
 
-                        OrganizationMemberTeam.objects.create(
-                            team=team, organizationmember=om, is_active=True
-                        )
+            org_setup_complete.send_robust(
+                instance=org, user=request.user, sender=self.__class__, referrer="in-app"
+            )
 
-                    self.create_audit_entry(
-                        request=request,
-                        organization=org,
-                        target_object=org.id,
-                        event=audit_log.get_event_id("ORG_ADD"),
-                        data=org.get_audit_log_data(),
-                    )
+            self.create_audit_entry(
+                request=request,
+                organization=org,
+                target_object=org.id,
+                event=audit_log.get_event_id("ORG_ADD"),
+                data=org.get_audit_log_data(),
+            )
 
-                    analytics.record(
-                        "organization.created",
-                        org,
-                        actor_id=request.user.id if request.user.is_authenticated else None,
-                    )
+            analytics.record(
+                "organization.created",
+                org,
+                actor_id=request.user.id if request.user.is_authenticated else None,
+            )
 
-            except IntegrityError:
-                return Response(
-                    {"detail": "An organization with this slug already exists."}, status=409
-                )
+        # TODO(hybrid-cloud): We'll need to catch a more generic error
+        # when the internal RPC is implemented.
+        except IntegrityError:
+            return Response(
+                {"detail": "An organization with this slug already exists."}, status=409
+            )
 
-            # failure on sending this signal is acceptable
-            if result.get("agreeTerms"):
-                terms_accepted.send_robust(
-                    user=request.user,
-                    organization=org,
-                    ip_address=request.META["REMOTE_ADDR"],
-                    sender=type(self),
-                )
+        # failure on sending this signal is acceptable
+        if result.get("agreeTerms"):
+            terms_accepted.send_robust(
+                user=request.user,
+                organization_id=org.id,
+                ip_address=request.META["REMOTE_ADDR"],
+                sender=type(self),
+            )
 
-            return Response(serialize(org, request.user), status=201)
-        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        if result.get("aggregatedDataConsent"):
+            org.update_option("sentry:aggregated_data_consent", True)
+
+            analytics.record(
+                "aggregated_data_consent.organization_created",
+                organization_id=org.id,
+            )
+
+        apply_streamline_rollout_group(organization=org)
+
+        return Response(serialize(org, request.user), status=201)

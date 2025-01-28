@@ -1,18 +1,19 @@
+from functools import cached_property
 from urllib.parse import parse_qs, urlparse
 
 import responses
 from django.urls import reverse
-from exam import fixture
 
-from fixtures.integrations.mock_service import StubService
-from sentry.models import Integration
-from sentry.testutils import APITestCase
+from fixtures.integrations.stub_service import StubService
+from sentry.testutils.cases import APITestCase
+from sentry.testutils.silo import control_silo_test
 
 
+@control_silo_test
 class JiraSearchEndpointTest(APITestCase):
-    @fixture
+    @cached_property
     def integration(self):
-        integration = Integration.objects.create(
+        integration = self.create_provider_integration(
             provider="jira",
             name="Jira Cloud",
             metadata={

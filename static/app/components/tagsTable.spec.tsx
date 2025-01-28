@@ -1,10 +1,9 @@
-import {initializeOrg} from 'sentry-test/initializeOrg';
+import {EventFixture} from 'sentry-fixture/event';
+
 import {render, screen, userEvent} from 'sentry-test/reactTestingLibrary';
 import {textWithMarkupMatcher} from 'sentry-test/utils';
 
 import {TagsTable} from 'sentry/components/tagsTable';
-import {OrganizationContext} from 'sentry/views/organizationContext';
-import {RouteContext} from 'sentry/views/routeContext';
 
 describe('tags table', function () {
   it('display redacted tag value', async function () {
@@ -13,8 +12,7 @@ describe('tags table', function () {
       {key: 'device.family', value: 'iOS'},
     ];
 
-    const event = {
-      ...TestStubs.Event(),
+    const event = EventFixture({
       tags,
       _meta: {
         tags: {
@@ -25,48 +23,34 @@ describe('tags table', function () {
           },
         },
       },
-    };
-
-    const {organization, router} = initializeOrg();
+    });
 
     render(
-      <OrganizationContext.Provider value={organization}>
-        <RouteContext.Provider
-          value={{
-            router,
-            location: router.location,
-            params: {},
-            routes: [],
-          }}
-        >
-          <TagsTable
-            event={event}
-            query="transaction.duration:<15m transaction.op:pageload"
-            generateUrl={jest.fn()}
-          />
-        </RouteContext.Provider>
-      </OrganizationContext.Provider>
+      <TagsTable
+        event={event}
+        query="transaction.duration:<15m transaction.op:pageload"
+        generateUrl={jest.fn()}
+      />
     );
 
-    userEvent.hover(screen.getByText(/redacted/));
+    await userEvent.hover(screen.getByText(/redacted/));
 
     expect(
       await screen.findByText(
-        textWithMarkupMatcher('Removed because of the PII rule project:2') // Fall back case
+        textWithMarkupMatcher(
+          "Removed because of a data scrubbing rule in your project's settings"
+        ) // Fall back case
       )
     ).toBeInTheDocument(); // tooltip description
   });
 
   it('display redacted tag key', async function () {
-    const {organization, router} = initializeOrg();
-
     const tags = [
       {key: 'gpu.name', value: 'AMD Radeon Pro 560'},
       {key: null, value: 'iOS'},
     ];
 
-    const event = {
-      ...TestStubs.Event(),
+    const event = EventFixture({
       tags,
       _meta: {
         tags: {
@@ -77,32 +61,23 @@ describe('tags table', function () {
           },
         },
       },
-    };
+    });
 
     render(
-      <OrganizationContext.Provider value={organization}>
-        <RouteContext.Provider
-          value={{
-            router,
-            location: router.location,
-            params: {},
-            routes: [],
-          }}
-        >
-          <TagsTable
-            event={event}
-            query="transaction.duration:<15m transaction.op:pageload"
-            generateUrl={jest.fn()}
-          />
-        </RouteContext.Provider>
-      </OrganizationContext.Provider>
+      <TagsTable
+        event={event}
+        query="transaction.duration:<15m transaction.op:pageload"
+        generateUrl={jest.fn()}
+      />
     );
 
-    userEvent.hover(screen.getByText(/redacted/));
+    await userEvent.hover(screen.getByText(/redacted/));
 
     expect(
       await screen.findByText(
-        textWithMarkupMatcher('Removed because of the PII rule project:2') // Fall back case
+        textWithMarkupMatcher(
+          "Removed because of a data scrubbing rule in your project's settings"
+        ) // Fall back case
       )
     ).toBeInTheDocument(); // tooltip description
   });

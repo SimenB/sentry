@@ -1,12 +1,13 @@
 import re
 from functools import wraps
 
+import sentry_sdk
 from django.conf import settings
 from django.core.cache import cache
-from django.utils.translation import ugettext_lazy as _
+from django.utils.translation import gettext_lazy as _
 
 from sentry import options
-from sentry.models import Project, ProjectKey
+from sentry.projects.services.project_key import ProjectKeyRole, project_key_service
 from sentry.shared_integrations.exceptions import IntegrationError
 from sentry.tasks.release_registry import LAYER_INDEX_CACHE_KEY
 
@@ -21,6 +22,8 @@ SUPPORTED_RUNTIMES = [
     "python3.7",
     "python3.8",
     "python3.9",
+    "python3.10",
+    "python3.11",
 ]
 
 INVALID_LAYER_TEXT = "Invalid existing layer %s"
@@ -193,15 +196,41 @@ def get_supported_functions(lambda_client):
 
 
 def get_dsn_for_project(organization_id, project_id):
-    try:
-        project = Project.objects.get(organization_id=organization_id, id=project_id)
-    except Project.DoesNotExist:
-        raise IntegrationError("No valid project")
-
-    enabled_dsn = ProjectKey.get_default(project=project)
+    enabled_dsn = project_key_service.get_project_key(
+        organization_id=organization_id, project_id=project_id, role=ProjectKeyRole.store
+    )
     if not enabled_dsn:
         raise IntegrationError("Project does not have DSN enabled")
-    return enabled_dsn.get_dsn(public=True)
+    return enabled_dsn.dsn_public
+
+
+def get_node_options_for_layer(layer_name: str, layer_version: int | None) -> str:
+    """
+    Depending on the SDK major our Lambda Layer represents, a different SDK
+    package has to be used when setting `NODE_OPTIONS`.
+    This helper generates the correct options for all the layers we support.
+    """
+    # Lambda layers for v7 of our AWS SDK use the older `@sentry/serverless` SDK
+    #
+    # These are specifically
+    # - `SentryNodeServerlessSDKv7`
+    # - `SentryNodeServerlessSDK:235` and lower
+    if layer_name == "SentryNodeServerlessSDKv7" or (
+        layer_name == "SentryNodeServerlessSDK"
+        and layer_version is not None
+        and layer_version <= 235
+    ):
+        return "-r @sentry/serverless/dist/awslambda-auto"
+
+    # Lambda layers for v8 and above of our AWS SDK use
+    # the newer `@sentry/aws-serverless` SDK
+    #
+    # These are specifically
+    # - `SentryNodeServerlessSDK:236` and above
+    # - `SentryNodeServerlessSDKv8`
+    # - and any other layer with a version suffix above, e.g.
+    #   `SentryNodeServerlessSDKv9`
+    return "-r @sentry/aws-serverless/awslambda-auto"
 
 
 def enable_single_lambda(lambda_client, function, sentry_project_dsn, retries_left=3):
@@ -226,9 +255,21 @@ def enable_single_lambda(lambda_client, function, sentry_project_dsn, retries_le
 
     if runtime.startswith("nodejs"):
         # note the env variables would be different for non-Node runtimes
+        layer_name = get_option_value(function, OPTION_LAYER_NAME)
+        version = get_option_value(function, OPTION_VERSION)
+        try:
+            parsed_version = int(version)
+        except Exception:
+            sentry_sdk.capture_message("Invariant: Unable to parse AWS lambda version")
+            parsed_version = None
+
         env_variables.update(
-            {"NODE_OPTIONS": "-r @sentry/serverless/dist/awslambda-auto", **sentry_env_variables}
+            {
+                "NODE_OPTIONS": get_node_options_for_layer(layer_name, parsed_version),
+                **sentry_env_variables,
+            }
         )
+
     elif runtime.startswith("python"):
         # Check if we are trying to re-enable an already enabled python, and if
         # are we should not override the env variable "SENTRY_INITIAL_HANDLER"

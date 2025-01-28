@@ -1,12 +1,16 @@
-import {User} from 'sentry/types';
-import {IssueAlertRule} from 'sentry/types/alerts';
-import {MetricRule} from 'sentry/views/alerts/rules/metric/types';
+import type {IssueAlertRule} from 'sentry/types/alerts';
+import type {User} from 'sentry/types/user';
+import type {MetricRule} from 'sentry/views/alerts/rules/metric/types';
+import type {UptimeRule} from 'sentry/views/alerts/rules/uptime/types';
+import type {Monitor} from 'sentry/views/monitors/types';
 
-type Data = [number, {count: number}[]][];
+type Data = Array<[number, Array<{count: number}>]>;
 
 export enum AlertRuleType {
   METRIC = 'metric',
   ISSUE = 'issue',
+  UPTIME = 'uptime',
+  CRONS = 'crons',
 }
 
 export type Incident = {
@@ -51,7 +55,7 @@ export type ActivityTypeDraft = {
 
 export type ActivityType = ActivityTypeDraft & {
   previousValue: string | null;
-  value: string | null;
+  value: string | null; // determines IncidentStatus of the activity (CRITICAL/WARNING/etc.)
   eventStats?: {data: Data};
 };
 
@@ -85,9 +89,40 @@ export enum AlertRuleStatus {
 export enum CombinedAlertType {
   METRIC = 'alert_rule',
   ISSUE = 'rule',
+  UPTIME = 'uptime',
+  CRONS = 'monitor',
 }
 
-export type CombinedMetricIssueAlerts = (IssueAlertRule | MetricRule) & {
-  type: CombinedAlertType;
+export interface IssueAlert extends IssueAlertRule {
+  type: CombinedAlertType.ISSUE;
   latestIncident?: Incident | null;
+}
+
+export interface MetricAlert extends MetricRule {
+  type: CombinedAlertType.METRIC;
+}
+
+export interface UptimeAlert extends UptimeRule {
+  type: CombinedAlertType.UPTIME;
+}
+
+export interface CronRule extends Monitor {
+  type: CombinedAlertType.CRONS;
+}
+
+export type CombinedMetricIssueAlerts = IssueAlert | MetricAlert;
+
+export type CombinedAlerts = CombinedMetricIssueAlerts | UptimeAlert | CronRule;
+
+export type Anomaly = {
+  anomaly: {anomaly_score: number; anomaly_type: AnomalyType};
+  timestamp: string | number;
+  value: number;
 };
+
+export enum AnomalyType {
+  HIGH_CONFIDENCE = 'anomaly_higher_confidence',
+  LOW_CONFIDENCE = 'anomaly_lower_confidence',
+  NONE = 'none',
+  NO_DATA = 'no_data',
+}

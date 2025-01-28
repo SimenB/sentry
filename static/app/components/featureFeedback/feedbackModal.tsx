@@ -1,41 +1,43 @@
-import React, {Fragment, useCallback, useMemo, useState} from 'react';
+import {Fragment, useCallback, useMemo, useState} from 'react';
 import {css, useTheme} from '@emotion/react';
 import styled from '@emotion/styled';
+import type {Event} from '@sentry/core';
 import {
   BrowserClient,
-  defaultIntegrations,
+  captureFeedback,
   defaultStackParser,
+  getDefaultIntegrations,
   makeFetchTransport,
 } from '@sentry/react';
-import {Event} from '@sentry/types';
 import cloneDeep from 'lodash/cloneDeep';
 
 import {addSuccessMessage} from 'sentry/actionCreators/indicator';
-import {ModalRenderProps} from 'sentry/actionCreators/modal';
-import Alert from 'sentry/components/alert';
-import Button from 'sentry/components/button';
+import type {ModalRenderProps} from 'sentry/actionCreators/modal';
+import {Alert} from 'sentry/components/alert';
+import {Button} from 'sentry/components/button';
 import ButtonBar from 'sentry/components/buttonBar';
 import Textarea from 'sentry/components/forms/controls/textarea';
-import Field from 'sentry/components/forms/field';
+import FieldGroup from 'sentry/components/forms/fieldGroup';
 import SelectField from 'sentry/components/forms/fields/selectField';
-import {Data} from 'sentry/components/forms/types';
+import type {Data} from 'sentry/components/forms/types';
 import ExternalLink from 'sentry/components/links/externalLink';
 import {t, tct} from 'sentry/locale';
 import ConfigStore from 'sentry/stores/configStore';
 import OrganizationStore from 'sentry/stores/organizationStore';
 import {useLegacyStore} from 'sentry/stores/useLegacyStore';
-import space from 'sentry/styles/space';
+import {space} from 'sentry/styles/space';
 import {defined} from 'sentry/utils';
 import {useLocation} from 'sentry/utils/useLocation';
 import useMedia from 'sentry/utils/useMedia';
 import useProjects from 'sentry/utils/useProjects';
+import {useUser} from 'sentry/utils/useUser';
 
-const feedbackClient = new BrowserClient({
+export const feedbackClient = new BrowserClient({
   // feedback project under Sentry organization
   dsn: 'https://3c5ef4e344a04a0694d187a1272e96de@o1.ingest.sentry.io/6356259',
   transport: makeFetchTransport,
   stackParser: defaultStackParser,
-  integrations: defaultIntegrations,
+  integrations: getDefaultIntegrations({}),
 });
 
 const defaultFeedbackTypes = [
@@ -74,9 +76,13 @@ type DefaultFeedbackModal = {
   secondaryAction?: React.ReactNode;
 };
 
-export type FeedbackModalProps<T extends Data> =
+export type FeedbackModalProps<T extends Data> = (
   | DefaultFeedbackModal
-  | CustomFeedbackModal<T>;
+  | CustomFeedbackModal<T>
+) & {
+  /** Use the actual user feedback feature instead of simply creating a message event. */
+  useNewUserFeedback?: boolean;
+};
 
 export function FeedbackModal<T extends Data>({
   Header,
@@ -88,8 +94,9 @@ export function FeedbackModal<T extends Data>({
   const {organization} = useLegacyStore(OrganizationStore);
   const {projects, initiallyLoaded: projectsLoaded} = useProjects();
   const location = useLocation();
+
   const theme = useTheme();
-  const user = ConfigStore.get('user');
+  const user = useUser();
   const isSelfHosted = ConfigStore.get('isSelfHosted');
   const [state, setState] = useState<T>(
     props.children === undefined
@@ -107,10 +114,12 @@ export function FeedbackModal<T extends Data>({
 
   const handleSubmit = useCallback(
     (submitEventData?: Event) => {
+      const message = `${props.featureName} feedback by ${user.email}`;
+
       const commonEventProps: Event = {
-        message: `Feedback: ${props.featureName} feature`,
+        message,
         request: {
-          url: location.pathname,
+          url: window.location.href, // gives the full url (origin + pathname)
         },
         extra: {
           orgFeatures: organization?.features ?? [],
@@ -126,24 +135,51 @@ export function FeedbackModal<T extends Data>({
 
       if (props.children === undefined) {
         const feedbackTypes = props.feedbackTypes ?? defaultFeedbackTypes;
-        feedbackClient.captureEvent({
-          ...commonEventProps,
-          message: state.additionalInfo?.trim()
-            ? `Feedback: ${feedbackTypes[state.subject]} - ${state.additionalInfo}`
-            : `Feedback: ${feedbackTypes[state.subject]}`,
-        });
+        const fullMessage = state.additionalInfo?.trim()
+          ? `${message} - ${feedbackTypes[state.subject]} - ${state.additionalInfo}`
+          : `${message} - ${feedbackTypes[state.subject]}`;
+        if (props.useNewUserFeedback) {
+          captureFeedback({
+            message: fullMessage,
+            source: props.featureName,
+            tags: {
+              feature: props.featureName,
+            },
+          });
+        } else {
+          feedbackClient.captureEvent({
+            ...commonEventProps,
+            contexts: {
+              feedback: {
+                additionalInfo: state.additionalInfo?.trim()
+                  ? state.additionalInfo
+                  : null,
+              },
+            },
+            message: fullMessage,
+          });
+        }
       } else {
-        feedbackClient.captureEvent({
-          ...commonEventProps,
-          ...(submitEventData ?? {}),
-        });
+        if (props.useNewUserFeedback) {
+          captureFeedback({
+            message,
+            source: props.featureName,
+            tags: {
+              feature: props.featureName,
+            },
+          });
+        } else {
+          feedbackClient.captureEvent({
+            ...commonEventProps,
+            ...(submitEventData ?? {}),
+          });
+        }
       }
 
       addSuccessMessage(t('Thanks for taking the time to provide us feedback!'));
       closeModal();
     },
     [
-      location.pathname,
       closeModal,
       organization?.features,
       organization?.access,
@@ -257,12 +293,12 @@ export function FeedbackModal<T extends Data>({
             }))}
             placeholder={t('Select type of feedback')}
             value={state.subject}
-            onChange={value => setState({...state, subject: value})}
+            onChange={(value: any) => setState({...state, subject: value})}
             flexibleControlStateSize
             stacked
             required
           />
-          <Field
+          <FieldGroup
             label={t('Additional feedback')}
             inline={false}
             required={false}
@@ -282,7 +318,7 @@ export function FeedbackModal<T extends Data>({
                 })
               }
             />
-          </Field>
+          </FieldGroup>
         </ModalBody>
         <ModalFooter secondaryAction={props?.secondaryAction} />
       </Fragment>

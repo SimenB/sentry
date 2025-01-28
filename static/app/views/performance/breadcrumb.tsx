@@ -1,18 +1,17 @@
-import {Location, LocationDescriptor} from 'history';
+import type {Location, LocationDescriptor} from 'history';
 
-import Breadcrumbs, {Crumb} from 'sentry/components/breadcrumbs';
+import type {Crumb} from 'sentry/components/breadcrumbs';
+import Breadcrumbs from 'sentry/components/breadcrumbs';
 import {t} from 'sentry/locale';
-import {Organization} from 'sentry/types';
-import {SpanSlug} from 'sentry/utils/performance/suspectSpans/types';
+import type {Organization} from 'sentry/types/organization';
+import type {SpanSlug} from 'sentry/utils/performance/suspectSpans/types';
 import {decodeScalar} from 'sentry/utils/queryString';
+import {DOMAIN_VIEW_BASE_TITLE} from 'sentry/views/insights/pages/settings';
+import type {DomainView} from 'sentry/views/insights/pages/useFilters';
+import {vitalDetailRouteWithQuery} from 'sentry/views/performance/vitalDetail/utils';
 
-import Tab from './transactionSummary/tabs';
-import {eventsRouteWithQuery} from './transactionSummary/transactionEvents/utils';
-import {spansRouteWithQuery} from './transactionSummary/transactionSpans/utils';
-import {tagsRouteWithQuery} from './transactionSummary/transactionTags/utils';
-import {vitalsRouteWithQuery} from './transactionSummary/transactionVitals/utils';
+import type Tab from './transactionSummary/tabs';
 import {transactionSummaryRouteWithQuery} from './transactionSummary/utils';
-import {vitalDetailRouteWithQuery} from './vitalDetail/utils';
 import {getPerformanceLandingUrl} from './utils';
 
 type Props = {
@@ -31,6 +30,9 @@ type Props = {
 
 function Breadcrumb(props: Props) {
   function getCrumbs() {
+    const hasPerfLandingRemovalFlag = props.organization.features.includes(
+      'insights-performance-landing-removal'
+    );
     const crumbs: Crumb[] = [];
     const {
       organization,
@@ -40,114 +42,122 @@ function Breadcrumb(props: Props) {
       spanSlug,
       eventSlug,
       traceSlug,
-      tab,
     } = props;
 
-    const performanceTarget: LocationDescriptor = {
-      pathname: getPerformanceLandingUrl(organization),
-      query: {
-        ...location.query,
-        // clear out the transaction name
-        transaction: undefined,
-      },
-    };
-
-    crumbs.push({
-      to: performanceTarget,
-      label: t('Performance'),
-      preservePageFilters: true,
-    });
-
-    if (vitalName) {
-      const webVitalsTarget = vitalDetailRouteWithQuery({
-        orgSlug: organization.slug,
-        vitalName: 'fcp',
-        projectID: decodeScalar(location.query.project),
-        query: location.query,
-      });
+    if (hasPerfLandingRemovalFlag) {
       crumbs.push({
-        to: webVitalsTarget,
-        label: t('Vital Detail'),
-        preservePageFilters: true,
+        label: DOMAIN_VIEW_BASE_TITLE,
       });
-    } else if (transaction) {
-      const routeQuery = {
-        orgSlug: organization.slug,
-        transaction: transaction.name,
-        projectID: transaction.project,
-        query: location.query,
+    } else {
+      const performanceTarget: LocationDescriptor = {
+        pathname: getPerformanceLandingUrl(organization),
+        query: {
+          ...location.query,
+          // clear out the transaction name
+          transaction: undefined,
+        },
       };
 
-      switch (tab) {
-        case Tab.Tags: {
-          const tagsTarget = tagsRouteWithQuery(routeQuery);
-          crumbs.push({
-            to: tagsTarget,
-            label: t('Tags'),
-            preservePageFilters: true,
-          });
-          break;
-        }
-        case Tab.Events: {
-          const eventsTarget = eventsRouteWithQuery(routeQuery);
-          crumbs.push({
-            to: eventsTarget,
-            label: t('All Events'),
-            preservePageFilters: true,
-          });
-          break;
-        }
-        case Tab.WebVitals: {
-          const webVitalsTarget = vitalsRouteWithQuery(routeQuery);
-          crumbs.push({
-            to: webVitalsTarget,
-            label: t('Web Vitals'),
-            preservePageFilters: true,
-          });
-          break;
-        }
-        case Tab.Spans: {
-          const spansTarget = spansRouteWithQuery(routeQuery);
-          crumbs.push({
-            to: spansTarget,
-            label: t('Spans'),
-            preservePageFilters: true,
-          });
-          break;
-        }
-        case Tab.TransactionSummary:
-        default: {
-          const summaryTarget = transactionSummaryRouteWithQuery(routeQuery);
-          crumbs.push({
-            to: summaryTarget,
-            label: t('Transaction Summary'),
-            preservePageFilters: true,
-          });
-        }
-      }
+      crumbs.push({
+        to: performanceTarget,
+        label: t('Performance'),
+        preservePageFilters: true,
+      });
     }
 
-    if (transaction && spanSlug) {
-      crumbs.push({
-        to: '',
-        label: t('Span Summary'),
-      });
-    } else if (transaction && eventSlug) {
-      crumbs.push({
-        to: '',
-        label: t('Event Details'),
-      });
-    } else if (traceSlug) {
-      crumbs.push({
-        to: '',
-        label: t('Trace View'),
-      });
-    }
+    crumbs.push(
+      ...getTabCrumbs({
+        location,
+        organization,
+        transaction,
+        vitalName,
+        spanSlug,
+        eventSlug,
+        traceSlug,
+      })
+    );
 
     return crumbs;
   }
 
   return <Breadcrumbs crumbs={getCrumbs()} />;
 }
+
+export const getTabCrumbs = ({
+  location,
+  organization,
+  transaction,
+  spanSlug,
+  eventSlug,
+  traceSlug,
+  view,
+  vitalName,
+}: {
+  location: Location;
+  organization: Organization;
+  eventSlug?: string;
+  spanSlug?: SpanSlug;
+  traceSlug?: string;
+  transaction?: {
+    name: string;
+    project: string;
+  };
+  view?: DomainView;
+  vitalName?: string;
+}) => {
+  const crumbs: Crumb[] = [];
+
+  if (vitalName) {
+    const webVitalsTarget = vitalDetailRouteWithQuery({
+      orgSlug: organization.slug,
+      vitalName: 'fcp',
+      projectID: decodeScalar(location.query.project),
+      query: location.query,
+    });
+    crumbs.push({
+      to: webVitalsTarget,
+      label: t('Vital Detail'),
+      preservePageFilters: true,
+    });
+    return crumbs;
+  }
+
+  if (!transaction) {
+    return crumbs;
+  }
+
+  const routeQuery = {
+    orgSlug: organization.slug,
+    transaction: transaction.name,
+    projectID: transaction.project,
+    query: location.query,
+    view,
+  };
+
+  crumbs.push({
+    to: transactionSummaryRouteWithQuery(routeQuery),
+    label: t('Transaction Summary'),
+    preservePageFilters: true,
+  });
+
+  if (spanSlug) {
+    crumbs.push({
+      to: '',
+      label: t('Span Summary'),
+    });
+  } else if (eventSlug) {
+    crumbs.push({
+      to: '',
+      label: t('Event Details'),
+    });
+  } else if (traceSlug) {
+    crumbs.push({
+      to: '',
+      label: t('Trace Details'),
+    });
+  }
+
+  return crumbs;
+};
 
 export default Breadcrumb;

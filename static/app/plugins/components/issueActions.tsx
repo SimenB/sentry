@@ -1,10 +1,16 @@
-import PluginComponentBase from 'sentry/components/bases/pluginComponentBase';
-import {Form, FormState} from 'sentry/components/deprecatedforms';
+import Form from 'sentry/components/deprecatedforms/form';
+import FormState from 'sentry/components/forms/state';
 import LoadingError from 'sentry/components/loadingError';
 import LoadingIndicator from 'sentry/components/loadingIndicator';
 import {t} from 'sentry/locale';
+import PluginComponentBase from 'sentry/plugins/pluginComponentBase';
 import GroupStore from 'sentry/stores/groupStore';
-import {Group, Organization, Plugin, Project} from 'sentry/types';
+import type {Group} from 'sentry/types/group';
+import type {Plugin} from 'sentry/types/integrations';
+import type {Organization} from 'sentry/types/organization';
+import type {Project} from 'sentry/types/project';
+import {trackAnalytics} from 'sentry/utils/analytics';
+import {getAnalyticsDataForGroup} from 'sentry/utils/events';
 
 type Field = {
   depends?: string[];
@@ -12,7 +18,7 @@ type Field = {
 } & Parameters<typeof PluginComponentBase.prototype.renderField>[0]['config'];
 
 type ActionType = 'link' | 'create' | 'unlink';
-type FieldStateValue = typeof FormState[keyof typeof FormState];
+type FieldStateValue = (typeof FormState)[keyof typeof FormState];
 
 type Props = {
   actionType: ActionType;
@@ -50,7 +56,7 @@ type State = {
 } & PluginComponentBase['state'];
 
 class IssueActions extends PluginComponentBase<Props, State> {
-  constructor(props: Props, context) {
+  constructor(props: Props, context: any) {
     super(props, context);
 
     this.createIssue = this.onSave.bind(this, this.createIssue.bind(this));
@@ -144,12 +150,12 @@ class IssueActions extends PluginComponentBase<Props, State> {
     );
   }
 
-  setDependentFieldState(fieldName, state) {
+  setDependentFieldState(fieldName: any, state: any) {
     const dependentFieldState = {...this.state.dependentFieldState, [fieldName]: state};
     this.setState({dependentFieldState});
   }
 
-  loadOptionsForDependentField = async field => {
+  loadOptionsForDependentField = async (field: any) => {
     const formData = this.getFormData();
 
     const groupId = this.getGroup().id;
@@ -158,7 +164,7 @@ class IssueActions extends PluginComponentBase<Props, State> {
 
     // find the fields that this field is dependent on
     const dependentFormValues = Object.fromEntries(
-      field.depends.map(fieldKey => [fieldKey, formData[fieldKey]])
+      field.depends.map((fieldKey: any) => [fieldKey, formData[fieldKey]])
     );
     const query = {
       option_field: field.name,
@@ -224,8 +230,8 @@ class IssueActions extends PluginComponentBase<Props, State> {
     return props;
   }
 
-  setError(error, defaultMessage: string) {
-    let errorBody;
+  setError(error: any, defaultMessage: string) {
+    let errorBody: any;
     if (error.status === 400 && error.responseJSON) {
       errorBody = error.responseJSON;
     } else {
@@ -234,7 +240,7 @@ class IssueActions extends PluginComponentBase<Props, State> {
     this.setState({error: errorBody});
   }
 
-  errorHandler(error) {
+  errorHandler(error: any) {
     const state: Pick<State, 'loading' | 'error'> = {
       loading: false,
     };
@@ -263,7 +269,8 @@ class IssueActions extends PluginComponentBase<Props, State> {
       this.api.request(this.getPluginCreateEndpoint(), {
         success: data => {
           const createFormData = {};
-          data.forEach(field => {
+          data.forEach((field: any) => {
+            // @ts-expect-error TS(7053): Element implicitly has an 'any' type because expre... Remove this comment to see the full error message
             createFormData[field.name] = field.default;
           });
           this.setState(
@@ -282,7 +289,8 @@ class IssueActions extends PluginComponentBase<Props, State> {
       this.api.request(this.getPluginLinkEndpoint(), {
         success: data => {
           const linkFormData = {};
-          data.forEach(field => {
+          data.forEach((field: any) => {
+            // @ts-expect-error TS(7053): Element implicitly has an 'any' type because expre... Remove this comment to see the full error message
             linkFormData[field.name] = field.default;
           });
           this.setState(
@@ -300,20 +308,27 @@ class IssueActions extends PluginComponentBase<Props, State> {
     }
   }
 
-  onSuccess(data) {
+  onSuccess(data: any) {
     // TODO(ts): This needs a better approach. We splice in this attribute to trigger
     // a refetch in GroupDetails
     type StaleGroup = Group & {stale?: boolean};
 
+    trackAnalytics('issue_details.external_issue_created', {
+      organization: this.props.organization,
+      ...getAnalyticsDataForGroup(this.props.group),
+      external_issue_provider: this.props.plugin.slug,
+      external_issue_type: 'plugin',
+    });
+
     GroupStore.onUpdateSuccess('', [this.getGroup().id], {stale: true} as StaleGroup);
-    this.props.onSuccess && this.props.onSuccess(data);
+    this.props.onSuccess?.(data);
   }
 
   createIssue() {
     this.api.request(this.getPluginCreateEndpoint(), {
       data: this.state.createFormData,
       success: this.onSuccess,
-      error: this.onSaveError.bind(this, error => {
+      error: this.onSaveError.bind(this, (error: any) => {
         this.setError(error, t('There was an error creating the issue.'));
       }),
       complete: this.onSaveComplete,
@@ -324,7 +339,7 @@ class IssueActions extends PluginComponentBase<Props, State> {
     this.api.request(this.getPluginLinkEndpoint(), {
       data: this.state.linkFormData,
       success: this.onSuccess,
-      error: this.onSaveError.bind(this, error => {
+      error: this.onSaveError.bind(this, (error: any) => {
         this.setError(error, t('There was an error linking the issue.'));
       }),
       complete: this.onSaveComplete,
@@ -334,7 +349,7 @@ class IssueActions extends PluginComponentBase<Props, State> {
   unlinkIssue() {
     this.api.request(this.getPluginUnlinkEndpoint(), {
       success: this.onSuccess,
-      error: this.onSaveError.bind(this, error => {
+      error: this.onSaveError.bind(this, (error: any) => {
         this.setError(error, t('There was an error unlinking the issue.'));
       }),
       complete: this.onSaveComplete,

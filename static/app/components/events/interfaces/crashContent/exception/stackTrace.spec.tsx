@@ -1,9 +1,10 @@
+import {EventFixture} from 'sentry-fixture/event';
+
 import {render, screen} from 'sentry-test/reactTestingLibrary';
 import {textWithMarkupMatcher} from 'sentry-test/utils';
 
 import ExceptionStacktraceContent from 'sentry/components/events/interfaces/crashContent/exception/stackTrace';
-import {STACK_VIEW} from 'sentry/types/stacktrace';
-import {OrganizationContext} from 'sentry/views/organizationContext';
+import {StackType, StackView} from 'sentry/types/stacktrace';
 
 const frames = [
   {
@@ -13,7 +14,6 @@ const frames = [
     symbol: null,
     module: '<unknown module>',
     lineNo: null,
-    errors: null,
     package: null,
     absPath: 'https://sentry.io/hiventy/kraken-prod/issues/438681831/?referrer=slack#',
     inApp: false,
@@ -29,7 +29,6 @@ const frames = [
     absPath: 'foo/baz.c',
     colNo: null,
     context: [],
-    errors: null,
     filename: 'foo/baz.c',
     function: null,
     inApp: false,
@@ -59,8 +58,8 @@ const props: React.ComponentProps<typeof ExceptionStacktraceContent> = {
   expandFirstFrame: true,
   newestFirst: true,
   chainedException: false,
-  event: {
-    ...TestStubs.Event(),
+  stackType: StackType.ORIGINAL,
+  event: EventFixture({
     entries: [],
     crashFile: {
       sha1: 'sha1',
@@ -83,32 +82,21 @@ const props: React.ComponentProps<typeof ExceptionStacktraceContent> = {
     projectID: '123',
     tags: [{value: 'production', key: 'production'}],
     title: 'TestException',
-  },
+  }),
   data: stacktrace,
   stacktrace,
-  hasHierarchicalGrouping: false,
   groupingCurrentLevel: undefined,
   meta: undefined,
 };
 
 describe('ExceptionStacktraceContent', function () {
-  const organization = TestStubs.Organization();
-
   it('default behaviour', function () {
-    const {container} = render(
-      <OrganizationContext.Provider value={organization}>
-        <ExceptionStacktraceContent {...props} />
-      </OrganizationContext.Provider>
-    );
-
-    expect(container).toSnapshot();
+    render(<ExceptionStacktraceContent {...props} />);
   });
 
   it('should return an emptyRender', function () {
     const {container} = render(
-      <OrganizationContext.Provider value={organization}>
-        <ExceptionStacktraceContent {...props} stacktrace={null} />
-      </OrganizationContext.Provider>
+      <ExceptionStacktraceContent {...props} stacktrace={null} />
     );
 
     expect(container).toBeEmptyDOMElement();
@@ -116,14 +104,12 @@ describe('ExceptionStacktraceContent', function () {
 
   it('shows stack trace', function () {
     render(
-      <OrganizationContext.Provider value={organization}>
-        <ExceptionStacktraceContent
-          {...props}
-          stackView={STACK_VIEW.APP}
-          chainedException={false}
-          stacktrace={{...stacktrace, frames: []}}
-        />
-      </OrganizationContext.Provider>
+      <ExceptionStacktraceContent
+        {...props}
+        stackView={StackView.APP}
+        chainedException={false}
+        stacktrace={{...stacktrace, frames: []}}
+      />
     );
 
     expect(
@@ -133,12 +119,10 @@ describe('ExceptionStacktraceContent', function () {
 
   it('does not show stack trace', function () {
     render(
-      <OrganizationContext.Provider value={organization}>
-        <ExceptionStacktraceContent
-          {...props}
-          stacktrace={{...stacktrace, frames: [{...frames[0], inApp: true}, frames[1]]}}
-        />
-      </OrganizationContext.Provider>
+      <ExceptionStacktraceContent
+        {...props}
+        stacktrace={{...stacktrace, frames: [{...frames[0]!, inApp: true}, frames[1]!]}}
+      />
     );
     expect(
       screen.getByText(textWithMarkupMatcher('foo/baz.c at line 1'))
@@ -147,13 +131,7 @@ describe('ExceptionStacktraceContent', function () {
 
   it('should render system frames if "stackView: app" and there are no inApp frames and is a chained exceptions', function () {
     render(
-      <OrganizationContext.Provider value={organization}>
-        <ExceptionStacktraceContent
-          {...props}
-          stackView={STACK_VIEW.APP}
-          chainedException
-        />
-      </OrganizationContext.Provider>
+      <ExceptionStacktraceContent {...props} stackView={StackView.APP} chainedException />
     );
 
     for (const frame of frames) {
@@ -163,13 +141,11 @@ describe('ExceptionStacktraceContent', function () {
 
   it('should not render system frames if "stackView: app" and there are inApp frames and is a chained exceptions', () => {
     render(
-      <OrganizationContext.Provider value={organization}>
-        <ExceptionStacktraceContent
-          {...props}
-          stacktrace={{...stacktrace, frames: [{...frames[0], inApp: true}, frames[1]]}}
-          chainedException
-        />
-      </OrganizationContext.Provider>
+      <ExceptionStacktraceContent
+        {...props}
+        stacktrace={{...stacktrace, frames: [{...frames[0]!, inApp: true}, frames[1]!]}}
+        chainedException
+      />
     );
 
     // There must be two elements, one being the inApp frame and the other
@@ -177,9 +153,9 @@ describe('ExceptionStacktraceContent', function () {
     expect(screen.getAllByRole('listitem')).toHaveLength(2);
 
     // inApp === true
-    expect(screen.getAllByRole('listitem')[1]).toHaveTextContent(frames[0].filename);
+    expect(screen.getAllByRole('listitem')[1]).toHaveTextContent(frames[0]!.filename);
 
     // inApp === false
-    expect(screen.getAllByRole('listitem')[0]).toHaveTextContent(frames[1].filename);
+    expect(screen.getAllByRole('listitem')[0]).toHaveTextContent(frames[1]!.filename);
   });
 });

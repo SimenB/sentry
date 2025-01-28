@@ -1,61 +1,30 @@
-import {InjectedRouter} from 'react-router';
-import {Location} from 'history';
+import {Fragment} from 'react';
 
 import {initializeOrg} from 'sentry-test/initializeOrg';
 import {render, screen, userEvent} from 'sentry-test/reactTestingLibrary';
 
 import GlobalModal from 'sentry/components/globalModal';
-import {Organization} from 'sentry/types';
-import {OrganizationContext} from 'sentry/views/organizationContext';
-import {RouteContext} from 'sentry/views/routeContext';
 import OrganizationSecurityAndPrivacy from 'sentry/views/settings/organizationSecurityAndPrivacy';
 
-function ComponentProviders({
-  router,
-  location,
-  organization,
-  children,
-}: {
-  children: React.ReactNode;
-  location: Location;
-  organization: Organization;
-  router: InjectedRouter;
-}) {
-  MockApiClient.addMockResponse({
-    url: `/organizations/${organization.slug}/auth-provider/`,
-    method: 'GET',
-    body: {},
+describe('OrganizationSecurityAndPrivacy', function () {
+  const {organization} = initializeOrg();
+
+  beforeEach(() => {
+    MockApiClient.addMockResponse({
+      url: `/organizations/${organization.slug}/auth-provider/`,
+      method: 'GET',
+      body: {},
+    });
+
+    MockApiClient.addMockResponse({
+      url: `/organizations/${organization.slug}/data-secrecy/`,
+      method: 'GET',
+      body: null,
+    });
   });
 
-  return (
-    <OrganizationContext.Provider value={organization}>
-      <RouteContext.Provider
-        value={{
-          router,
-          location,
-          params: {},
-          routes: [],
-        }}
-      >
-        {children}
-      </RouteContext.Provider>
-    </OrganizationContext.Provider>
-  );
-}
-
-describe('OrganizationSecurityAndPrivacy', function () {
   it('shows require2fa switch', async function () {
-    const {organization, router} = initializeOrg();
-
-    render(
-      <ComponentProviders
-        organization={organization}
-        router={router}
-        location={router.location}
-      >
-        <OrganizationSecurityAndPrivacy />
-      </ComponentProviders>
-    );
+    render(<OrganizationSecurityAndPrivacy />);
 
     expect(
       await screen.findByRole('checkbox', {
@@ -65,8 +34,6 @@ describe('OrganizationSecurityAndPrivacy', function () {
   });
 
   it('returns to "off" if switch enable fails (e.g. API error)', async function () {
-    const {organization, router} = initializeOrg();
-
     MockApiClient.addMockResponse({
       url: `/organizations/${organization.slug}/`,
       method: 'PUT',
@@ -74,17 +41,13 @@ describe('OrganizationSecurityAndPrivacy', function () {
     });
 
     render(
-      <ComponentProviders
-        organization={organization}
-        router={router}
-        location={router.location}
-      >
+      <Fragment>
         <GlobalModal />
         <OrganizationSecurityAndPrivacy />
-      </ComponentProviders>
+      </Fragment>
     );
 
-    userEvent.click(
+    await userEvent.click(
       await screen.findByRole('checkbox', {
         name: 'Enable to require and enforce two-factor authentication for all members',
       })
@@ -94,7 +57,7 @@ describe('OrganizationSecurityAndPrivacy', function () {
     jest.spyOn(console, 'error').mockImplementation(() => {});
 
     // Confirm but has API failure
-    userEvent.click(screen.getByRole('button', {name: 'Confirm'}));
+    await userEvent.click(screen.getByRole('button', {name: 'Confirm'}));
 
     expect(
       await screen.findByRole('checkbox', {
@@ -104,17 +67,7 @@ describe('OrganizationSecurityAndPrivacy', function () {
   });
 
   it('renders join request switch', async function () {
-    const {organization, router} = initializeOrg();
-
-    render(
-      <ComponentProviders
-        organization={organization}
-        router={router}
-        location={router.location}
-      >
-        <OrganizationSecurityAndPrivacy />
-      </ComponentProviders>
-    );
+    render(<OrganizationSecurityAndPrivacy />);
 
     expect(
       await screen.findByRole('checkbox', {
@@ -124,32 +77,26 @@ describe('OrganizationSecurityAndPrivacy', function () {
   });
 
   it('enables require2fa but cancels confirm modal', async function () {
-    const {organization, router} = initializeOrg();
-
     const mock = MockApiClient.addMockResponse({
       url: `/organizations/${organization.slug}/`,
       method: 'PUT',
     });
 
     render(
-      <ComponentProviders
-        organization={organization}
-        router={router}
-        location={router.location}
-      >
+      <Fragment>
         <GlobalModal />
         <OrganizationSecurityAndPrivacy />
-      </ComponentProviders>
+      </Fragment>
     );
 
-    userEvent.click(
+    await userEvent.click(
       await screen.findByRole('checkbox', {
         name: 'Enable to require and enforce two-factor authentication for all members',
       })
     );
 
     // Cancel
-    userEvent.click(screen.getByRole('button', {name: 'Cancel'}));
+    await userEvent.click(screen.getByRole('button', {name: 'Cancel'}));
 
     expect(
       screen.getByRole('checkbox', {
@@ -161,31 +108,25 @@ describe('OrganizationSecurityAndPrivacy', function () {
   });
 
   it('enables require2fa with confirm modal', async function () {
-    const {organization, router} = initializeOrg();
-
     const mock = MockApiClient.addMockResponse({
       url: `/organizations/${organization.slug}/`,
       method: 'PUT',
     });
 
     render(
-      <ComponentProviders
-        organization={organization}
-        router={router}
-        location={router.location}
-      >
+      <Fragment>
         <GlobalModal />
         <OrganizationSecurityAndPrivacy />
-      </ComponentProviders>
+      </Fragment>
     );
 
-    userEvent.click(
+    await userEvent.click(
       await screen.findByRole('checkbox', {
         name: 'Enable to require and enforce two-factor authentication for all members',
       })
     );
 
-    userEvent.click(screen.getByRole('button', {name: 'Confirm'}));
+    await userEvent.click(screen.getByRole('button', {name: 'Confirm'}));
 
     expect(
       screen.getByRole('checkbox', {

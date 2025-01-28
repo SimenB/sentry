@@ -1,6 +1,6 @@
 import {Component} from 'react';
 
-import {Client} from 'sentry/api';
+import type {Client} from 'sentry/api';
 import MiniBarChart from 'sentry/components/charts/miniBarChart';
 import LoadingError from 'sentry/components/loadingError';
 import LoadingIndicator from 'sentry/components/loadingIndicator';
@@ -16,7 +16,7 @@ type Props = {
 };
 
 type State = {
-  data: [number, number][] | null;
+  data: Array<[number, number]> | null;
   error: boolean;
   loading: boolean;
 };

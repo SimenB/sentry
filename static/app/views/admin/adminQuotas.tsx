@@ -1,77 +1,88 @@
-import {TextField} from 'sentry/components/deprecatedforms';
+import {Fragment, useState} from 'react';
+
+import TextField from 'sentry/components/forms/fields/textField';
 import InternalStatChart from 'sentry/components/internalStatChart';
-import AsyncView from 'sentry/views/asyncView';
+import LoadingError from 'sentry/components/loadingError';
+import LoadingIndicator from 'sentry/components/loadingIndicator';
+import Panel from 'sentry/components/panels/panel';
+import PanelBody from 'sentry/components/panels/panelBody';
+import PanelHeader from 'sentry/components/panels/panelHeader';
+import {t} from 'sentry/locale';
+import {useApiQuery} from 'sentry/utils/queryClient';
 
 type Config = {
   backend: string;
   options: Record<string, string>;
 };
 
-type State = AsyncView['state'] & {
-  config: Config;
-  resolution: string;
-  since: number;
-};
+export default function AdminQuotas() {
+  const {
+    data: config,
+    isPending,
+    isError,
+  } = useApiQuery<Config>(['/internal/quotas/'], {
+    staleTime: 0,
+  });
+  const [since] = useState(() => new Date().getTime() / 1000 - 3600 * 24 * 7);
+  const resolution = '1h';
 
-export default class AdminQuotas extends AsyncView<{}, State> {
-  getDefaultState() {
-    return {
-      ...super.getDefaultState(),
-      since: new Date().getTime() / 1000 - 3600 * 24 * 7,
-      resolution: '1h',
-    };
+  if (isPending) {
+    return <LoadingIndicator />;
   }
 
-  getEndpoints(): ReturnType<AsyncView['getEndpoints']> {
-    return [['config', '/internal/quotas/']];
+  if (isError) {
+    return <LoadingError />;
   }
 
-  renderBody() {
-    const {config} = this.state;
-    return (
-      <div>
-        <h3>Quotas</h3>
+  return (
+    <Fragment>
+      <h3>Quotas</h3>
 
-        <div className="box">
-          <div className="box-header">
-            <h4>Config</h4>
-          </div>
+      <Panel>
+        <PanelHeader>{t('Config')}</PanelHeader>
+        <PanelBody withPadding>
+          <TextField
+            name="backend"
+            value={config.backend}
+            label="Backend"
+            disabled
+            inline={false}
+            stacked
+          />
+          <TextField
+            name="rateLimit"
+            value={config.options['system.rate-limit']}
+            label="Rate Limit"
+            disabled
+            inline={false}
+            stacked
+          />
+        </PanelBody>
+      </Panel>
 
-          <div className="box-content with-padding">
-            <TextField name="backend" value={config.backend} label="Backend" disabled />
-            <TextField
-              name="rateLimit"
-              value={config.options['system.rate-limit']}
-              label="Rate Limit"
-              disabled
-            />
-          </div>
-        </div>
-
-        <div className="box">
-          <div className="box-header">
-            <h4>Total Events</h4>
-          </div>
+      <Panel>
+        <PanelHeader>{t('Total Events')}</PanelHeader>
+        <PanelBody withPadding>
           <InternalStatChart
-            since={this.state.since}
-            resolution={this.state.resolution}
+            since={since}
+            resolution={resolution}
             stat="events.total"
             label="Events"
           />
-        </div>
+        </PanelBody>
+      </Panel>
 
-        <div className="box">
-          <div className="box-header">
-            <h4>Dropped Events</h4>
-          </div>
+      <Panel>
+        <PanelHeader>{t('Dropped Events')}</PanelHeader>
+        <PanelBody withPadding>
           <InternalStatChart
-            since={this.state.since}
-            resolution={this.state.resolution}
+            since={since}
+            resolution={resolution}
             stat="events.dropped"
             label="Events"
           />
-        </div>
-      </div>
-    );
-  }
+        </PanelBody>
+      </Panel>
+    </Fragment>
+  );
 }

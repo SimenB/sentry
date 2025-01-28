@@ -1,32 +1,43 @@
-from typing import Any, List, TypedDict
+from django.contrib.auth.models import AnonymousUser
 
-from sentry import quotas
-from sentry.models import Project
-
-UNIFORM_RULE_RESERVED_ID = 0
-
-
-class Condition(TypedDict):
-    op: str
-    inner: List[Any]
+from sentry import features
+from sentry.constants import SAMPLING_MODE_DEFAULT
+from sentry.dynamic_sampling.types import DynamicSamplingMode
+from sentry.models.organization import Organization
+from sentry.users.models.user import User
+from sentry.users.services.user import RpcUser
 
 
-class UniformRule(TypedDict):
-    sampleRate: float
-    type: str
-    active: bool
-    condition: Condition
-    id: int
+def has_dynamic_sampling(
+    organization: Organization | None, actor: User | RpcUser | AnonymousUser | None = None
+) -> bool:
+    # If an organization can't be fetched, we will assume it has no dynamic sampling.
+    return organization is not None and features.has(
+        "organizations:dynamic-sampling", organization, actor=actor
+    )
 
 
-def generate_uniform_rule(project: Project) -> UniformRule:
-    return {
-        "sampleRate": quotas.get_blended_sample_rate(project),
-        "type": "trace",
-        "active": True,
-        "condition": {
-            "op": "and",
-            "inner": [],
-        },
-        "id": UNIFORM_RULE_RESERVED_ID,
-    }
+def has_custom_dynamic_sampling(
+    organization: Organization | None, actor: User | RpcUser | AnonymousUser | None = None
+) -> bool:
+    return organization is not None and features.has(
+        "organizations:dynamic-sampling-custom", organization, actor=actor
+    )
+
+
+def is_project_mode_sampling(organization: Organization | None) -> bool:
+    return (
+        organization is not None
+        and has_custom_dynamic_sampling(organization)
+        and organization.get_option("sentry:sampling_mode", SAMPLING_MODE_DEFAULT)
+        == DynamicSamplingMode.PROJECT
+    )
+
+
+def is_organization_mode_sampling(organization: Organization | None) -> bool:
+    return (
+        organization is not None
+        and has_custom_dynamic_sampling(organization)
+        and organization.get_option("sentry:sampling_mode", SAMPLING_MODE_DEFAULT)
+        == DynamicSamplingMode.ORGANIZATION
+    )

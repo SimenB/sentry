@@ -1,78 +1,137 @@
-import {Component} from 'react';
-import {browserHistory} from 'react-router';
+import {useState} from 'react';
 
 import ApiForm from 'sentry/components/forms/apiForm';
-import MultipleCheckbox from 'sentry/components/forms/controls/multipleCheckbox';
-import FormField from 'sentry/components/forms/formField';
+import TextareaField from 'sentry/components/forms/fields/textareaField';
+import TextField from 'sentry/components/forms/fields/textField';
 import ExternalLink from 'sentry/components/links/externalLink';
-import {Panel, PanelBody, PanelHeader} from 'sentry/components/panels';
+import Panel from 'sentry/components/panels/panel';
+import PanelBody from 'sentry/components/panels/panelBody';
+import PanelHeader from 'sentry/components/panels/panelHeader';
 import SentryDocumentTitle from 'sentry/components/sentryDocumentTitle';
-import {API_ACCESS_SCOPES, DEFAULT_API_ACCESS_SCOPES} from 'sentry/constants';
 import {t, tct} from 'sentry/locale';
-import {Choices} from 'sentry/types';
+import type {Permissions} from 'sentry/types/integrations';
+import type {NewInternalAppApiToken} from 'sentry/types/user';
+import {browserHistory} from 'sentry/utils/browserHistory';
+import getDynamicText from 'sentry/utils/getDynamicText';
+import normalizeUrl from 'sentry/utils/url/normalizeUrl';
+import NewTokenHandler from 'sentry/views/settings/components/newTokenHandler';
 import SettingsPageHeader from 'sentry/views/settings/components/settingsPageHeader';
 import TextBlock from 'sentry/views/settings/components/text/textBlock';
+import PermissionSelection from 'sentry/views/settings/organizationDeveloperSettings/permissionSelection';
 
-const SORTED_DEFAULT_API_ACCESS_SCOPES = DEFAULT_API_ACCESS_SCOPES.sort();
-const API_CHOICES: Choices = API_ACCESS_SCOPES.map(s => [s, s]);
 const API_INDEX_ROUTE = '/settings/account/api/auth-tokens/';
 
-export default class ApiNewToken extends Component {
-  onCancel = () => {
-    browserHistory.push(API_INDEX_ROUTE);
+export default function ApiNewToken() {
+  const [permissions, setPermissions] = useState<Permissions>({
+    Event: 'no-access',
+    Team: 'no-access',
+    Member: 'no-access',
+    Project: 'no-access',
+    Release: 'no-access',
+    Organization: 'no-access',
+    Alerts: 'no-access',
+  });
+  const [newToken, setNewToken] = useState<NewInternalAppApiToken | null>(null);
+  const [preview, setPreview] = useState<string>('');
+
+  const getPreview = () => {
+    let previewString = '';
+    for (const k in permissions) {
+      // @ts-expect-error TS(7053): Element implicitly has an 'any' type because expre... Remove this comment to see the full error message
+      if (permissions[k] !== 'no-access') {
+        // @ts-expect-error TS(7053): Element implicitly has an 'any' type because expre... Remove this comment to see the full error message
+        previewString += `${k.toLowerCase()}:${permissions[k]}\n`;
+      }
+    }
+    return previewString;
   };
 
-  onSubmitSuccess = () => {
-    browserHistory.push(API_INDEX_ROUTE);
+  const onCancel = () => {
+    browserHistory.push(normalizeUrl(API_INDEX_ROUTE));
   };
 
-  render() {
-    return (
-      <SentryDocumentTitle title={t('Create API Token')}>
-        <div>
-          <SettingsPageHeader title={t('Create New Token')} />
-          <TextBlock>
-            {t(
-              "Authentication tokens allow you to perform actions against the Sentry API on behalf of your account. They're the easiest way to get started using the API."
-            )}
-          </TextBlock>
-          <TextBlock>
-            {tct(
-              'For more information on how to use the web API, see our [link:documentation].',
-              {
-                link: <ExternalLink href="https://docs.sentry.io/api/" />,
-              }
-            )}
-          </TextBlock>
-          <Panel>
-            <PanelHeader>{t('Create New Token')}</PanelHeader>
+  const handleGoBack = () => {
+    browserHistory.push(normalizeUrl(API_INDEX_ROUTE));
+  };
+
+  return (
+    <SentryDocumentTitle title={t('Create User Auth Token')}>
+      <div>
+        <SettingsPageHeader title={t('Create New User Auth Token')} />
+        <TextBlock>
+          {t(
+            "Authentication tokens allow you to perform actions against the Sentry API on behalf of your account. They're the easiest way to get started using the API."
+          )}
+        </TextBlock>
+        <TextBlock>
+          {tct(
+            'For more information on how to use the web API, see our [link:documentation].',
+            {
+              link: <ExternalLink href="https://docs.sentry.io/api/" />,
+            }
+          )}
+        </TextBlock>
+        {newToken !== null ? (
+          <NewTokenHandler
+            token={
+              getDynamicText({value: newToken.token, fixed: 'CI_AUTH_TOKEN'}) ||
+              'CI_AUTH_TOKEN'
+            }
+            handleGoBack={handleGoBack}
+          />
+        ) : (
+          <div>
             <ApiForm
               apiMethod="POST"
               apiEndpoint="/api-tokens/"
-              initialData={{scopes: SORTED_DEFAULT_API_ACCESS_SCOPES}}
-              onSubmitSuccess={this.onSubmitSuccess}
-              onCancel={this.onCancel}
+              initialData={{scopes: [], name: ''}}
+              onSubmitSuccess={setNewToken}
+              onCancel={onCancel}
               footerStyle={{
                 marginTop: 0,
                 paddingRight: 20,
               }}
+              submitDisabled={Object.values(permissions).every(
+                value => value === 'no-access'
+              )}
               submitLabel={t('Create Token')}
             >
-              <PanelBody>
-                <FormField name="scopes" label={t('Scopes')} inline={false} required>
-                  {({value, onChange}) => (
-                    <MultipleCheckbox
-                      onChange={onChange}
-                      value={value}
-                      choices={API_CHOICES}
-                    />
-                  )}
-                </FormField>
-              </PanelBody>
+              <Panel>
+                <PanelHeader>{t('General')}</PanelHeader>
+                <PanelBody>
+                  <TextField
+                    name="name"
+                    label={t('Name')}
+                    help={t('A name to help you identify this token.')}
+                  />
+                </PanelBody>
+              </Panel>
+              <Panel>
+                <PanelHeader>{t('Permissions')}</PanelHeader>
+                <PanelBody>
+                  <PermissionSelection
+                    appPublished={false}
+                    permissions={permissions}
+                    onChange={p => {
+                      setPermissions(p);
+                      setPreview(getPreview());
+                    }}
+                  />
+                </PanelBody>
+                <TextareaField
+                  name="permissions-preview"
+                  label={t('Permissions Preview')}
+                  help={t('Your token will have the following scopes.')}
+                  rows={3}
+                  autosize
+                  placeholder={preview}
+                  disabled
+                />
+              </Panel>
             </ApiForm>
-          </Panel>
-        </div>
-      </SentryDocumentTitle>
-    );
-  }
+          </div>
+        )}
+      </div>
+    </SentryDocumentTitle>
+  );
 }

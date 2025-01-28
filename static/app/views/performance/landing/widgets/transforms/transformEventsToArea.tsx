@@ -1,8 +1,12 @@
-import {RenderProps} from 'sentry/components/charts/eventsRequest';
+import type {RenderProps} from 'sentry/components/charts/eventsRequest';
 import {normalizeDateTimeParams} from 'sentry/components/organizations/pageFilters/parse';
 import {defined} from 'sentry/utils';
 
-import {QueryDefinitionWithKey, WidgetDataConstraint, WidgetPropUnion} from '../types';
+import type {
+  QueryDefinitionWithKey,
+  WidgetDataConstraint,
+  WidgetPropUnion,
+} from '../types';
 
 export function transformEventsRequestToArea<T extends WidgetDataConstraint>(
   widgetProps: WidgetPropUnion<T>,
@@ -19,7 +23,7 @@ export function transformEventsRequestToArea<T extends WidgetDataConstraint>(
     ...results,
     isLoading: results.loading || results.reloading,
     isErrored: results.errored,
-    hasData: defined(data) && !!data.length && !!data[0].data.length,
+    hasData: defined(data) && !!data.length && !!data[0]!.data.length,
     data,
     previousData: results.previousTimeseriesData ?? undefined,
 

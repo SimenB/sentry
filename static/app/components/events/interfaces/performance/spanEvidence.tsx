@@ -1,111 +1,118 @@
 import styled from '@emotion/styled';
-import * as Sentry from '@sentry/react';
-import keyBy from 'lodash/keyBy';
 
+import {LinkButton} from 'sentry/components/button';
+import {getProblemSpansForSpanTree} from 'sentry/components/events/interfaces/performance/utils';
+import {IconSettings} from 'sentry/icons';
 import {t} from 'sentry/locale';
+import type {EventTransaction} from 'sentry/types/event';
 import {
-  EntryType,
-  EventTransaction,
-  IssueCategory,
-  KeyValueListData,
-  Organization,
-} from 'sentry/types';
+  getIssueTypeFromOccurrenceType,
+  isOccurrenceBased,
+  isTransactionBased,
+} from 'sentry/types/group';
+import type {Organization} from 'sentry/types/organization';
+import {sanitizeQuerySelector} from 'sentry/utils/sanitizeQuerySelector';
+import {SectionKey} from 'sentry/views/issueDetails/streamline/context';
+import {InterimSection} from 'sentry/views/issueDetails/streamline/interimSection';
+import {ProfileGroupProvider} from 'sentry/views/profiling/profileGroupProvider';
+import {ProfileContext, ProfilesProvider} from 'sentry/views/profiling/profilesProvider';
 
-import DataSection from '../../eventTagsAndScreenshot/dataSection';
-import KeyValueList from '../keyValueList';
 import TraceView from '../spans/traceView';
-import {RawSpanType, SpanEntry, TraceContextType} from '../spans/types';
+import type {TraceContextType} from '../spans/types';
 import WaterfallModel from '../spans/waterfallModel';
+
+import {SpanEvidenceKeyValueList} from './spanEvidenceKeyValueList';
 
 interface Props {
   event: EventTransaction;
   organization: Organization;
+  projectSlug: string;
 }
 
 export type TraceContextSpanProxy = Omit<TraceContextType, 'span_id'> & {
   span_id: string; // TODO: Remove this temporary type.
 };
 
-export function SpanEvidenceSection({event, organization}: Props) {
-  if (!event.perfProblem) {
-    if (
-      event.issueCategory === IssueCategory.PERFORMANCE &&
-      event.endTimestamp > 1663560000 //  (Sep 19, 2022 onward), Some events could have been missing evidence before EA
-    ) {
-      Sentry.captureException(new Error('Span Evidence missing for performance issue.'));
-    }
+export function SpanEvidenceSection({event, organization, projectSlug}: Props) {
+  if (!event) {
     return null;
   }
 
-  // Let's dive into the event to pick off the span evidence data by using the IDs we know
-  const spanEntry = event.entries.find((entry: SpanEntry | any): entry is SpanEntry => {
-    return entry.type === EntryType.SPANS;
-  });
-  const spans: Array<RawSpanType | TraceContextSpanProxy> = [...spanEntry?.data] ?? [];
+  const {affectedSpanIds, focusedSpanIds} = getProblemSpansForSpanTree(event);
 
-  if (event?.contexts?.trace && event?.contexts?.trace?.span_id) {
-    // TODO: Fix this conditional and check if span_id is ever actually undefined.
-    spans.push(event.contexts.trace as TraceContextSpanProxy);
-  }
-  const spansById = keyBy(spans, 'span_id');
+  const profileId = event.contexts?.profile?.profile_id ?? null;
 
-  const parentSpan = spansById[event.perfProblem.parentSpanIds[0]];
-  const repeatingSpan = spansById[event.perfProblem.offenderSpanIds[0]];
+  const hasProfilingFeature = organization.features.includes('profiling');
 
-  const data: KeyValueListData = [
-    {
-      key: '0',
-      subject: t('Transaction'),
-      value: event.title,
-    },
-    {
-      key: '1',
-      subject: t('Parent Span'),
-      value: getSpanEvidenceValue(parentSpan),
-    },
-    {
-      key: '2',
-      subject: t('Repeating Span'),
-      value: getSpanEvidenceValue(repeatingSpan),
-    },
-  ];
-
-  const affectedSpanIds = [parentSpan.span_id, ...event.perfProblem.offenderSpanIds];
+  const typeId = event.occurrence?.type;
+  const issueType = getIssueTypeFromOccurrenceType(typeId);
+  const issueTitle = event.occurrence?.issueTitle;
+  const sanitizedIssueTitle = issueTitle && sanitizeQuerySelector(issueTitle);
+  const hasSetting = isTransactionBased(typeId) && isOccurrenceBased(typeId);
 
   return (
-    <DataSection
+    <InterimSection
+      type={SectionKey.SPAN_EVIDENCE}
       title={t('Span Evidence')}
-      description={t(
-        'Span Evidence identifies the parent span where the N+1 occurs, and the repeating spans.'
+      help={t(
+        'Span Evidence identifies the root cause of this issue, found in other similar events within the same issue.'
       )}
+      actions={
+        issueType &&
+        hasSetting && (
+          <LinkButton
+            data-test-id="span-evidence-settings-btn"
+            to={{
+              pathname: `/settings/${organization.slug}/projects/${projectSlug}/performance/`,
+              query: {issueType},
+              hash: sanitizedIssueTitle,
+            }}
+            size="xs"
+            icon={<IconSettings />}
+          >
+            {t('Threshold Settings')}
+          </LinkButton>
+        )
+      }
     >
-      <KeyValueList data={data} />
-
-      <TraceViewWrapper>
-        <TraceView
-          organization={organization}
-          waterfallModel={new WaterfallModel(event as EventTransaction, affectedSpanIds)}
-          isEmbedded
-        />
-      </TraceViewWrapper>
-    </DataSection>
+      <SpanEvidenceKeyValueList event={event} projectSlug={projectSlug} />
+      {hasProfilingFeature ? (
+        <ProfilesProvider
+          orgSlug={organization.slug}
+          projectSlug={projectSlug}
+          profileMeta={profileId || ''}
+        >
+          <ProfileContext.Consumer>
+            {profiles => (
+              <ProfileGroupProvider
+                type="flamechart"
+                input={profiles?.type === 'resolved' ? profiles.data : null}
+                traceID={profileId || ''}
+              >
+                <TraceViewWrapper>
+                  <TraceView
+                    organization={organization}
+                    waterfallModel={
+                      new WaterfallModel(event, affectedSpanIds, focusedSpanIds)
+                    }
+                    isEmbedded
+                  />
+                </TraceViewWrapper>
+              </ProfileGroupProvider>
+            )}
+          </ProfileContext.Consumer>
+        </ProfilesProvider>
+      ) : (
+        <TraceViewWrapper>
+          <TraceView
+            organization={organization}
+            waterfallModel={new WaterfallModel(event, affectedSpanIds, focusedSpanIds)}
+            isEmbedded
+          />
+        </TraceViewWrapper>
+      )}
+    </InterimSection>
   );
-}
-
-function getSpanEvidenceValue(span: RawSpanType | TraceContextSpanProxy) {
-  if (!span.op && !span.description) {
-    return t('(no value)');
-  }
-
-  if (!span.op && span.description) {
-    return span.description;
-  }
-
-  if (span.op && !span.description) {
-    return span.op;
-  }
-
-  return `${span.op} - ${span.description}`;
 }
 
 const TraceViewWrapper = styled('div')`

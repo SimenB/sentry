@@ -1,6 +1,8 @@
-import EventDataSection from 'sentry/components/events/eventDataSection';
 import {t} from 'sentry/locale';
-import {Event} from 'sentry/types/event';
+import type {Event} from 'sentry/types/event';
+import {isEmptyObject} from 'sentry/utils/object/isEmptyObject';
+import {SectionKey} from 'sentry/views/issueDetails/streamline/context';
+import {InterimSection} from 'sentry/views/issueDetails/streamline/interimSection';
 
 import KeyValueList from './interfaces/keyValueList';
 
@@ -8,7 +10,7 @@ type Props = {
   event: Event;
 };
 
-function DeviceInterface({event}: Props) {
+export function EventDevice({event}: Props) {
   const data = event.device ?? {};
   const extras = Object.entries<any>(data.data ?? {}).map(([key, value]) => ({
     key,
@@ -17,10 +19,14 @@ function DeviceInterface({event}: Props) {
     isContextData: true,
   }));
 
+  if (isEmptyObject(event.device)) {
+    return null;
+  }
+
   return (
-    <EventDataSection type="device" title={t('Device')} wrapTitle>
+    <InterimSection type={SectionKey.DEVICE} title={t('Device')}>
       <KeyValueList
-        isSorted={false}
+        shouldSort={false}
         data={[
           {
             key: 'name',
@@ -40,8 +46,6 @@ function DeviceInterface({event}: Props) {
           ...extras,
         ]}
       />
-    </EventDataSection>
+    </InterimSection>
   );
 }
-
-export default DeviceInterface;

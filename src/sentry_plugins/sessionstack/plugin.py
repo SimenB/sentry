@@ -1,11 +1,16 @@
+from __future__ import annotations
+
+from collections.abc import Mapping, MutableMapping, Sequence
+from typing import Any
+
 from sentry.exceptions import PluginError
-from sentry.integrations import FeatureDescription, IntegrationFeatures
+from sentry.integrations.base import FeatureDescription, IntegrationFeatures
 from sentry.interfaces.contexts import ContextType
-from sentry.models import Project
-from sentry.plugins.base import Plugin2
-from sentry.plugins.base.configuration import react_plugin_config
+from sentry.models.project import Project
+from sentry.plugins.base.v2 import EventPreprocessor, Plugin2
 from sentry.utils.settings import is_self_hosted
 from sentry_plugins.base import CorePluginMixin
+from sentry_plugins.utils import get_secret_field_config
 
 from .client import InvalidApiUrlError, InvalidWebsiteIdError, SessionStackClient, UnauthorizedError
 
@@ -29,10 +34,6 @@ class SessionStackPlugin(CorePluginMixin, Plugin2):
     conf_key = slug
     required_field = "account_email"
 
-    sessionstack_resource_links = [
-        ("Documentation", "http://docs.sessionstack.com/integrations/sentry/")
-    ]
-
     feature_descriptions = [
         FeatureDescription(
             """
@@ -42,19 +43,13 @@ class SessionStackPlugin(CorePluginMixin, Plugin2):
         )
     ]
 
-    def get_resource_links(self):
-        return self.resource_links + self.sessionstack_resource_links
-
-    def configure(self, project, request):
-        return react_plugin_config(self, project, request)
-
     def has_project_conf(self):
         return True
 
     def get_custom_contexts(self):
         return [SessionStackContextType]
 
-    def reset_options(self, project=None, user=None):
+    def reset_options(self, project=None):
         self.disable(project)
 
         self.set_option("account_email", "", project)
@@ -88,9 +83,8 @@ class SessionStackPlugin(CorePluginMixin, Plugin2):
 
         return config
 
-    def get_config(self, project, **kwargs):
+    def get_config(self, project, user=None, initial=None, add_additional_fields: bool = False):
         account_email = self.get_option("account_email", project)
-        api_token = self.get_option("api_token", project)
         website_id = self.get_option("website_id", project)
         api_url = self.get_option("api_url", project)
         player_url = self.get_option("player_url", project)
@@ -104,14 +98,13 @@ class SessionStackPlugin(CorePluginMixin, Plugin2):
                 "placeholder": 'e.g. "user@example.com"',
                 "required": True,
             },
-            {
-                "name": "api_token",
-                "label": "API Token",
-                "default": api_token,
-                "type": "text",
-                "help": "SessionStack generated API token.",
-                "required": True,
-            },
+            get_secret_field_config(
+                name="api_token",
+                label="API Token",
+                secret=self.get_option("api_token", project),
+                help="SessionStack generated API token.",
+                required=True,
+            ),
             {
                 "name": "website_id",
                 "label": "Website ID",
@@ -150,7 +143,7 @@ class SessionStackPlugin(CorePluginMixin, Plugin2):
 
         return configurations
 
-    def get_event_preprocessors(self, data, **kwargs):
+    def get_event_preprocessors(self, data: Mapping[str, Any]) -> Sequence[EventPreprocessor]:
         context = SessionStackContextType.primary_value_for_data(data)
         if not context:
             return []
@@ -163,7 +156,7 @@ class SessionStackPlugin(CorePluginMixin, Plugin2):
         if not self.is_enabled(project):
             return []
 
-        def preprocess_event(event):
+        def preprocess_event(data: MutableMapping[str, Any]) -> MutableMapping[str, Any] | None:
             sessionstack_client = SessionStackClient(
                 account_email=self.get_option("account_email", project),
                 api_token=self.get_option("api_token", project),
@@ -178,11 +171,11 @@ class SessionStackPlugin(CorePluginMixin, Plugin2):
 
             context["session_url"] = session_url
 
-            contexts = event.get("contexts") or {}
+            contexts = data.get("contexts") or {}
             contexts["sessionstack"] = context
-            event["contexts"] = contexts
+            data["contexts"] = contexts
 
-            return event
+            return data
 
         return [preprocess_event]
 

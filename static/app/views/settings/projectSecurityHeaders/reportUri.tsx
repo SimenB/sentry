@@ -1,15 +1,18 @@
-import Field from 'sentry/components/forms/field';
+import FieldGroup from 'sentry/components/forms/fieldGroup';
 import Link from 'sentry/components/links/link';
-import {Panel, PanelAlert, PanelBody, PanelHeader} from 'sentry/components/panels';
+import Panel from 'sentry/components/panels/panel';
+import PanelAlert from 'sentry/components/panels/panelAlert';
+import PanelBody from 'sentry/components/panels/panelBody';
+import PanelHeader from 'sentry/components/panels/panelHeader';
 import TextCopyInput from 'sentry/components/textCopyInput';
 import {t, tct} from 'sentry/locale';
-import {ProjectKey} from 'sentry/types';
+import type {ProjectKey} from 'sentry/types/project';
 import getDynamicText from 'sentry/utils/getDynamicText';
 
 const DEFAULT_ENDPOINT = 'https://sentry.example.com/api/security-report/';
 
 export function getSecurityDsn(keyList: ProjectKey[]) {
-  const endpoint = keyList.length ? keyList[0].dsn.security : DEFAULT_ENDPOINT;
+  const endpoint = keyList.length ? keyList[0]!.dsn.security : DEFAULT_ENDPOINT;
   return getDynamicText({
     value: endpoint,
     fixed: DEFAULT_ENDPOINT,
@@ -35,9 +38,9 @@ export default function ReportUri({keyList, orgId, projectId}: Props) {
             }
           )}
         </PanelAlert>
-        <Field inline={false} flexibleControlStateSize>
+        <FieldGroup inline={false} flexibleControlStateSize>
           <TextCopyInput>{getSecurityDsn(keyList)}</TextCopyInput>
-        </Field>
+        </FieldGroup>
       </PanelBody>
     </Panel>
   );

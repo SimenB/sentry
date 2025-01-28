@@ -1,33 +1,40 @@
-__all__ = ("Plugin2",)
+from __future__ import annotations
 
 import logging
+from collections.abc import Mapping, MutableMapping, Sequence
 from threading import local
+from typing import TYPE_CHECKING, Any, Protocol
 
 from django.http import HttpResponseRedirect
 
 from sentry.plugins import HIDDEN_PLUGINS
-from sentry.plugins.base.configuration import default_plugin_config, default_plugin_options
-from sentry.plugins.base.response import Response
+from sentry.plugins.base.response import DeferredResponse
 from sentry.plugins.config import PluginConfigMixin
-from sentry.plugins.status import PluginStatusMixin
-from sentry.utils.hashlib import md5_text
+from sentry.plugins.interfaces.releasehook import ReleaseHook
+
+if TYPE_CHECKING:
+    from django.utils.functional import _StrPromise
+
+
+class EventPreprocessor(Protocol):
+    def __call__(self, data: MutableMapping[str, Any]) -> MutableMapping[str, Any] | None: ...
 
 
 class PluginMount(type):
     def __new__(cls, name, bases, attrs):
-        new_cls = type.__new__(cls, name, bases, attrs)
+        new_cls: type[IPlugin2] = type.__new__(cls, name, bases, attrs)  # type: ignore[assignment]
         if IPlugin2 in bases:
             return new_cls
-        if new_cls.title is None:
+        if not hasattr(new_cls, "title"):
             new_cls.title = new_cls.__name__
-        if not new_cls.slug:
+        if not hasattr(new_cls, "slug"):
             new_cls.slug = new_cls.title.replace(" ", "-").lower()
         if not hasattr(new_cls, "logger"):
             new_cls.logger = logging.getLogger(f"sentry.plugins.{new_cls.slug}")
         return new_cls
 
 
-class IPlugin2(local, PluginConfigMixin, PluginStatusMixin):
+class IPlugin2(local, PluginConfigMixin):
     """
     Plugin interface. Should not be inherited from directly.
 
@@ -46,21 +53,20 @@ class IPlugin2(local, PluginConfigMixin, PluginStatusMixin):
     """
 
     # Generic plugin information
-    title = None
-    slug = None
-    description = None
-    version = None
-    author = None
-    author_url = None
-    resource_links = ()
-    feature_descriptions = []
+    title: str | _StrPromise
+    slug: str
+    description: str | None = None
+    version: str | None = None
+    author: str | None = None
+    author_url: str | None = None
+    resource_links: list[tuple[str, str]] = []
+    feature_descriptions: Sequence[Any] = []
 
     # Configuration specifics
-    conf_key = None
-    conf_title = None
+    conf_key: str | None = None
+    conf_title: str | _StrPromise | None = None
 
-    project_conf_form = None
-    project_conf_template = "sentry/plugins/project_configuration.html"
+    project_conf_form: Any = None
 
     # Global enabled state
     enabled = True
@@ -70,7 +76,7 @@ class IPlugin2(local, PluginConfigMixin, PluginStatusMixin):
     project_default_enabled = False
 
     # used by queries to determine if the plugin is configured
-    required_field = None
+    required_field: str | None = None
 
     def _get_option_key(self, key):
         return f"{self.get_conf_key()}:{key}"
@@ -109,10 +115,10 @@ class IPlugin2(local, PluginConfigMixin, PluginStatusMixin):
         """
         return self.slug in HIDDEN_PLUGINS
 
-    def reset_options(self, project=None, user=None):
+    def reset_options(self, project=None):
         from sentry.plugins.helpers import reset_options
 
-        return reset_options(self.get_conf_key(), project, user)
+        return reset_options(self.get_conf_key(), project)
 
     def get_option(self, key, project=None, user=None):
         """
@@ -127,7 +133,7 @@ class IPlugin2(local, PluginConfigMixin, PluginStatusMixin):
 
         return get_option(self._get_option_key(key), project, user)
 
-    def set_option(self, key, value, project=None, user=None):
+    def set_option(self, key, value, project=None, user=None) -> None:
         """
         Updates the value of an option in your plugins keyspace.
 
@@ -137,9 +143,9 @@ class IPlugin2(local, PluginConfigMixin, PluginStatusMixin):
         """
         from sentry.plugins.helpers import set_option
 
-        return set_option(self._get_option_key(key), value, project, user)
+        set_option(self._get_option_key(key), value, project, user)
 
-    def unset_option(self, key, project=None, user=None):
+    def unset_option(self, key, project=None, user=None) -> None:
         """
         Removes an option in your plugins keyspace.
 
@@ -149,7 +155,7 @@ class IPlugin2(local, PluginConfigMixin, PluginStatusMixin):
         """
         from sentry.plugins.helpers import unset_option
 
-        return unset_option(self._get_option_key(key), project, user)
+        unset_option(self._get_option_key(key), project, user)
 
     def enable(self, project=None, user=None):
         """Enable the plugin."""
@@ -167,62 +173,14 @@ class IPlugin2(local, PluginConfigMixin, PluginStatusMixin):
             self.conf_key = self.get_conf_title().lower().replace(" ", "_")
         return self.conf_key
 
-    def get_conf_form(self, project=None):
-        """
-        Returns the Form required to configure the plugin.
-
-        >>> plugin.get_conf_form(project)
-        """
-        if project is not None:
-            return self.project_conf_form
-        return self.site_conf_form
-
-    def get_conf_template(self, project=None):
-        """
-        Returns the template required to render the configuration page.
-
-        >>> plugin.get_conf_template(project)
-        """
-        if project is not None:
-            return self.project_conf_template
-        return self.site_conf_template
-
-    def get_conf_options(self, project=None):
-        """
-        Returns a dict of all of the configured options for a project.
-
-        >>> plugin.get_conf_options(project)
-        """
-        return default_plugin_options(self, project)
-
-    def get_conf_version(self, project):
-        """
-        Returns a version string that represents the current configuration state.
-
-        If any option changes or new options added, the version will change.
-
-        >>> plugin.get_conf_version(project)
-        """
-        options = self.get_conf_options(project)
-        return md5_text("&".join(sorted("%s=%s" % o for o in options.items()))).hexdigest()[:3]
-
     def get_conf_title(self):
         """
         Returns a string representing the title to be shown on the configuration page.
         """
         return self.conf_title or self.get_title()
 
-    def get_form_initial(self, project=None):
-        return {}
-
     def has_project_conf(self):
         return self.project_conf_form is not None
-
-    def has_plugin_conf(self):
-        """
-        Checks if the plugin should be returned in the ProjectPluginsEndpoint
-        """
-        return self.has_project_conf()
 
     def can_configure_for_project(self, project):
         """
@@ -243,13 +201,13 @@ class IPlugin2(local, PluginConfigMixin, PluginStatusMixin):
 
     # Response methods
 
-    def redirect(self, url):
+    def redirect(self, url: str) -> HttpResponseRedirect:
         """
         Returns a redirect response type.
         """
         return HttpResponseRedirect(url)
 
-    def render(self, template, context=None):
+    def render(self, template: str, context: dict[str, Any] | None = None) -> DeferredResponse:
         """
         Given a template name, and an optional context (dictionary), returns a
         ready-to-render response.
@@ -261,7 +219,7 @@ class IPlugin2(local, PluginConfigMixin, PluginStatusMixin):
         if context is None:
             context = {}
         context["plugin"] = self
-        return Response(template, context)
+        return DeferredResponse(template, context)
 
     # The following methods are specific to web requests
 
@@ -284,19 +242,6 @@ class IPlugin2(local, PluginConfigMixin, PluginStatusMixin):
         """
         return self.description
 
-    def get_resource_links(self):
-        """
-        Returns a list of tuples pointing to various resources for this plugin.
-
-        >>> def get_resource_links(self):
-        >>>     return [
-        >>>         ('Documentation', 'https://docs.sentry.io'),
-        >>>         ('Report Issue', 'https://github.com/getsentry/sentry/issues'),
-        >>>         ('View Source', 'https://github.com/getsentry/sentry'),
-        >>>     ]
-        """
-        return self.resource_links
-
     def get_rules(self, **kwargs):
         """
         Return a list of Rule classes to add to the registry.
@@ -306,22 +251,7 @@ class IPlugin2(local, PluginConfigMixin, PluginStatusMixin):
         """
         return []
 
-    def get_actions(self, request, group, **kwargs):
-        """
-        Return a list of available actions to append this aggregate.
-
-        Examples of built-in actions are "Mute Event" and "Remove Data".
-
-        An action is a tuple containing two elements:
-
-            ('Action Label', '/uri/to/action/')
-
-        >>> def get_actions(self, request, group, **kwargs):
-        >>>     return [('Google', 'http://google.com')]
-        """
-        return []
-
-    def get_annotations(self, group, **kwargs):
+    def get_annotations(self, group) -> list[dict[str, str]]:
         """
         Return a list of annotations to append to this aggregate.
 
@@ -330,22 +260,11 @@ class IPlugin2(local, PluginConfigMixin, PluginStatusMixin):
         The properties of each tag must match the constructor for
         :class:`sentry.plugins.Annotation`
 
-        >>> def get_annotations(self, group, **kwargs):
+        >>> def get_annotations(self, group):
         >>>     task_id = GroupMeta.objects.get_value(group, 'myplugin:tid')
         >>>     if not task_id:
         >>>         return []
         >>>     return [{'label': '#%s' % (task_id,)}]
-        """
-        return []
-
-    def get_notifiers(self, **kwargs):
-        """
-        Return a list of notifiers to append to the registry.
-
-        Notifiers must extend :class:`sentry.plugins.Notifier`.
-
-        >>> def get_notifiers(self, **kwargs):
-        >>>     return [MyNotifier]
         """
         return []
 
@@ -362,7 +281,7 @@ class IPlugin2(local, PluginConfigMixin, PluginStatusMixin):
         """
         return []
 
-    def get_event_preprocessors(self, data, **kwargs):
+    def get_event_preprocessors(self, data: Mapping[str, Any]) -> Sequence[EventPreprocessor]:
         """
         Return a list of preprocessors to apply to the given event.
 
@@ -395,44 +314,7 @@ class IPlugin2(local, PluginConfigMixin, PluginStatusMixin):
                     return [CocoaProcessor(data, stacktrace_infos)]
         """
 
-    def get_event_enhancers(self, data, **kwargs):
-        """
-        Return a list of enhancers to apply to the given event.
-
-        An enhancer is a function that takes the normalized data blob as an
-        input and returns modified data as output. If no changes to the data are
-        made it is safe to return ``None``.
-
-        As opposed to event (pre)processors, enhancers run **before** stacktrace
-        processing and can be used to perform more extensive event normalization
-        or add additional data before stackframes are symbolicated.
-
-        Enhancers should not be returned if there is nothing to do with the
-        event data.
-
-        >>> def get_event_enhancers(self, data, **kwargs):
-        >>>     return [lambda x: x]
-        """
-        return []
-
-    def get_feature_hooks(self, **kwargs):
-        """
-        Return a list of callables to check for feature status.
-
-        >>> from sentry.features import FeatureHandler
-        >>>
-        >>> class NoRegistration(FeatureHandler):
-        >>>     features = set(['auth:register'])
-        >>>
-        >>>     def has(self, feature, actor):
-        >>>         return False
-
-        >>> def get_feature_hooks(self, **kwargs):
-        >>>     return [NoRegistration()]
-        """
-        return []
-
-    def get_release_hook(self, **kwargs):
+    def get_release_hook(self) -> type[ReleaseHook] | None:
         """
         Return an implementation of ``ReleaseHook``.
 
@@ -442,10 +324,10 @@ class IPlugin2(local, PluginConfigMixin, PluginStatusMixin):
         >>>     def handle(self, request: Request) -> Response:
         >>>         self.finish_release(version=request.POST['version'])
 
-        >>> def get_release_hook(self, **kwargs):
+        >>> def get_release_hook(self):
         >>>     return MyReleaseHook
         """
-        return []
+        return None
 
     def get_custom_contexts(self):
         """Return a list of of context types.
@@ -459,10 +341,6 @@ class IPlugin2(local, PluginConfigMixin, PluginStatusMixin):
             return [MyContextType]
         """
 
-    def configure(self, project, request):
-        """Configures the plugin."""
-        return default_plugin_config(self, project, request)
-
     def get_url_module(self):
         """Allows a plugin to return the import path to a URL module."""
 
@@ -475,3 +353,6 @@ class Plugin2(IPlugin2, metaclass=PluginMount):
     """
 
     __version__ = 2
+
+
+__all__ = ("Plugin2",)

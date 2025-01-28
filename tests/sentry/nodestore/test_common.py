@@ -2,11 +2,13 @@
 Testsuite of backend-independent nodestore tests. Add your backend to the
 `ns` fixture to have it tested.
 """
+
 from contextlib import nullcontext
 
 import pytest
 
 from sentry.nodestore.django.backend import DjangoNodeStorage
+from sentry.testutils.helpers import override_options
 from tests.sentry.nodestore.bigtable.test_backend import (
     MockedBigtableNodeStorage,
     get_temporary_bigtable_nodestorage,
@@ -30,6 +32,7 @@ def ns(request):
         yield ns
 
 
+@override_options({"nodestore.set-subkeys.enable-set-cache-item": False})
 def test_get_multi(ns):
     nodes = [("a" * 32, {"foo": "a"}), ("b" * 32, {"foo": "b"})]
 
@@ -40,6 +43,7 @@ def test_get_multi(ns):
     assert result == {n[0]: n[1] for n in nodes}
 
 
+@override_options({"nodestore.set-subkeys.enable-set-cache-item": False})
 def test_set(ns):
     node_id = "d2502ebbd7df41ceba8d3275595cac33"
     data = {"foo": "bar"}
@@ -47,6 +51,7 @@ def test_set(ns):
     assert ns.get(node_id) == data
 
 
+@override_options({"nodestore.set-subkeys.enable-set-cache-item": False})
 def test_delete(ns):
     node_id = "d2502ebbd7df41ceba8d3275595cac33"
     data = {"foo": "bar"}
@@ -56,6 +61,7 @@ def test_delete(ns):
     assert not ns.get(node_id)
 
 
+@override_options({"nodestore.set-subkeys.enable-set-cache-item": False})
 def test_delete_multi(ns):
     nodes = [("node_1", {"foo": "a"}), ("node_2", {"foo": "b"})]
 
@@ -67,6 +73,7 @@ def test_delete_multi(ns):
     assert not ns.get(nodes[1][0])
 
 
+@override_options({"nodestore.set-subkeys.enable-set-cache-item": False})
 def test_set_subkeys(ns):
     """
     Subkeys are used to store multiple JSON payloads under the same main key.

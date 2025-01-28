@@ -2,20 +2,20 @@ import {Fragment} from 'react';
 import styled from '@emotion/styled';
 
 import {SectionHeading} from 'sentry/components/charts/styles';
-import {Panel} from 'sentry/components/panels';
-import Tooltip from 'sentry/components/tooltip';
+import Panel from 'sentry/components/panels/panel';
+import {Tooltip} from 'sentry/components/tooltip';
 import {IconFire, IconWarning} from 'sentry/icons';
 import {t} from 'sentry/locale';
-import space from 'sentry/styles/space';
-import {Event} from 'sentry/types/event';
+import {space} from 'sentry/styles/space';
+import type {Event} from 'sentry/types/event';
 import {defined} from 'sentry/utils';
 import {formattedValue} from 'sentry/utils/measurements/index';
 import {
   MOBILE_VITAL_DETAILS,
   WEB_VITAL_DETAILS,
 } from 'sentry/utils/performance/vitals/constants';
-import {Vital} from 'sentry/utils/performance/vitals/types';
-import {IconSize} from 'sentry/utils/theme';
+import type {Vital} from 'sentry/utils/performance/vitals/types';
+import type {IconSize} from 'sentry/utils/theme';
 
 function isOutdatedSdk(event: Event): boolean {
   if (!event.sdk?.version) {
@@ -46,6 +46,7 @@ export default function EventVitals({event}: Props) {
 
 function WebVitals({event}: Props) {
   const measurementNames = Object.keys(event.measurements ?? {})
+    // @ts-expect-error TS(7053): Element implicitly has an 'any' type because expre... Remove this comment to see the full error message
     .filter(name => Boolean(WEB_VITAL_DETAILS[`measurements.${name}`]))
     .sort();
 
@@ -77,6 +78,7 @@ function WebVitals({event}: Props) {
           // here but are stored using their abbreviated name `<name>`. Make sure
           // to convert it appropriately.
           const measurement = `measurements.${name}`;
+          // @ts-expect-error TS(7053): Element implicitly has an 'any' type because expre... Remove this comment to see the full error message
           const vital = WEB_VITAL_DETAILS[measurement];
 
           return <EventVital key={name} event={event} name={name} vital={vital} />;
@@ -88,6 +90,7 @@ function WebVitals({event}: Props) {
 
 function MobileVitals({event}: Props) {
   const measurementNames = Object.keys(event.measurements ?? {})
+    // @ts-expect-error TS(7053): Element implicitly has an 'any' type because expre... Remove this comment to see the full error message
     .filter(name => Boolean(MOBILE_VITAL_DETAILS[`measurements.${name}`]))
     .sort();
 
@@ -104,6 +107,7 @@ function MobileVitals({event}: Props) {
           // here but are stored using their abbreviated name `<name>`. Make sure
           // to convert it appropriately.
           const measurement = `measurements.${name}`;
+          // @ts-expect-error TS(7053): Element implicitly has an 'any' type because expre... Remove this comment to see the full error message
           const vital = MOBILE_VITAL_DETAILS[measurement];
 
           return <EventVital key={name} event={event} name={name} vital={vital} />;
@@ -113,13 +117,13 @@ function MobileVitals({event}: Props) {
   );
 }
 
-type EventVitalProps = Props & {
+interface EventVitalProps extends Props {
   name: string;
   vital?: Vital;
-};
+}
 
 function EventVital({event, name, vital}: EventVitalProps) {
-  const value = event.measurements?.[name].value ?? null;
+  const value = event.measurements?.[name]!.value ?? null;
   if (value === null || !vital) {
     return null;
   }
@@ -175,25 +179,25 @@ const ValueRow = styled('div')`
   align-items: center;
 `;
 
-const WarningIconContainer = styled('span')<{size: IconSize | string}>`
+const WarningIconContainer = styled('span')<{size: IconSize}>`
   display: inline-block;
   height: ${p => p.theme.iconSizes[p.size] ?? p.size};
   line-height: ${p => p.theme.iconSizes[p.size] ?? p.size};
   margin-left: ${space(0.5)};
-  color: ${p => p.theme.red300};
+  color: ${p => p.theme.errorText};
 `;
 
-const FireIconContainer = styled('span')<{size: IconSize | string}>`
+const FireIconContainer = styled('span')<{size: IconSize}>`
   display: inline-block;
   height: ${p => p.theme.iconSizes[p.size] ?? p.size};
   line-height: ${p => p.theme.iconSizes[p.size] ?? p.size};
   margin-right: ${space(0.5)};
-  color: ${p => p.theme.red300};
+  color: ${p => p.theme.errorText};
 `;
 
 const Value = styled('span')<{failedThreshold: boolean}>`
   font-size: ${p => p.theme.fontSizeExtraLarge};
-  ${p => p.failedThreshold && `color: ${p.theme.red300};`}
+  ${p => p.failedThreshold && `color: ${p.theme.errorText};`}
 `;
 
 export const EventVitalContainer = styled('div')``;

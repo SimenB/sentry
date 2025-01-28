@@ -1,27 +1,25 @@
 import {Fragment} from 'react';
 import {css} from '@emotion/react';
 import styled from '@emotion/styled';
-import {Location} from 'history';
+import type {Location} from 'history';
 
-import AsyncComponent from 'sentry/components/asyncComponent';
-import Button from 'sentry/components/button';
-import {DateTimeObject} from 'sentry/components/charts/utils';
+import {LinkButton} from 'sentry/components/button';
+import type {DateTimeObject} from 'sentry/components/charts/utils';
 import CollapsePanel, {COLLAPSE_COUNT} from 'sentry/components/collapsePanel';
 import Link from 'sentry/components/links/link';
 import LoadingError from 'sentry/components/loadingError';
-import PanelTable from 'sentry/components/panels/panelTable';
+import {PanelTable} from 'sentry/components/panels/panelTable';
 import {IconStar} from 'sentry/icons';
 import {t, tct} from 'sentry/locale';
-import space from 'sentry/styles/space';
-import {Organization, Project, SavedQueryVersions} from 'sentry/types';
-import DiscoverQuery, {
-  TableData,
-  TableDataRow,
-} from 'sentry/utils/discover/discoverQuery';
+import {space} from 'sentry/styles/space';
+import type {Organization, SavedQueryVersions} from 'sentry/types/organization';
+import type {Project} from 'sentry/types/project';
+import type {TableData, TableDataRow} from 'sentry/utils/discover/discoverQuery';
+import DiscoverQuery from 'sentry/utils/discover/discoverQuery';
 import EventView from 'sentry/utils/discover/eventView';
 import {getFieldRenderer} from 'sentry/utils/discover/fieldRenderers';
 import type {QueryError} from 'sentry/utils/discover/genericDiscoverQuery';
-import type {Color} from 'sentry/utils/theme';
+import type {ColorOrAlias} from 'sentry/utils/theme';
 import {transactionSummaryRouteWithQuery} from 'sentry/views/performance/transactionSummary/utils';
 
 import {ProjectBadge, ProjectBadgeContainer} from './styles';
@@ -83,16 +81,16 @@ function TeamMisery({
       {({isExpanded, showMoreButton}) => (
         <Fragment>
           <StyledPanelTable
-            isEmpty={projects.length === 0 || periodTableData?.data.length === 0}
+            isEmpty={projects.length === 0 || periodTableData?.data?.length === 0}
             emptyMessage={t('No key transactions starred by this team')}
             emptyAction={
-              <Button
+              <LinkButton
                 size="sm"
                 external
                 href="https://docs.sentry.io/product/performance/transaction-summary/#starring-key-transactions"
               >
                 {t('Learn More')}
-              </Button>
+              </LinkButton>
             }
             headers={[
               <FlexCenter key="transaction">
@@ -158,7 +156,7 @@ function TeamMisery({
                         {t('change')}
                       </SubText>
                     ) : (
-                      <TrendText color={trend >= 0 ? 'green300' : 'red300'}>
+                      <TrendText color={trend >= 0 ? 'successText' : 'errorText'}>
                         {`${trendValue}\u0025 `}
                         {trend >= 0 ? t('better') : t('worse')}
                       </TrendText>
@@ -175,7 +173,7 @@ function TeamMisery({
   );
 }
 
-type Props = AsyncComponent['props'] & {
+type Props = {
   location: Location;
   organization: Organization;
   projects: Project[];
@@ -243,14 +241,12 @@ function TeamMiseryWrapper({
       eventView={periodEventView}
       orgSlug={organization.slug}
       location={location}
-      useEvents
     >
       {({isLoading, tableData: periodTableData, error}) => (
         <DiscoverQuery
           eventView={weekEventView}
           orgSlug={organization.slug}
           location={location}
-          useEvents
         >
           {({isLoading: isWeekLoading, tableData: weekTableData, error: weekError}) => (
             <TeamMisery
@@ -329,6 +325,6 @@ const SubText = styled('div')`
   color: ${p => p.theme.subText};
 `;
 
-const TrendText = styled('div')<{color: Color}>`
+const TrendText = styled('div')<{color: ColorOrAlias}>`
   color: ${p => p.theme[p.color]};
 `;

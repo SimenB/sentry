@@ -1,8 +1,8 @@
 import {addErrorMessage, addSuccessMessage} from 'sentry/actionCreators/indicator';
-import {Client} from 'sentry/api';
+import type {Client} from 'sentry/api';
 import {tct} from 'sentry/locale';
 import TeamStore from 'sentry/stores/teamStore';
-import {Team} from 'sentry/types';
+import type {Team} from 'sentry/types/organization';
 
 type CallbackOptions = {
   error?: Function;
@@ -51,6 +51,9 @@ export function updateTeamSuccess(teamId: OrgAndTeamSlug['teamId'], data: Team) 
   TeamStore.onUpdateSuccess(teamId, data);
 }
 
+/**
+ * @deprecated use joinTeamPromise instead
+ */
 export function joinTeam(
   api: Client,
   params: OrgAndTeamSlug & Partial<MemberId>,
@@ -72,6 +75,25 @@ export function joinTeam(
   });
 }
 
+export async function joinTeamPromise(
+  api: Client,
+  params: OrgAndTeamSlug & Partial<MemberId>
+) {
+  const data: Team = await api.requestPromise(
+    `/organizations/${params.orgId}/members/${params.memberId ?? 'me'}/teams/${params.teamId}/`,
+    {
+      method: 'POST',
+    }
+  );
+
+  TeamStore.onUpdateSuccess(params.teamId, data);
+
+  return data;
+}
+
+/**
+ * @deprecated use leaveTeamPromise instead
+ */
 export function leaveTeam(
   api: Client,
   params: OrgAndTeamSlug & Partial<MemberId>,
@@ -91,6 +113,22 @@ export function leaveTeam(
       doCallback(options, 'error', error);
     },
   });
+}
+
+export async function leaveTeamPromise(
+  api: Client,
+  params: OrgAndTeamSlug & Partial<MemberId>
+) {
+  const data: Team = await api.requestPromise(
+    `/organizations/${params.orgId}/members/${params.memberId ?? 'me'}/teams/${params.teamId}/`,
+    {
+      method: 'DELETE',
+    }
+  );
+
+  TeamStore.onUpdateSuccess(params.teamId, data);
+
+  return data;
 }
 
 export function createTeam(api: Client, team: Pick<Team, 'slug'>, params: OrgSlug) {
